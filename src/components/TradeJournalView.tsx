@@ -313,9 +313,9 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           >
             <Sparkles className="w-4 h-4 text-emerald-300" />
             <span className="flex items-center space-x-1.5">
-              <span>Options Harvesting & TradingWarz Bot ($50k Virtual)</span>
+              <span>Options Harvesting & TradingWarz Bot ($2k Virtual)</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                +$115k
+                $2k Era
               </span>
             </span>
           </button>

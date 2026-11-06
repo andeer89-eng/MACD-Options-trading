@@ -59,7 +59,13 @@ import {
 } from '../utils/optionsAutomatedPortfolio';
 import { OptionsTradeRecord } from '../data/richOptionsTradesArchive';
 import { downloadCSV } from '../utils/tradeJournal';
-import { getMarketSessionStatus, getTradeExecutionRegime, MarketRegimeType } from '../utils/marketSession';
+import {
+  getMarketSessionStatus,
+  getTradeExecutionRegime,
+  MarketRegimeType,
+  getBucharestTimeFormatted,
+  getBucharestDateTimeFormatted,
+} from '../utils/marketSession';
 
 interface OptionsAutomatedPortfolioManagerProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -71,7 +77,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   scannerResults = [],
 }) => {
   const [account, setAccount] = useState<OptionsPortfolioAccount>(() => loadOptionsPortfolio());
-  const [mainTab, setMainTab] = useState<'journal' | 'open-positions' | 'brain' | 'rules'>('journal');
+  const [mainTab, setMainTab] = useState<'journal' | 'legacy' | 'open-positions' | 'brain' | 'rules'>('journal');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'EXPIRED' | 'EARLY_TP' | 'BREAKEVEN'>('ALL');
   const [sessionFilter, setSessionFilter] = useState<'ALL' | 'REGULAR' | 'PREMARKET' | 'AFTERHOURS' | '24/7'>('ALL');
   const [yearFilter, setYearFilter] = useState<'ALL' | '2026' | '2025'>('ALL');
@@ -135,16 +141,42 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   const stats: OptionsPortfolioStats = useMemo(() => calculateOptionsStats(account), [account]);
   const marketSession = useMemo(() => getMarketSessionStatus(), [currentTime]);
 
-  // Filter trade history records
+  // Combine active open positions and active closed trade history for the main Trade Journal
+  const combinedActiveJournal = useMemo(() => {
+    const openRecords: OptionsTradeRecord[] = (account.positions || []).map((pos) => ({
+      id: pos.id,
+      date: pos.entryDate,
+      ticker: pos.ticker,
+      boughtSold: 'Sold',
+      contract: pos.contract,
+      strike: pos.strike,
+      optionType: pos.optionType || 'PUT',
+      expiration: pos.expirationLabel || pos.expirationDateStr,
+      expirationDateStr: pos.expirationDateStr,
+      profitDollars: pos.unrealizedPnL,
+      profitPercent: pos.unrealizedPnLPercent,
+      status: 'Open',
+      outcomeReason: 'Active Open Position' as any,
+      underlyingPriceAtEntry: pos.underlyingPriceAtEntry,
+      strikeDistancePercent: pos.strikeDistancePercent,
+      delta: pos.delta,
+      thetaPerDay: pos.dailyTheta,
+      tradingWarzPattern: pos.tradingWarzPattern as any,
+      goldenZoneSupportLevel: pos.goldenZoneSupportLevel,
+      whyOpenedThesis: pos.whyOpenedThesis,
+      session: pos.executionSession || 'REGULAR',
+    }));
+    return [...openRecords, ...(account.tradeHistory || [])];
+  }, [account.positions, account.tradeHistory]);
+
+  // Filter active trade history records ($2k era)
   const filteredHistory = useMemo(() => {
-    return account.tradeHistory.filter((t) => {
-      // Status filter
+    return combinedActiveJournal.filter((t) => {
       if (statusFilter === 'OPEN' && t.status !== 'Open') return false;
       if (statusFilter === 'EXPIRED' && t.outcomeReason !== 'Expired Worthless') return false;
       if (statusFilter === 'EARLY_TP' && t.outcomeReason !== 'Early Take-Profit') return false;
       if (statusFilter === 'BREAKEVEN' && t.outcomeReason !== 'Break Even') return false;
 
-      // Session filter
       if (sessionFilter !== 'ALL') {
         const tradeSession = t.session || 'REGULAR';
         if (sessionFilter === '24/7' && tradeSession !== '24/7') return false;
@@ -153,13 +185,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         if (sessionFilter === 'AFTERHOURS' && tradeSession !== 'AFTERHOURS') return false;
       }
 
-      // Year filter
       if (yearFilter !== 'ALL' && !t.date.startsWith(yearFilter)) return false;
-
-      // Ticker filter
       if (tickerFilter !== 'ALL' && t.ticker !== tickerFilter) return false;
 
-      // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const match =
@@ -173,7 +201,41 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
       return true;
     });
-  }, [account.tradeHistory, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
+  }, [combinedActiveJournal, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
+
+  // Filter legacy audit records (50k era read-only archive)
+  const filteredLegacy = useMemo(() => {
+    return (account.legacyHistory || []).filter((t) => {
+      if (statusFilter === 'OPEN' && t.status !== 'Open') return false;
+      if (statusFilter === 'EXPIRED' && t.outcomeReason !== 'Expired Worthless') return false;
+      if (statusFilter === 'EARLY_TP' && t.outcomeReason !== 'Early Take-Profit') return false;
+      if (statusFilter === 'BREAKEVEN' && t.outcomeReason !== 'Break Even') return false;
+
+      if (sessionFilter !== 'ALL') {
+        const tradeSession = t.session || 'REGULAR';
+        if (sessionFilter === '24/7' && tradeSession !== '24/7') return false;
+        if (sessionFilter === 'REGULAR' && tradeSession !== 'REGULAR') return false;
+        if (sessionFilter === 'PREMARKET' && tradeSession !== 'PREMARKET') return false;
+        if (sessionFilter === 'AFTERHOURS' && tradeSession !== 'AFTERHOURS') return false;
+      }
+
+      if (yearFilter !== 'ALL' && !t.date.startsWith(yearFilter)) return false;
+      if (tickerFilter !== 'ALL' && t.ticker !== tickerFilter) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const match =
+          t.contract.toLowerCase().includes(q) ||
+          t.ticker.toLowerCase().includes(q) ||
+          String(t.strike).includes(q) ||
+          (t.tradingWarzPattern && t.tradingWarzPattern.toLowerCase().includes(q)) ||
+          t.whyOpenedThesis.toLowerCase().includes(q);
+        if (!match) return false;
+      }
+
+      return true;
+    });
+  }, [account.legacyHistory, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
 
   // Filter episodes for Brain tab
   const filteredEpisodes = useMemo(() => {
@@ -349,14 +411,18 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         {/* Top Header Row */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-zinc-800">
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
               <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 <Flame className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Rich's S&P 500 Harvesting Engine</span>
+                <span>Rich's S&P 500 Harvesting Engine ($2k Virtual Era)</span>
               </span>
               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                 <Sparkles className="w-3 h-3 text-indigo-400" />
                 <span>TradingWarz Golden Zone</span>
+              </span>
+              <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700 font-mono">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Last Data Refresh: {getBucharestTimeFormatted(currentTime)} Bucharest Time (Fresh)</span>
               </span>
               <span className="text-xs text-zinc-400">
                 • {account.isAutoPilotActive ? 'Auto-Pilot ACTIVE' : 'Auto-Pilot PAUSED'}
@@ -367,11 +433,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                 ${stats.totalRealizedIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
               <span className="text-sm font-semibold text-emerald-400">
-                +$115,008 Banked Income (192 Verified Trades)
+                +${stats.totalRealizedIncome.toFixed(2)} Realized Income
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-1 max-w-2xl">
-              Harvesting theta decay on /ES & /MES Out-of-the-Money Puts (0.08 - 0.14 Delta) anchored beneath the TradingWarz 61.8% Fibonacci Golden Zone with 100% win rate discipline.
+              Harvesting theta decay on /ES & /MES Out-of-the-Money Puts (0.08 - 0.14 Delta) anchored beneath the TradingWarz 61.8% Fibonacci Golden Zone with $2,000 capital.
             </p>
           </div>
 
@@ -465,7 +531,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <div className="text-[11px] text-zinc-400 uppercase font-semibold">Win Rate</div>
             <div className="text-xl font-bold text-emerald-400 mt-1">{stats.winRatePercent}%</div>
             <div className="text-[10px] text-zinc-400 mt-0.5">
-              189 Wins / 0 Losses / 2 BreakEven
+              {stats.totalTradesCount > 0
+                ? `${stats.winningTradesCount} Wins / ${stats.losingTradesCount} Losses / ${stats.breakEvenTradesCount} BE`
+                : '0 Active Closed Trades'}
             </div>
           </div>
 
@@ -539,7 +607,19 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             }`}
           >
             <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Options Trade Journal ({filteredHistory.length})</span>
+            <span>Options Trade Journal (Active $2k) ({filteredHistory.length})</span>
+          </button>
+
+          <button
+            onClick={() => setMainTab('legacy')}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              mainTab === 'legacy'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                : 'text-zinc-400 hover:text-amber-200 hover:bg-zinc-800/50'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-amber-400" />
+            <span>Legacy (50k era) ({filteredLegacy.length})</span>
           </button>
 
           <button
@@ -598,7 +678,8 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                 <Filter className="w-3 h-3 mr-1" /> Status:
               </span>
               {[
-                { id: 'ALL', label: 'All Trades' },
+                { id: 'ALL', label: 'All Trades & Positions' },
+                { id: 'OPEN', label: 'Active Open Positions' },
                 { id: 'EXPIRED', label: '100% Expired Worthless' },
                 { id: 'EARLY_TP', label: 'Early Take-Profit' },
                 { id: 'BREAKEVEN', label: 'Break Even' },
@@ -775,14 +856,16 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <span
                               className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                trade.outcomeReason === 'Expired Worthless'
+                                trade.status === 'Open'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono'
+                                  : trade.outcomeReason === 'Expired Worthless'
                                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                   : trade.outcomeReason === 'Early Take-Profit'
                                   ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                                   : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               }`}
                             >
-                              {trade.outcomeReason}
+                              {trade.status === 'Open' ? 'OPEN' : trade.outcomeReason}
                             </span>
                           </td>
                         </tr>
@@ -906,6 +989,234 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         </div>
       )}
 
+      {/* TAB 2: LEGACY AUDIT ARCHIVE (50k ERA) - READ ONLY */}
+      {mainTab === 'legacy' && (
+        <div className="space-y-4">
+          <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200 flex items-start space-x-3">
+            <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-amber-300 text-sm block mb-1">
+                Read-Only Legacy Archive: 192 Historical Audit Trades ($115,008.44 Banked Income)
+              </span>
+              <p className="text-amber-200/80 leading-relaxed">
+                All 192 trades from Rich's $50,000 era are safely archived here in read-only mode. They remain available for post-trade audit and continue powering the <strong>FinRL &amp; TradeMemory Continual Learning Engine</strong>, but do not count toward active $2,000 dashboard metrics.
+              </p>
+            </div>
+          </div>
+
+          {/* Filters Bar for Legacy */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900 p-3 rounded-lg border border-zinc-800">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-zinc-500 mr-1 flex items-center">
+                <Filter className="w-3 h-3 mr-1" /> Status:
+              </span>
+              {[
+                { id: 'ALL', label: 'All Trades' },
+                { id: 'EXPIRED', label: '100% Expired Worthless' },
+                { id: 'EARLY_TP', label: 'Early Take-Profit' },
+                { id: 'BREAKEVEN', label: 'Break Even' },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  onClick={() => setStatusFilter(pill.id as any)}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    statusFilter === pill.id
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-1 text-xs">
+                <span className="text-zinc-500">Year:</span>
+                {(['ALL', '2026', '2025'] as const).map((yr) => (
+                  <button
+                    key={yr}
+                    onClick={() => setYearFilter(yr)}
+                    className={`px-2 py-0.5 rounded text-xs ${
+                      yearFilter === yr ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {yr === 'ALL' ? 'All' : yr}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center space-x-1 text-xs">
+                <span className="text-zinc-500">Asset:</span>
+                {(['ALL', 'ES', 'MES'] as const).map((tick) => (
+                  <button
+                    key={tick}
+                    onClick={() => setTickerFilter(tick)}
+                    className={`px-2 py-0.5 rounded text-xs ${
+                      tickerFilter === tick ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {tick}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center space-x-1 text-xs">
+                <span className="text-zinc-500">Session:</span>
+                {(['ALL', 'REGULAR', 'PREMARKET', 'AFTERHOURS', '24/7'] as const).map((ses) => (
+                  <button
+                    key={ses}
+                    onClick={() => setSessionFilter(ses)}
+                    className={`px-2 py-0.5 rounded text-xs ${
+                      sessionFilter === ses ? 'bg-amber-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {ses}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2" />
+                <input
+                  type="text"
+                  placeholder="Search contract..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 w-44"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Legacy Table */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-zinc-950/80 text-zinc-400 border-b border-zinc-800 uppercase tracking-wider font-semibold text-[11px]">
+                  <tr>
+                    <th className="py-3 px-4 w-8"></th>
+                    <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4">Session</th>
+                    <th className="py-3 px-4">Contract / Strike</th>
+                    <th className="py-3 px-4">Type</th>
+                    <th className="py-3 px-4">TradingWarz Confluence</th>
+                    <th className="py-3 px-4">Expiration</th>
+                    <th className="py-3 px-4 text-right">Profit ($)</th>
+                    <th className="py-3 px-4 text-right">Return (%)</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60">
+                  {filteredLegacy.map((trade) => {
+                    const isExpanded = expandedRowIds.has(trade.id);
+                    const isWin = trade.profitDollars > 0;
+                    const isBreakEven = trade.outcomeReason === 'Break Even';
+
+                    return (
+                      <React.Fragment key={trade.id}>
+                        <tr
+                          onClick={() => toggleRowExpand(trade.id)}
+                          className={`cursor-pointer transition-colors hover:bg-zinc-800/40 ${
+                            isExpanded ? 'bg-zinc-800/30' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-4 text-zinc-500">
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-amber-400" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-zinc-400" />
+                            )}
+                          </td>
+                          <td className="py-3 px-4 font-mono text-zinc-300 whitespace-nowrap">
+                            {trade.date}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              (trade.session || 'REGULAR') === '24/7'
+                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                                : (trade.session || 'REGULAR') === 'PREMARKET'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : (trade.session || 'REGULAR') === 'AFTERHOURS'
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            }`}>
+                              {trade.session || 'REGULAR'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-bold text-white font-mono">{trade.contract}</span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono">
+                                {trade.ticker}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              SOLD PUT
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap text-zinc-300">
+                            <span className="inline-flex items-center space-x-1 text-xs">
+                              <Sparkles className="w-3 h-3 text-indigo-400" />
+                              <span>{trade.tradingWarzPattern?.replace(/_/g, ' ') || 'Golden Zone 61.8%'}</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-zinc-400 whitespace-nowrap">
+                            {trade.expiration}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
+                            <span className={isWin ? 'text-emerald-400' : isBreakEven ? 'text-amber-400' : 'text-rose-400'}>
+                              {trade.profitDollars >= 0 ? '+' : ''}${trade.profitDollars.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-semibold whitespace-nowrap">
+                            <span className={isWin ? 'text-emerald-400' : isBreakEven ? 'text-amber-400' : 'text-rose-400'}>
+                              {trade.profitPercent}%
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                              {trade.outcomeReason || 'Closed'}
+                            </span>
+                          </td>
+                        </tr>
+
+                        {isExpanded && (
+                          <tr className="bg-zinc-950/90 border-t border-b border-zinc-800">
+                            <td colSpan={10} className="p-4">
+                              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                                      Legacy Trade Execution Thesis &amp; Model Confluence
+                                    </span>
+                                    <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                      {trade.session || 'REGULAR'}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-zinc-500">
+                                    Delta: {trade.delta} | Theta: +${trade.thetaPerDay}/day
+                                  </span>
+                                </div>
+                                <p className="text-xs text-zinc-300 leading-relaxed">
+                                  {trade.whyOpenedThesis}
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TAB 2: ACTIVE OPEN POSITIONS (Live Positions Management) */}
       {mainTab === 'open-positions' && (
         <div className="space-y-4">
@@ -951,6 +1262,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                           </div>
                           <div className="text-xs text-zinc-400 mt-0.5">
                             {pos.contractsCount} Contract(s) • DTE: {pos.dteDaysRemaining} Days • Strike: ${pos.strike.toLocaleString()}
+                            <span className="block text-[11px] text-emerald-400/80 font-mono mt-0.5">
+                              Opened: {pos.entryDate} (Bucharest Time)
+                            </span>
                           </div>
                         </div>
                       </div>

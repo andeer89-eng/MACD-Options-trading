@@ -9,20 +9,21 @@ import {
   relearnOptionsMemoryFromHistory,
 } from './optionsAutomatedPortfolio.ts';
 
-test('initDefaultOptionsPortfolio loads 192 historical trades and calculates stats', () => {
+test('initDefaultOptionsPortfolio loads 192 historical trades in legacyHistory and initializes fresh $2k active journal', () => {
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.startingBalance, 2000);
   assert.strictEqual(account.cash, 2000);
   assert.strictEqual(account.positions.length, 0);
-  assert.ok(account.tradeHistory.length >= 192, `Expected at least 192 trades, got ${account.tradeHistory.length}`);
+  assert.strictEqual(account.tradeHistory.length, 0, 'Active trade history starts clean with 0 trades');
+  assert.ok(account.legacyHistory.length >= 192, `Expected at least 192 archived legacy trades, got ${account.legacyHistory.length}`);
   assert.strictEqual(account.activeMemory.totalThetaHarvested, 115008.44);
 
   const stats = calculateOptionsStats(account);
   assert.strictEqual(stats.startingBalance, 2000);
   assert.strictEqual(stats.currentEquity, 2000);
-  assert.ok(stats.winRatePercent >= 98.0, `Expected high win rate, got ${stats.winRatePercent}`);
-  assert.ok(stats.income2026 > 70000, `Expected 2026 income > 70k, got ${stats.income2026}`);
-  assert.ok(stats.income2025 > 40000, `Expected 2025 income > 40k, got ${stats.income2025}`);
+  assert.strictEqual(stats.totalRealizedIncome, 0.0);
+  assert.strictEqual(stats.totalTradesCount, 0);
+  assert.strictEqual(stats.winRatePercent, 0.0);
 });
 
 test('processOptionsAutonomousCycle scans and opens a qualified MES position on fresh $2,000 account', () => {

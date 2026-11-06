@@ -103,13 +103,14 @@ export interface OptionsPortfolioAccount {
   unrealizedPnL: number;
   dailyThetaIncome: number;
   positions: OptionsPosition[];
-  tradeHistory: OptionsTradeRecord[];
+  tradeHistory: OptionsTradeRecord[]; // Active $2k Era trades ONLY
+  legacyHistory: OptionsTradeRecord[]; // Archived read-only 192 historical audit records (50k era)
   sessionLogs: OptionsTradeLog[];
   isAutoPilotActive: boolean;
   targetDelta: number; // 0.08 to 0.16
   profitTakePercent: number; // 60% to 90%
   minDte: number; // 4 to 14 days
-  maxOpenPositions: number; // default 4
+  maxOpenPositions: number; // default 2
   tradingWarzStrictFilter: boolean;
   lastUpdated: string;
   activeMemory: OptionsActiveMemoryState;
@@ -224,11 +225,12 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
     startingBalance: startingCapital,
     cash: Number(startingCapital.toFixed(2)),
     equity: Number(startingCapital.toFixed(2)),
-    totalRealizedIncome: 0, // Fresh start today for the $2,000 portfolio
+    totalRealizedIncome: 0, // Fresh active start today for $2k era
     unrealizedPnL: 0,
     dailyThetaIncome: 0,
     positions: [], // Fresh start today, zero open positions ready for autonomous scanning
-    tradeHistory: historicalArchive, // All 192 historical trades preserved
+    tradeHistory: [], // Active $2k era trade history starts clean (0 trades)
+    legacyHistory: historicalArchive, // Read-only 192 historical trades from 50k era preserved in Legacy Archive tab
     sessionLogs: [
       {
         id: `log-opt-fresh-${Date.now()}`,
@@ -238,7 +240,7 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
         action: 'ROLL_POSITION',
         contracts: 0,
         premium: 0,
-        reason: 'Options Portfolio initialized fresh today with $2,000.00 USD baseline. Preserved all 192 historical audit records and FinRL epistemic memory bank.',
+        reason: 'Options Portfolio initialized fresh today with $2,000.00 USD baseline. All 192 historical 50k era trades moved to read-only Legacy Archive; FinRL epistemic memory bank & rules 100% preserved.',
         session: 'REGULAR',
       },
     ],
@@ -258,7 +260,10 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
  * Re-ingests all 192+ trades, recalculates episodic critiques, updates policy rules and calibrations.
  */
 export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount): OptionsPortfolioAccount {
-  const allEpisodes = synthesizeOptionsEpisodesFromHistory(account.tradeHistory);
+  const historyToUse = (account.legacyHistory && account.legacyHistory.length > 0)
+    ? account.legacyHistory
+    : (account.tradeHistory && account.tradeHistory.length > 0 ? account.tradeHistory : getEnrichedRichTradesArchive());
+  const allEpisodes = synthesizeOptionsEpisodesFromHistory(historyToUse);
 
   const wins = allEpisodes.filter((e) => e.outcome === 'WIN').length;
   const winRate = allEpisodes.length > 0 ? (wins / allEpisodes.length) * 100 : 100;
@@ -273,7 +278,7 @@ export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount
     calibratedMaxDelta = 0.08;
   }
 
-  const totalThetaHarvested = account.tradeHistory.reduce((sum, t) => sum + t.profitDollars, 0);
+  const totalThetaHarvested = historyToUse.reduce((sum, t) => sum + t.profitDollars, 0);
 
   const updatedMemory: OptionsActiveMemoryState = {
     ...account.activeMemory,
@@ -320,7 +325,7 @@ export function calculateOptionsStats(account: OptionsPortfolioAccount): Options
     : Number(Math.max(0, startingBalance + account.totalRealizedIncome + unrealizedPnL).toFixed(2));
   const totalRealizedIncome = account.totalRealizedIncome;
 
-  const closedTrades = account.tradeHistory.filter((t) => t.status === 'Closed');
+  const closedTrades = (account.tradeHistory || []).filter((t) => t.status === 'Closed');
   let winningTradesCount = 0;
   let losingTradesCount = 0;
   let breakEvenTradesCount = 0;
@@ -351,9 +356,9 @@ export function calculateOptionsStats(account: OptionsPortfolioAccount): Options
   const totalTradesCount = closedTrades.length;
   // Options Win Rate including profitable and breakeven capital-preserving exits
   const effectiveWins = winningTradesCount + breakEvenTradesCount;
-  const winRatePercent = totalTradesCount > 0 ? Number(((effectiveWins / totalTradesCount) * 100).toFixed(1)) : 100.0;
-  const profitFactor = grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : 99.0;
-  const averageWin = winningTradesCount > 0 ? Number((grossWins / winningTradesCount).toFixed(2)) : 604.20;
+  const winRatePercent = totalTradesCount > 0 ? Number(((effectiveWins / totalTradesCount) * 100).toFixed(1)) : 0.0;
+  const profitFactor = grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : grossWins > 0 ? 99.0 : 0.0;
+  const averageWin = winningTradesCount > 0 ? Number((grossWins / winningTradesCount).toFixed(2)) : 0.00;
   const averageLoss = losingTradesCount > 0 ? Number((grossLosses / losingTradesCount).toFixed(2)) : 0.00;
 
   const dailyThetaIncome = account.positions.reduce((sum, p) => sum + p.dailyTheta, 0);
@@ -751,19 +756,41 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
             saveOptionsPortfolio(parsed);
           }
 
-          // If previously saved on old $50k baseline, reset today to $2,000 baseline while preserving all memories and history
+          // Ensure legacyHistory is populated with the 192 historical trades archive
+          if (!parsed.legacyHistory || parsed.legacyHistory.length === 0) {
+            parsed.legacyHistory = getEnrichedRichTradesArchive();
+          }
+
+          // Migrate any legacy 50k archive trades out of active tradeHistory
+          if (parsed.tradeHistory && parsed.tradeHistory.length > 0) {
+            const legacyTrades = parsed.tradeHistory.filter(
+              (t: any) => t.id && (t.id.startsWith('rich-opt-log-') || t.id.startsWith('rich-opt-'))
+            );
+            if (legacyTrades.length > 0) {
+              // Ensure legacyHistory has all legacy trades
+              const existingIds = new Set((parsed.legacyHistory || []).map((t: any) => t.id));
+              legacyTrades.forEach((lt: any) => {
+                if (!existingIds.has(lt.id)) {
+                  parsed.legacyHistory.push(lt);
+                }
+              });
+              // Keep only active $2k era trades in tradeHistory
+              parsed.tradeHistory = parsed.tradeHistory.filter(
+                (t: any) => t.id && !t.id.startsWith('rich-opt-log-') && !t.id.startsWith('rich-opt-')
+              );
+            }
+          }
+
+          // Enforce fresh $2k era starting balance and active metrics
           if (parsed.startingBalance !== 2000) {
             parsed.startingBalance = 2000;
             parsed.cash = 2000;
             parsed.equity = 2000;
-            parsed.totalRealizedIncome = 0;
+            parsed.totalRealizedIncome = (parsed.tradeHistory || []).reduce((sum: number, t: any) => sum + (t.profitDollars || 0), 0);
             parsed.unrealizedPnL = 0;
             parsed.dailyThetaIncome = 0;
             parsed.positions = [];
             parsed.maxOpenPositions = 2;
-            if (!parsed.tradeHistory || parsed.tradeHistory.length === 0) {
-              parsed.tradeHistory = getEnrichedRichTradesArchive();
-            }
             parsed.sessionLogs = [
               {
                 id: `log-opt-fresh-${Date.now()}`,
@@ -773,12 +800,22 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
                 action: 'ROLL_POSITION',
                 contracts: 0,
                 premium: 0,
-                reason: 'Options Portfolio initialized fresh today with $2,000.00 USD baseline. Preserved 100% of Rich 192-trade historical audit records and FinRL epistemic memory bank.',
+                reason: 'Options Portfolio migrated to fresh $2,000.00 USD era. All 192 historical trades archived in read-only Legacy Archive tab; FinRL epistemic memory bank & rules 100% preserved.',
                 session: 'REGULAR',
               },
               ...(parsed.sessionLogs || []),
             ];
             parsed.lastUpdated = new Date().toISOString();
+            saveOptionsPortfolio(parsed);
+          }
+
+          // Clear legacy seed positions if starting fresh on 2k portfolio
+          if (parsed.startingBalance === 2000 && (parsed.tradeHistory || []).length === 0 && (parsed.positions || []).some((p: any) => p.id && (p.id.includes('nov12') || p.id.includes('opt-pos-es-')))) {
+            parsed.positions = [];
+            parsed.dailyThetaIncome = 0;
+            parsed.unrealizedPnL = 0;
+            parsed.cash = 2000;
+            parsed.equity = 2000;
             saveOptionsPortfolio(parsed);
           }
 
@@ -807,17 +844,16 @@ export function resetOptionsPortfolio(capital: number = 2000): OptionsPortfolioA
   const memoryToPreserve = current.activeMemory?.episodes?.length > 10
     ? current.activeMemory
     : undefined;
-  const historyToPreserve = current.tradeHistory?.length > 0
-    ? current.tradeHistory
-    : undefined;
+  const legacyToPreserve = (current.legacyHistory && current.legacyHistory.length > 0)
+    ? current.legacyHistory
+    : getEnrichedRichTradesArchive();
 
   const fresh = initDefaultOptionsPortfolio(capital);
   if (memoryToPreserve) {
     fresh.activeMemory = memoryToPreserve;
   }
-  if (historyToPreserve) {
-    fresh.tradeHistory = historyToPreserve;
-  }
+  fresh.legacyHistory = legacyToPreserve;
+  fresh.tradeHistory = []; // Clean active journal starting empty for $2k era
   saveOptionsPortfolio(fresh);
   return fresh;
 }
@@ -849,7 +885,12 @@ export function exportOptionsLogsToCSV(account: OptionsPortfolioAccount): string
     return `"${String(v).replace(/"/g, '""')}"`;
   };
 
-  const rows = account.tradeHistory.map((t) => [
+  const allTrades = [
+    ...(account.tradeHistory || []),
+    ...(account.legacyHistory || []),
+  ];
+
+  const rows = allTrades.map((t) => [
     escapeCell(t.date),
     escapeCell(t.ticker),
     escapeCell(t.session || 'REGULAR'),

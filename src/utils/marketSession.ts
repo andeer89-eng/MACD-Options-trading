@@ -17,6 +17,54 @@ export interface SessionRegimeInfo {
 }
 
 /**
+ * Formats time in Europe/Bucharest timezone (HH:MM:SS)
+ */
+export function getBucharestTimeFormatted(date: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Bucharest',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
+  } catch (err) {
+    return date.toTimeString().slice(0, 8);
+  }
+}
+
+/**
+ * Formats full Date and Time in Europe/Bucharest timezone (YYYY-MM-DD HH:MM:SS)
+ */
+export function getBucharestDateTimeFormatted(date: Date = new Date()): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Bucharest',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+
+    let year = '', month = '', day = '', hour = '', minute = '', second = '';
+    for (const p of parts) {
+      if (p.type === 'year') year = p.value;
+      if (p.type === 'month') month = p.value;
+      if (p.type === 'day') day = p.value;
+      if (p.type === 'hour') hour = p.value;
+      if (p.type === 'minute') minute = p.value;
+      if (p.type === 'second') second = p.value;
+    }
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  } catch (err) {
+    return date.toISOString().replace('T', ' ').slice(0, 19);
+  }
+}
+
+/**
  * Accurately extracts US Eastern Time parts (New York timezone) regardless of client/server local timezone.
  */
 export function getEasternTimeParts(date: Date = new Date()): {
