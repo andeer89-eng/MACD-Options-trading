@@ -1,0 +1,6 @@
+{
+  "name": "Trullàs Divergence 24/7 Scanner",
+  "description": "David Trullàs MACD Triple Divergence 24/7 technical scanner and rules analyzer with real-time Yahoo Finance data, SEC EDGAR filings integration, and standalone Python daemon generator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

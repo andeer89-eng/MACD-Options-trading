@@ -1,0 +1,1922 @@
+[
+  {
+    "date": "2026-10-25",
+    "contract": "ES 05NOV26 7340 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7340 P",
+    "expiration": "Thursday, November 5, 2026",
+    "profitDollars": 1311.54,
+    "profitPctStr": "60%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-10-18",
+    "contract": "ES 29OCT26 7330 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7330 P",
+    "expiration": "Thursday, October 29, 2026",
+    "profitDollars": 1134.4,
+    "profitPctStr": "65%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-10-11",
+    "contract": "ES 22OCT26 7680 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7680 P",
+    "expiration": "Thursday, October 22, 2026",
+    "profitDollars": 96.5,
+    "profitPctStr": "1%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-10-04",
+    "contract": "ES 15OCT26 7570 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7570 P",
+    "expiration": "Thursday, October 15, 2026",
+    "profitDollars": 1866.5,
+    "profitPctStr": "86%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-09-27",
+    "contract": "ES 08OCT26 7570 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7570 P",
+    "expiration": "Thursday, October 8, 2026",
+    "profitDollars": 1409,
+    "profitPctStr": "75%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-09-20",
+    "contract": "ES 01OCT26 7520 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7520 P",
+    "expiration": "Thursday, October 1, 2026",
+    "profitDollars": 2129,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-09-13",
+    "contract": "ES 24SEP26 7450 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7450 P",
+    "expiration": "Thursday, September 24, 2026",
+    "profitDollars": 2519,
+    "profitPctStr": "90%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-09-06",
+    "contract": "ES 17SEP26 7490 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7490 P",
+    "expiration": "Thursday, September 17, 2026",
+    "profitDollars": 411.5,
+    "profitPctStr": "25%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-08-30",
+    "contract": "ES 10SEP26 7510 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7510 P",
+    "expiration": "Thursday, September 10, 2026",
+    "profitDollars": 1319,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-08-23",
+    "contract": "ES 03SEP26 7430 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7430 P",
+    "expiration": "Thursday, September 3, 2026",
+    "profitDollars": 924.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-08-16",
+    "contract": "ES 27AUG26 7600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7600 P",
+    "expiration": "Thursday, August 27, 2026",
+    "profitDollars": 500.9,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-08-09",
+    "contract": "ES 20AUG26 7540 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7540 P",
+    "expiration": "Thursday, August 20, 2026",
+    "profitDollars": 1326.5,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-08-02",
+    "contract": "ES 13AUG26 7275 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7275 P",
+    "expiration": "Thursday, August 13, 2026",
+    "profitDollars": 1596.5,
+    "profitPctStr": "95%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-07-26",
+    "contract": "ES 06AUG26 7200 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7200 P",
+    "expiration": "Thursday, August 6, 2026",
+    "profitDollars": 1641.5,
+    "profitPctStr": "75%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-07-19",
+    "contract": "ES 30JUL26 7150 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7150 P",
+    "expiration": "Thursday, July 30, 2026",
+    "profitDollars": 1701.5,
+    "profitPctStr": "53%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-07-12",
+    "contract": "ES 23JUL26 7410 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7410 P",
+    "expiration": "Thursday, July 23, 2026",
+    "profitDollars": 491.5,
+    "profitPctStr": "30%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-07-05",
+    "contract": "ES 16JUL26 7280 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7280 P",
+    "expiration": "Thursday, July 16, 2026",
+    "profitDollars": 1236.5,
+    "profitPctStr": "80%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-06-28",
+    "contract": "ES 09JUL26 7110 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7110 P",
+    "expiration": "Thursday, July 9, 2026",
+    "profitDollars": 1439.3,
+    "profitPctStr": "90%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-06-21",
+    "contract": "ES 02JUL26 7270 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7270 P",
+    "expiration": "Thursday, July 2, 2026",
+    "profitDollars": 2048.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-06-14",
+    "contract": "ES 25JUN26 7150 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7150 P",
+    "expiration": "Thursday, June 25, 2026",
+    "profitDollars": 1078.6,
+    "profitPctStr": "70%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-06-07",
+    "contract": "ES 18JUN26 6930 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6930 P",
+    "expiration": "Thursday, June 18, 2026",
+    "profitDollars": -158.5,
+    "profitPctStr": "Break Even",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-05-31",
+    "contract": "ES 11JUN26 7320 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7320 P",
+    "expiration": "Thursday, June 11, 2026",
+    "profitDollars": 456.5,
+    "profitPctStr": "40%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-05-24",
+    "contract": "ES 04JUN26 7195 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7195 P",
+    "expiration": "Thursday, June 4, 2026",
+    "profitDollars": 1003,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-05-17",
+    "contract": "ES 28MAY26 7080 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7080 P",
+    "expiration": "Thursday, May 28, 2026",
+    "profitDollars": 1364,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-05-10",
+    "contract": "ES 21MAY26 7140 P",
+    "boughtSold": "Sold",
+    "strikeStr": "7140 P",
+    "expiration": "Thursday, May 21, 2026",
+    "profitDollars": 921.5,
+    "profitPctStr": "45%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-05-03",
+    "contract": "ES 14MAY26 6960 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6960 P",
+    "expiration": "Thursday, May 14, 2026",
+    "profitDollars": 1386.5,
+    "profitPctStr": "80%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-04-26",
+    "contract": "ES 07MAY26 6850 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6850 P",
+    "expiration": "Thursday, May 7, 2026",
+    "profitDollars": 1799,
+    "profitPctStr": "98%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-04-19",
+    "contract": "ES 30APR26 6790 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6790 P",
+    "expiration": "Thursday, April 30, 2026",
+    "profitDollars": 1776.5,
+    "profitPctStr": "82%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-04-12",
+    "contract": "ES 23APR26 6460 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6460 P",
+    "expiration": "Thursday, April 23, 2026",
+    "profitDollars": 2331.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-04-05",
+    "contract": "ES 16APR26 6150 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6150 P",
+    "expiration": "Thursday, April 16, 2026",
+    "profitDollars": 2181.5,
+    "profitPctStr": "94%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-03-29",
+    "contract": "ES 09APR26 5910 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5910 P",
+    "expiration": "Thursday, April 9, 2026",
+    "profitDollars": 3104,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-03-22",
+    "contract": "ES 02APR26 6020 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6020 P",
+    "expiration": "Thursday, April 2, 2026",
+    "profitDollars": 1836.5,
+    "profitPctStr": "57%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-03-15",
+    "contract": "ES 26MAR26 6150 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6150 P",
+    "expiration": "Thursday, March 26, 2026",
+    "profitDollars": 1754,
+    "profitPctStr": "70%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-03-08",
+    "contract": "ES 19MAR26 6000 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6000 P",
+    "expiration": "Thursday, March 19, 2026",
+    "profitDollars": 3876.5,
+    "profitPctStr": "85%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-03-01",
+    "contract": "ES 12MAR26 6490 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6490 P",
+    "expiration": "Thursday, March 12, 2026",
+    "profitDollars": 3595.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-02-22",
+    "contract": "ES 06MAR26 6640 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6640 P",
+    "expiration": "Friday, March 6, 2026",
+    "profitDollars": 3745.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-02-15",
+    "contract": "ES 27FEB26 6510 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6510 P",
+    "expiration": "Friday, February 27, 2026",
+    "profitDollars": 3258.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-02-08",
+    "contract": "ES 19FEB26 6680 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6680 P",
+    "expiration": "Thursday, February 19, 2026",
+    "profitDollars": 1825.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-02-01",
+    "contract": "ES 12FEB26 6630 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6630 P",
+    "expiration": "Thursday, February 12, 2026",
+    "profitDollars": 2320.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-25",
+    "contract": "ES 06FEB26 6620 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6620 P",
+    "expiration": "Friday, February 6, 2026",
+    "profitDollars": 2995.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-18",
+    "contract": "ES 29JAN26 6710 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6710 P",
+    "expiration": "Thursday, January 29, 2026",
+    "profitDollars": 2470.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-11",
+    "contract": "ES 22JAN26 6850 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6850 P",
+    "expiration": "Thursday, January 22, 2026",
+    "profitDollars": -46,
+    "profitPctStr": "Break Even",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-04",
+    "contract": "MES 16JAN26 6650 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6650 P",
+    "expiration": "Friday, January 16, 2026",
+    "profitDollars": 542.9,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-04",
+    "contract": "MES 16JAN26 6710 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6710 P",
+    "expiration": "Friday, January 16, 2026",
+    "profitDollars": 707.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-04",
+    "contract": "MES 16JAN26 6750 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6750 P",
+    "expiration": "Friday, January 16, 2026",
+    "profitDollars": 472.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-08",
+    "contract": "MES 08JAN26 6800 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6800 P",
+    "expiration": "Thursday, January 8, 2026",
+    "profitDollars": 563,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-08",
+    "contract": "MES 08JAN26 6840 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6840 P",
+    "expiration": "Thursday, January 8, 2026",
+    "profitDollars": 468.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-08",
+    "contract": "MES 08JAN26 6875 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6875 P",
+    "expiration": "Thursday, January 8, 2026",
+    "profitDollars": 447.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-26",
+    "contract": "ES 02JAN26 6590 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6590 P",
+    "expiration": "Friday, January 2, 2026",
+    "profitDollars": 1144.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-19",
+    "contract": "MES 26DEC25 6610 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6610 P",
+    "expiration": "Friday, December 26, 2025",
+    "profitDollars": 763.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-19",
+    "contract": "MES 26DEC25 6670 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6670 P",
+    "expiration": "Friday, December 26, 2025",
+    "profitDollars": 648.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-19",
+    "contract": "MES 26DEC25 6710 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6710 P",
+    "expiration": "Friday, December 26, 2025",
+    "profitDollars": 688,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-15",
+    "contract": "MES 22DEC25 6650 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6650 P",
+    "expiration": "Monday, December 22, 2025",
+    "profitDollars": 52,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-15",
+    "contract": "MES 22DEC25 6660 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6660 P",
+    "expiration": "Monday, December 22, 2025",
+    "profitDollars": 39.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-15",
+    "contract": "ES 22DEC25 6825 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6825 P",
+    "expiration": "Monday, December 22, 2025",
+    "profitDollars": 274.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-12",
+    "contract": "MES 19DEC25 6590 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6590 P",
+    "expiration": "Friday, December 19, 2025",
+    "profitDollars": 672.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-12",
+    "contract": "MES 19DEC25 6660 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6660 P",
+    "expiration": "Friday, December 19, 2025",
+    "profitDollars": 548,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-12",
+    "contract": "MES 19DEC25 6720 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6720 P",
+    "expiration": "Friday, December 19, 2025",
+    "profitDollars": 801.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-05",
+    "contract": "MES 12DEC25 6600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6600 P",
+    "expiration": "Friday, December 12, 2025",
+    "profitDollars": 1061.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-05",
+    "contract": "MES 12DEC25 6660 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6660 P",
+    "expiration": "Friday, December 12, 2025",
+    "profitDollars": 714.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-05",
+    "contract": "MES 12DEC25 6700 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6700 P",
+    "expiration": "Friday, December 12, 2025",
+    "profitDollars": 906.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-12-03",
+    "contract": "MES 10DEC25 6610 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6610 P",
+    "expiration": "Wednesday, December 10, 2025",
+    "profitDollars": 52,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-27",
+    "contract": "MES 04DEC25 6280 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6280 P",
+    "expiration": "Thursday, December 4, 2025",
+    "profitDollars": 732.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-27",
+    "contract": "MES 04DEC25 6370 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6370 P",
+    "expiration": "Thursday, December 4, 2025",
+    "profitDollars": 649.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-27",
+    "contract": "MES 04DEC25 6420 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6420 P",
+    "expiration": "Thursday, December 4, 2025",
+    "profitDollars": 799.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-21",
+    "contract": "MES 28NOV25 6360 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6360 P",
+    "expiration": "Friday, November 28, 2025",
+    "profitDollars": 804.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-21",
+    "contract": "MES 28NOV25 6450 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6450 P",
+    "expiration": "Friday, November 28, 2025",
+    "profitDollars": 663,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-21",
+    "contract": "MES 28NOV25 6500 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6500 P",
+    "expiration": "Friday, November 28, 2025",
+    "profitDollars": 739.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-19",
+    "contract": "MES 26NOV25 6330 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6330 P",
+    "expiration": "Wednesday, November 26, 2025",
+    "profitDollars": 63.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-18",
+    "contract": "MES 25NOV25 6410 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6410 P",
+    "expiration": "Tuesday, November 25, 2025",
+    "profitDollars": 124.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-14",
+    "contract": "MES 21NOV25 6310 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6310 P",
+    "expiration": "Friday, November 21, 2025",
+    "profitDollars": 79.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-14",
+    "contract": "MES 21NOV25 6440 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6440 P",
+    "expiration": "Friday, November 21, 2025",
+    "profitDollars": 737.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-14",
+    "contract": "MES 21NOV25 6525 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6525 P",
+    "expiration": "Friday, November 21, 2025",
+    "profitDollars": 1084.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-14",
+    "contract": "MES 21NOV25 6575 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6575 P",
+    "expiration": "Friday, November 21, 2025",
+    "profitDollars": 165.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-14",
+    "contract": "MES 21NOV25 6580 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6580 P",
+    "expiration": "Friday, November 21, 2025",
+    "profitDollars": 682.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-07",
+    "contract": "MES 14NOV25 6570 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6570 P",
+    "expiration": "Friday, November 14, 2025",
+    "profitDollars": 124.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-07",
+    "contract": "MES 14NOV25 6600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6600 P",
+    "expiration": "Friday, November 14, 2025",
+    "profitDollars": 709.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-07",
+    "contract": "MES 14NOV25 6650 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6650 P",
+    "expiration": "Friday, November 14, 2025",
+    "profitDollars": 686.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-07",
+    "contract": "MES 14NOV25 6700 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6700 P",
+    "expiration": "Friday, November 14, 2025",
+    "profitDollars": 114.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-06",
+    "contract": "MES 13NOV25 6620 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6620 P",
+    "expiration": "Thursday, November 13, 2025",
+    "profitDollars": 52,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-11-03",
+    "contract": "MES 10NOV25 6610 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6610 P",
+    "expiration": "Monday, November 10, 2025",
+    "profitDollars": 94.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-31",
+    "contract": "MES 07NOV25 6620 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6620 P",
+    "expiration": "Friday, November 7, 2025",
+    "profitDollars": 163.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-27",
+    "contract": "MES 03NOV25 6625 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6625 P",
+    "expiration": "Monday, November 3, 2025",
+    "profitDollars": 31.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-27",
+    "contract": "MES 03NOV25 6675 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6675 P",
+    "expiration": "Monday, November 3, 2025",
+    "profitDollars": 327.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-27",
+    "contract": "MES 03NOV25 6720 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6720 P",
+    "expiration": "Monday, November 3, 2025",
+    "profitDollars": 394.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-27",
+    "contract": "MES 03NOV25 6750 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6750 P",
+    "expiration": "Monday, November 3, 2025",
+    "profitDollars": 422.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-24",
+    "contract": "MES 31OCT25 6290 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6290 P",
+    "expiration": "Friday, October 31, 2025",
+    "profitDollars": 612.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-24",
+    "contract": "MES 31OCT25 6390 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6390 P",
+    "expiration": "Friday, October 31, 2025",
+    "profitDollars": 591.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-24",
+    "contract": "MES 31OCT25 6470 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6470 P",
+    "expiration": "Friday, October 31, 2025",
+    "profitDollars": 653.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-22",
+    "contract": "MES 29OCT25 6135 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6135 P",
+    "expiration": "Wednesday, October 29, 2025",
+    "profitDollars": 24.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-17",
+    "contract": "MES 24OCT25 6030 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6030 P",
+    "expiration": "Friday, October 24, 2025",
+    "profitDollars": 54.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-17",
+    "contract": "MES 24OCT25 6280 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6280 P",
+    "expiration": "Friday, October 24, 2025",
+    "profitDollars": 1066.9,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-17",
+    "contract": "MES 24OCT25 6380 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6380 P",
+    "expiration": "Friday, October 24, 2025",
+    "profitDollars": 463.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-17",
+    "contract": "MES 24OCT25 6420 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6420 P",
+    "expiration": "Friday, October 24, 2025",
+    "profitDollars": 99.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-17",
+    "contract": "MES 24OCT25 6440 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6440 P",
+    "expiration": "Friday, October 24, 2025",
+    "profitDollars": 588.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-10",
+    "contract": "MES 17OCT25 6480 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6480 P",
+    "expiration": "Friday, October 17, 2025",
+    "profitDollars": 395.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-10",
+    "contract": "MES 17OCT25 6560 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6560 P",
+    "expiration": "Friday, October 17, 2025",
+    "profitDollars": 328.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-10",
+    "contract": "MES 17OCT25 6610 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6610 P",
+    "expiration": "Friday, October 17, 2025",
+    "profitDollars": 428.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-10",
+    "contract": "MES 17OCT25 6635 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6635 P",
+    "expiration": "Friday, October 17, 2025",
+    "profitDollars": 70.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-03",
+    "contract": "MES 10OCT25 6190 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6190 P",
+    "expiration": "Friday, October 10, 2025",
+    "profitDollars": -307.6,
+    "profitPctStr": "Order Error",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-03",
+    "contract": "MES 10OCT25 6400 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6400 P",
+    "expiration": "Friday, October 10, 2025",
+    "profitDollars": 762.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-03",
+    "contract": "MES 10OCT25 6470 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6470 P",
+    "expiration": "Friday, October 10, 2025",
+    "profitDollars": 228.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-03",
+    "contract": "MES 10OCT25 6520 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6520 P",
+    "expiration": "Friday, October 10, 2025",
+    "profitDollars": 323.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-10-03",
+    "contract": "MES 10OCT25 6550 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6550 P",
+    "expiration": "Friday, October 10, 2025",
+    "profitDollars": 393.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-30",
+    "contract": "MES 07OCT25 6300 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6300 P",
+    "expiration": "Tuesday, October 7, 2025",
+    "profitDollars": 280.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-29",
+    "contract": "MES 06OCT25 6550 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6550 P",
+    "expiration": "Monday, October 6, 2025",
+    "profitDollars": 161.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-23",
+    "contract": "MES 30SEP25 6515 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6515 P",
+    "expiration": "Tuesday, September 30, 2025",
+    "profitDollars": 160.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-23",
+    "contract": "MES 30SEP25 6520 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6520 P",
+    "expiration": "Tuesday, September 30, 2025",
+    "profitDollars": 190.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-23",
+    "contract": "MES 30SEP25 6565 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6565 P",
+    "expiration": "Tuesday, September 30, 2025",
+    "profitDollars": 384.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-23",
+    "contract": "MES 30SEP25 6600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6600 P",
+    "expiration": "Tuesday, September 30, 2025",
+    "profitDollars": 313.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-19",
+    "contract": "MES 26SEP25 6380 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6380 P",
+    "expiration": "Friday, September 26, 2025",
+    "profitDollars": 431.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-19",
+    "contract": "MES 26SEP25 6450 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6450 P",
+    "expiration": "Friday, September 26, 2025",
+    "profitDollars": 204.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-19",
+    "contract": "MES 26SEP25 6500 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6500 P",
+    "expiration": "Friday, September 26, 2025",
+    "profitDollars": 279.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-12",
+    "contract": "MES 19SEP25 6270 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6270 P",
+    "expiration": "Friday, September 19, 2025",
+    "profitDollars": 232.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-12",
+    "contract": "MES 19SEP25 6330 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6330 P",
+    "expiration": "Friday, September 19, 2025",
+    "profitDollars": 231.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-12",
+    "contract": "MES 19SEP25 6380 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6380 P",
+    "expiration": "Friday, September 19, 2025",
+    "profitDollars": 309.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-12",
+    "contract": "MES 19SEP25 6260 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6260 P",
+    "expiration": "Friday, September 19, 2025",
+    "profitDollars": 52.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6020 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6020 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 385.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6200 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6200 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 87.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6240 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6240 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 266.4,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6295 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6295 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 372.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6300 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6300 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 141.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-05",
+    "contract": "MES 12SEP25 6350 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6350 P",
+    "expiration": "Friday, September 12, 2025",
+    "profitDollars": 199.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-09-01",
+    "contract": "MES 08SEP25 6390 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6390 P",
+    "expiration": "Monday, September 8, 2025",
+    "profitDollars": 149.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-29",
+    "contract": "MES 05SEP25 6275 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6275 P",
+    "expiration": "Friday, September 5, 2025",
+    "profitDollars": 109.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-29",
+    "contract": "MES 05SEP25 6330 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6330 P",
+    "expiration": "Friday, September 5, 2025",
+    "profitDollars": 397.2,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-29",
+    "contract": "MES 05SEP25 6370 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6370 P",
+    "expiration": "Friday, September 5, 2025",
+    "profitDollars": 209.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-29",
+    "contract": "MES 05SEP25 6400 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6400 P",
+    "expiration": "Friday, September 5, 2025",
+    "profitDollars": 266.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-15",
+    "contract": "MES 22AUG25 6330 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6330 P",
+    "expiration": "Friday, August 22, 2025",
+    "profitDollars": 52.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-15",
+    "contract": "MES 22AUG25 6365 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6365 P",
+    "expiration": "Friday, August 22, 2025",
+    "profitDollars": 158.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-15",
+    "contract": "MES 22AUG25 6370 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6370 P",
+    "expiration": "Friday, August 22, 2025",
+    "profitDollars": 308.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-15",
+    "contract": "MES 22AUG25 6390 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6390 P",
+    "expiration": "Friday, August 22, 2025",
+    "profitDollars": 116.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6040 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6040 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 116.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6130 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6130 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 186.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6200 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6200 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 249.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6225 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6225 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 336.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6255 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6255 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 65.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6290 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6290 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 96.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-08",
+    "contract": "MES 15AUG25 6320 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6320 P",
+    "expiration": "Friday, August 15, 2025",
+    "profitDollars": 134.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-01",
+    "contract": "MES 08AUG25 6210 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6210 P",
+    "expiration": "Friday, August 8, 2025",
+    "profitDollars": 89.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-01",
+    "contract": "MES 08AUG25 6275 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6275 P",
+    "expiration": "Friday, August 8, 2025",
+    "profitDollars": 141.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-01",
+    "contract": "MES 08AUG25 6290 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6290 P",
+    "expiration": "Friday, August 8, 2025",
+    "profitDollars": 186.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-08-01",
+    "contract": "MES 08AUG25 6320 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6320 P",
+    "expiration": "Friday, August 8, 2025",
+    "profitDollars": 196.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-24",
+    "contract": "MES 31JUL25 6110 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6110 P",
+    "expiration": "Thursday, July 31, 2025",
+    "profitDollars": 92.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-24",
+    "contract": "MES 31JUL25 6170 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6170 P",
+    "expiration": "Thursday, July 31, 2025",
+    "profitDollars": 144.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-24",
+    "contract": "MES 31JUL25 6210 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6210 P",
+    "expiration": "Thursday, July 31, 2025",
+    "profitDollars": 199.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-18",
+    "contract": "MES 25JUL25 6020 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6020 P",
+    "expiration": "Friday, July 25, 2025",
+    "profitDollars": 200.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-18",
+    "contract": "MES 25JUL25 6080 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6080 P",
+    "expiration": "Friday, July 25, 2025",
+    "profitDollars": 146.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-18",
+    "contract": "MES 25JUL25 6090 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6090 P",
+    "expiration": "Friday, July 25, 2025",
+    "profitDollars": 159.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-18",
+    "contract": "MES 25JUL25 6125 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6125 P",
+    "expiration": "Friday, July 25, 2025",
+    "profitDollars": 204.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-11",
+    "contract": "MES 18JUL25 6010 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6010 P",
+    "expiration": "Friday, July 18, 2025",
+    "profitDollars": 106.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-11",
+    "contract": "MES 18JUL25 6090 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6090 P",
+    "expiration": "Friday, July 18, 2025",
+    "profitDollars": 164.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-11",
+    "contract": "MES 18JUL25 6140 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6140 P",
+    "expiration": "Friday, July 18, 2025",
+    "profitDollars": 221.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 5980 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5980 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 159.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 5990 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5990 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 109.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6030 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6030 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 144.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6040 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6040 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 239.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6070 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6070 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 189.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6140 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6140 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 244.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6160 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6160 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 286.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-07-04",
+    "contract": "MES 11JUL25 6180 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6180 P",
+    "expiration": "Friday, July 11, 2025",
+    "profitDollars": 339.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 5730 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5730 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 104.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 5795 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5795 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 156.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 5835 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5835 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 204.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 5980 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5980 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 65.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 6020 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6020 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 97.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-23",
+    "contract": "MES 30JUN25 6050 P",
+    "boughtSold": "Sold",
+    "strikeStr": "6050 P",
+    "expiration": "Monday, June 30, 2025",
+    "profitDollars": 131.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-20",
+    "contract": "MES 27JUN25 5800 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5800 P",
+    "expiration": "Friday, June 27, 2025",
+    "profitDollars": 92,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-20",
+    "contract": "MES 27JUN25 5880 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5880 P",
+    "expiration": "Friday, June 27, 2025",
+    "profitDollars": 79.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-04",
+    "contract": "MES 20JUN25 5850 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5850 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 155.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-04",
+    "contract": "MES 20JUN25 5990 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5990 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 121.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2026-01-08",
+    "contract": "MES 20JUN25 5770 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5770 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 46.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-13",
+    "contract": "MES 20JUN25 5825 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5825 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 72,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-13",
+    "contract": "MES 20JUN25 5870 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5870 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 103.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-13",
+    "contract": "MES 20JUN25 5900 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5900 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 160.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-13",
+    "contract": "MES 20JUN25 5975 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5975 P",
+    "expiration": "Friday, June 20, 2025",
+    "profitDollars": 321.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5600 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 57,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5650 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5650 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 107,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5670 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5670 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 89.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-03",
+    "contract": "MES 13JUN25 5720 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5720 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 154.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5775 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5775 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 576.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5815 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5815 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 139.1,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-06-06",
+    "contract": "MES 13JUN25 5930 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5930 P",
+    "expiration": "Friday, June 13, 2025",
+    "profitDollars": 82.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-30",
+    "contract": "MES 06JUN25 5660 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5660 P",
+    "expiration": "Friday, June 6, 2025",
+    "profitDollars": 93.3,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-30",
+    "contract": "MES 06JUN25 5710 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5710 P",
+    "expiration": "Friday, June 6, 2025",
+    "profitDollars": 127,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-30",
+    "contract": "MES 06JUN25 5810 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5810 P",
+    "expiration": "Friday, June 6, 2025",
+    "profitDollars": 174.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-30",
+    "contract": "MES 06JUN25 5900 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5900 P",
+    "expiration": "Friday, June 6, 2025",
+    "profitDollars": 104.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-30",
+    "contract": "MES 06JUN25 5600 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5600 P",
+    "expiration": "Friday, June 6, 2025",
+    "profitDollars": 64.5,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-23",
+    "contract": "MES 30MAY25 5700 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5700 P",
+    "expiration": "Friday, May 30, 2025",
+    "profitDollars": 293.7,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-23",
+    "contract": "MES 30MAY25 5830 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5830 P",
+    "expiration": "Friday, May 30, 2025",
+    "profitDollars": 202,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-16",
+    "contract": "MES 23MAY25 5680 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5680 P",
+    "expiration": "Friday, May 23, 2025",
+    "profitDollars": 96.6,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  },
+  {
+    "date": "2025-05-09",
+    "contract": "MES 16MAY25 5650 P",
+    "boughtSold": "Sold",
+    "strikeStr": "5650 P",
+    "expiration": "Friday, May 16, 2025",
+    "profitDollars": 365.8,
+    "profitPctStr": "100%",
+    "status": "Closed"
+  }
+]
