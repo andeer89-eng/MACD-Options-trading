@@ -59,7 +59,7 @@ import {
 } from '../utils/optionsAutomatedPortfolio';
 import { OptionsTradeRecord } from '../data/richOptionsTradesArchive';
 import { downloadCSV } from '../utils/tradeJournal';
-import { getMarketSessionStatus } from '../utils/marketSession';
+import { getMarketSessionStatus, getTradeExecutionRegime, MarketRegimeType } from '../utils/marketSession';
 
 interface OptionsAutomatedPortfolioManagerProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -73,6 +73,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   const [account, setAccount] = useState<OptionsPortfolioAccount>(() => loadOptionsPortfolio());
   const [mainTab, setMainTab] = useState<'journal' | 'open-positions' | 'brain' | 'rules'>('journal');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'EXPIRED' | 'EARLY_TP' | 'BREAKEVEN'>('ALL');
+  const [sessionFilter, setSessionFilter] = useState<'ALL' | 'REGULAR' | 'PREMARKET' | 'AFTERHOURS' | '24/7'>('ALL');
   const [yearFilter, setYearFilter] = useState<'ALL' | '2026' | '2025'>('ALL');
   const [tickerFilter, setTickerFilter] = useState<'ALL' | 'ES' | 'MES' | 'SPY'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -80,6 +81,37 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   const [isCycleRunning, setIsCycleRunning] = useState(false);
   const [cycleFeedbackMessage, setCycleFeedbackMessage] = useState<string | null>(null);
   const [exportToast, setExportToast] = useState<string | null>(null);
+
+  // Live Market Time & Multi-Cadence Countdown
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [nextScanCountdown, setNextScanCountdown] = useState<number>(60);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+      setNextScanCountdown((prev) => (prev <= 1 ? 60 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Autonomous Intraday Scheduler (every 60s when autopilot is active)
+  useEffect(() => {
+    if (!account.isAutoPilotActive) return;
+
+    if (nextScanCountdown === 60) {
+      const marketCandidates = [
+        { symbol: 'ES', currentPrice: 7648.50 },
+        { symbol: 'MES', currentPrice: 6915.20 },
+        { symbol: 'SPY', currentPrice: 574.80 },
+      ];
+      const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates, true);
+      if (actionsTaken.length > 0) {
+        setAccount(updatedAccount);
+        setCycleFeedbackMessage(`Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s).`);
+        setTimeout(() => setCycleFeedbackMessage(null), 5000);
+      }
+    }
+  }, [nextScanCountdown, account.isAutoPilotActive]);
 
   // Active Memory Brain State
   const [isRelearningMemory, setIsRelearningMemory] = useState(false);
@@ -101,7 +133,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   const [closeReason, setCloseReason] = useState<string>('Discretionary early profit capture');
 
   const stats: OptionsPortfolioStats = useMemo(() => calculateOptionsStats(account), [account]);
-  const marketSession = useMemo(() => getMarketSessionStatus(), []);
+  const marketSession = useMemo(() => getMarketSessionStatus(), [currentTime]);
 
   // Filter trade history records
   const filteredHistory = useMemo(() => {
@@ -111,6 +143,15 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       if (statusFilter === 'EXPIRED' && t.outcomeReason !== 'Expired Worthless') return false;
       if (statusFilter === 'EARLY_TP' && t.outcomeReason !== 'Early Take-Profit') return false;
       if (statusFilter === 'BREAKEVEN' && t.outcomeReason !== 'Break Even') return false;
+
+      // Session filter
+      if (sessionFilter !== 'ALL') {
+        const tradeSession = t.session || 'REGULAR';
+        if (sessionFilter === '24/7' && tradeSession !== '24/7') return false;
+        if (sessionFilter === 'REGULAR' && tradeSession !== 'REGULAR') return false;
+        if (sessionFilter === 'PREMARKET' && tradeSession !== 'PREMARKET') return false;
+        if (sessionFilter === 'AFTERHOURS' && tradeSession !== 'AFTERHOURS') return false;
+      }
 
       // Year filter
       if (yearFilter !== 'ALL' && !t.date.startsWith(yearFilter)) return false;
@@ -132,7 +173,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
       return true;
     });
-  }, [account.tradeHistory, statusFilter, yearFilter, tickerFilter, searchQuery]);
+  }, [account.tradeHistory, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
 
   // Filter episodes for Brain tab
   const filteredEpisodes = useMemo(() => {
@@ -228,11 +269,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   // Reset Portfolio
   const handleResetPortfolio = () => {
-    if (confirm('Reset Options Virtual Portfolio to default ($50,000 baseline + Rich 192 historical archive)?')) {
-      const reset = resetOptionsPortfolio(50000);
+    if (confirm('Reset Options Strategy today with $2,000 USD starting capital?\n\nThis will reset active positions & balance to $2,000 while strictly preserving 100% of all 192 historical trade memories & rules!')) {
+      const reset = resetOptionsPortfolio(2000);
       setAccount(reset);
-      setCycleFeedbackMessage('Options Portfolio reset to initial $50,000 baseline with 192 historical audit trades.');
-      setTimeout(() => setCycleFeedbackMessage(null), 4000);
+      setCycleFeedbackMessage('Options Portfolio reset today with fresh $2,000 USD baseline. Preserved 100% of FinRL epistemic memories & 192 audit trades!');
+      setTimeout(() => setCycleFeedbackMessage(null), 5000);
     }
   };
 
@@ -612,6 +653,23 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                 ))}
               </div>
 
+              <div className="flex items-center space-x-1 text-xs">
+                <span className="text-zinc-500">Session:</span>
+                {(['ALL', 'REGULAR', 'PREMARKET', 'AFTERHOURS', '24/7'] as const).map((ses) => (
+                  <button
+                    key={ses}
+                    onClick={() => setSessionFilter(ses)}
+                    className={`px-2 py-0.5 rounded text-xs ${
+                      sessionFilter === ses
+                        ? 'bg-emerald-600 text-white font-bold'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {ses}
+                  </button>
+                ))}
+              </div>
+
               {/* Search input */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2" />
@@ -634,6 +692,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   <tr>
                     <th className="py-3 px-4 w-8"></th>
                     <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4">Session</th>
                     <th className="py-3 px-4">Contract / Strike</th>
                     <th className="py-3 px-4">Type</th>
                     <th className="py-3 px-4">TradingWarz Confluence</th>
@@ -667,6 +726,19 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                           </td>
                           <td className="py-3 px-4 font-mono text-zinc-300 whitespace-nowrap">
                             {trade.date}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              (trade.session || 'REGULAR') === '24/7'
+                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                                : (trade.session || 'REGULAR') === 'PREMARKET'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : (trade.session || 'REGULAR') === 'AFTERHOURS'
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            }`}>
+                              {trade.session || 'REGULAR'}
+                            </span>
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="flex items-center space-x-2">

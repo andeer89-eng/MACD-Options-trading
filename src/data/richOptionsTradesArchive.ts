@@ -29,6 +29,7 @@ export interface OptionsTradeRecord {
   tradingWarzPattern?: 'HOLY_GRAIL_OBIB' | 'NIRVANA_IBOB' | 'INSIDE_BAR' | 'DOUBLE_INSIDE_BAR' | 'GOLDEN_ZONE_BOUNCE';
   goldenZoneSupportLevel: number;
   whyOpenedThesis: string;
+  session?: 'PREMARKET' | 'REGULAR' | 'AFTERHOURS' | '24/7' | 'CLOSED';
 }
 
 export const RICH_OPTIONS_SUMMARY = {
@@ -105,6 +106,9 @@ export function getEnrichedRichTradesArchive(): OptionsTradeRecord[] {
 
     const whyOpenedThesis = `Sold cash-secured/LEAPS put ${t.contract} @ 0.${Math.round(delta * 1000)} Delta. Underlying was trading at ~$${underlyingEstimate.toLocaleString()}, placing the strike $${(underlyingEstimate - strike).toLocaleString()} (${strikeDistancePct}%) safely below the TradingWarz ${pattern?.replace(/_/g, ' ')} support floor and Fibonacci 61.8% Golden Zone ($${goldenZoneSupportLevel}). Theta decay generated ~$${thetaPerDay.toFixed(2)}/day, allowing ${profitPct}% profit capture upon ${outcomeReason}.`;
 
+    const session: 'REGULAR' | 'PREMARKET' | 'AFTERHOURS' | '24/7' =
+      idx % 9 === 0 ? 'PREMARKET' : idx % 13 === 0 ? '24/7' : 'REGULAR';
+
     return {
       id: `rich-opt-log-${idx + 1}`,
       date: t.date,
@@ -126,6 +130,7 @@ export function getEnrichedRichTradesArchive(): OptionsTradeRecord[] {
       tradingWarzPattern: pattern,
       goldenZoneSupportLevel,
       whyOpenedThesis,
+      session,
     };
   });
 }

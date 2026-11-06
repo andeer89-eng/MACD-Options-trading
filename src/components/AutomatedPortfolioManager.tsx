@@ -726,6 +726,17 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                                       {pos.sector}
                                     </span>
                                   )}
+                                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-bold border ${
+                                    (pos.executionSession || 'REGULAR') === '24/7'
+                                      ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                                      : (pos.executionSession || 'REGULAR') === 'PREMARKET'
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      : (pos.executionSession || 'REGULAR') === 'AFTERHOURS'
+                                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                  }`}>
+                                    {pos.executionSession || 'REGULAR'}
+                                  </span>
                                 </div>
                                 <div className="text-[11px] text-zinc-400 font-sans truncate max-w-[130px]">
                                   {pos.companyName}

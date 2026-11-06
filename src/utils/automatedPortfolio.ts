@@ -18,6 +18,7 @@ import {
   queryMemoryForSetup,
 } from './activeLearningEngine.ts';
 import { generateTickerOptionsSummary } from './cboeOptionsEngine.ts';
+import { getTradeExecutionRegime, MarketRegimeType } from './marketSession.ts';
 
 export interface CboeDecisionConfluence {
   overallScore: number; // 0 - 100%
@@ -56,6 +57,7 @@ export interface AutomatedPosition {
   trancheStage: 1 | 2 | 3; // 1 = 30% starter, 2 = 70% total on trigger confirmation, 3 = 100% full size
   reasonOpened: string;
   cboeConfluence?: CboeDecisionConfluence;
+  executionSession?: MarketRegimeType;
 }
 
 
@@ -70,6 +72,7 @@ export interface AutomatedTradeLog {
   realizedPnL?: number;
   realizedPnLPercent?: number;
   reason: string;
+  session?: MarketRegimeType;
 }
 
 export interface PortfolioAccount {
@@ -690,7 +693,8 @@ export function processAutonomousCycle(
     atrPercent?: number;
     setups: any[];
     candleCount?: number;
-  }>
+  }>,
+  allowExtendedHours: boolean = true
 ): { updatedAccount: PortfolioAccount; actionsTaken: AutomatedTradeLog[] } {
   if (!account.isAutoPilotActive) {
     return { updatedAccount: account, actionsTaken: [] };
@@ -762,6 +766,8 @@ export function processAutonomousCycle(
         activeMemory = updatedState;
       }
 
+      const posRegime = getTradeExecutionRegime(pos.symbol, now).regime;
+
       newLogs.push({
         id: `log-stop-${Date.now()}-${pos.symbol}`,
         timestamp: timestampStr,
@@ -772,7 +778,8 @@ export function processAutonomousCycle(
         price: posCopy.trailingStop,
         realizedPnL: Number(realizedPnL.toFixed(2)),
         realizedPnLPercent: Number(realizedPct.toFixed(2)),
-        reason: `STOP LOSS TRIGGERED at $${posCopy.trailingStop.toFixed(2)} (${realizedPct.toFixed(2)}%). Model closed full position to protect capital per Trullàs Rule 4. Realized P&L: ${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toFixed(2)}. [Active Memory]: Recorded loss episode to refine volatility cushion.`,
+        session: posRegime,
+        reason: `STOP LOSS TRIGGERED [${posRegime}] at $${posCopy.trailingStop.toFixed(2)} (${realizedPct.toFixed(2)}%). Model closed full position to protect capital per Trullàs Rule 4. Realized P&L: ${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toFixed(2)}. [Active Memory]: Recorded loss episode to refine volatility cushion.`,
       });
       continue; // Exited, do not push to updatedPositions
     }
@@ -816,6 +823,8 @@ export function processAutonomousCycle(
         activeMemory = updatedState;
       }
 
+      const posRegime = getTradeExecutionRegime(pos.symbol, now).regime;
+
       newLogs.push({
         id: `log-t1-${Date.now()}-${pos.symbol}`,
         timestamp: timestampStr,
@@ -826,7 +835,8 @@ export function processAutonomousCycle(
         price: pos.target1,
         realizedPnL: Number(pnl.toFixed(2)),
         realizedPnLPercent: Number(pnlPct.toFixed(2)),
-        reason: `TARGET 1 ACHIEVED at $${pos.target1.toFixed(2)} (38.2% Fib extension). Scaled out 50% (${sharesToExit} shares) locking in +$${pnl.toFixed(2)} (+${pnlPct.toFixed(2)}%). Moved trailing stop to Breakeven ($${pos.entryPrice.toFixed(2)}) for risk-free runner. [Active Memory]: Boosted setup confidence score.`,
+        session: posRegime,
+        reason: `TARGET 1 ACHIEVED [${posRegime}] at $${pos.target1.toFixed(2)} (38.2% Fib extension). Scaled out 50% (${sharesToExit} shares) locking in +$${pnl.toFixed(2)} (+${pnlPct.toFixed(2)}%). Moved trailing stop to Breakeven ($${pos.entryPrice.toFixed(2)}) for risk-free runner. [Active Memory]: Boosted setup confidence score.`,
       });
     }
 
@@ -861,6 +871,8 @@ export function processAutonomousCycle(
         activeMemory = updatedState;
       }
 
+      const posRegime = getTradeExecutionRegime(pos.symbol, now).regime;
+
       newLogs.push({
         id: `log-t2-${Date.now()}-${pos.symbol}`,
         timestamp: timestampStr,
@@ -871,7 +883,8 @@ export function processAutonomousCycle(
         price: pos.target2,
         realizedPnL: Number(pnl.toFixed(2)),
         realizedPnLPercent: Number(pnlPct.toFixed(2)),
-        reason: `TARGET 2 REACHED at $${pos.target2.toFixed(2)} (61.8% Fib extension). Model closed remaining ${posCopy.currentShares} shares at maximum profit objective (+${pnlPct.toFixed(2)}%). Realized +$${pnl.toFixed(2)}. [Active Memory]: Maximized setup affinity weight.`,
+        session: posRegime,
+        reason: `TARGET 2 REACHED [${posRegime}] at $${pos.target2.toFixed(2)} (61.8% Fib extension). Model closed remaining ${posCopy.currentShares} shares at maximum profit objective (+${pnlPct.toFixed(2)}%). Realized +$${pnl.toFixed(2)}. [Active Memory]: Maximized setup affinity weight.`,
       });
       continue; // Exited full remaining runner
     }
@@ -889,6 +902,11 @@ export function processAutonomousCycle(
     for (const item of marketItems) {
       if (openSymbols.has(item.symbol)) continue;
       if (updatedPositions.length >= account.maxOpenPositions) break;
+
+      const symRegime = getTradeExecutionRegime(item.symbol, now);
+      if (!symRegime.isOpen && !allowExtendedHours) {
+        continue; // Market closed for this asset class
+      }
 
       const mainSetup = item.setups?.[0];
       if (!mainSetup) continue;
@@ -972,12 +990,12 @@ export function processAutonomousCycle(
             unrealizedPnL: 0,
             unrealizedPnLPercent: 0,
             trancheStage: 1,
-            reasonOpened: `Trullàs 4-Pillars ${mainSetup.type.replace('_', ' ')} (${rawQualityScore}% score). Volatility ATR $${atr.toFixed(2)} (${atrPct.toFixed(2)}%). ${cboeConfluence.confluenceRationale} Sized for 1.0% account risk (${adjustedShares} shares @ $${entryPrice.toFixed(2)}). Stop loss placed at $${stopLoss.toFixed(2)} (${memoryQuery.recommendedAtrStop}x ATR). ${memoryQuery.auditRationale}`,
+            reasonOpened: `Trullàs 4-Pillars ${mainSetup.type.replace('_', ' ')} [${symRegime.regime}] (${rawQualityScore}% score). Volatility ATR $${atr.toFixed(2)} (${atrPct.toFixed(2)}%). ${cboeConfluence.confluenceRationale} Sized for 1.0% account risk (${adjustedShares} shares @ $${entryPrice.toFixed(2)}). Stop loss placed at $${stopLoss.toFixed(2)} (${memoryQuery.recommendedAtrStop}x ATR). ${memoryQuery.auditRationale}`,
             cboeConfluence,
+            executionSession: symRegime.regime,
           };
 
           updatedPositions.push(newPosition);
-
 
           newLogs.push({
             id: `log-open-${Date.now()}-${item.symbol}`,
@@ -987,7 +1005,8 @@ export function processAutonomousCycle(
             action: 'OPEN',
             shares: adjustedShares,
             price: entryPrice,
-            reason: `OPENED ${adjustedShares} shares @ $${entryPrice.toFixed(2)}: ${newPosition.reasonOpened}`,
+            session: symRegime.regime,
+            reason: `OPENED [${symRegime.regime}] ${adjustedShares} shares @ $${entryPrice.toFixed(2)}: ${newPosition.reasonOpened}`,
           });
         }
       }
