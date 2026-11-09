@@ -17,6 +17,7 @@ import { SystemHealthView } from './components/SystemHealthView';
 import { WatchlistManagerView } from './components/WatchlistManagerView';
 import { SectorPerformanceView } from './components/SectorPerformanceView';
 import { ConfluenceMatrixView } from './components/ConfluenceMatrixView';
+import { TrendSpiderSuite } from './components/TrendSpiderSuite';
 
 import { PositionCalculatorModal } from './components/PositionCalculatorModal';
 import { TelegramConfigModal } from './components/TelegramConfigModal';
@@ -455,6 +456,14 @@ export default function App() {
         {activeTab === 'rules' && <StrategyGuide />}
 
         {activeTab === 'sec' && <SecEdgarInspector />}
+
+        {activeTab === 'trendspider' && (
+          <TrendSpiderSuite
+            onSelectSymbolForChart={handleSelectSymbolForChart}
+            onOpenCalculator={(s) => setCalculatorSetup(s)}
+            onNavigateToTab={(t) => setActiveTab(t)}
+          />
+        )}
 
         {activeTab === 'python' && <PythonDaemonView />}
 

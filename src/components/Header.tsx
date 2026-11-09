@@ -48,6 +48,7 @@ export type ActiveTab =
   | 'rules'
   | 'sec'
   | 'python'
+  | 'trendspider'
   | 'alerts'
   | 'health';
 
@@ -182,6 +183,17 @@ export const ALL_TABS: TabDefinition[] = [
     category: 'quant',
     color: 'text-pink-400',
     description: 'Browse, inspect, and configure mathematical indicator formulas and oscillators',
+  },
+  {
+    id: 'trendspider',
+    label: 'TrendSpider Quant',
+    shortLabel: 'TrendSpider',
+    icon: Compass,
+    category: 'quant',
+    badge: 'Stage 4 🩸',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+    color: 'text-rose-400',
+    description: 'Reverse-engineered Stan Weinstein Stage 1-4 analysis, Raindrop® volume profiles, Auto-AVWAP & automated trendlines',
   },
   {
     id: 'rules',

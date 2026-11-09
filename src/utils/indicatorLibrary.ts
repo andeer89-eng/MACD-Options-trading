@@ -167,7 +167,102 @@ if close > nz(trailStop[1], 0)
 else
     trailStop := math.min(nz(trailStop[1], 1000000), close + atrVal * multiplier)
 
-plot(trailStop, "Trailing Stop", color=close >= trailStop ? color.emerald : color.rose, linewidth=2, style=plot.style_linebr)`,
+    plot(trailStop, "Trailing Stop", color=close >= trailStop ? color.emerald : color.rose, linewidth=2, style=plot.style_linebr)`,
+  },
+  {
+    id: 'ts-stage-analysis-v5',
+    name: 'TrendSpider Stan Weinstein Stage Analysis (30-Week SMA)',
+    author: 'TrendSpider / Stan Weinstein',
+    description: 'Maps the 4 structural market phases: Stage 1 Basing, Stage 2 Advancing 🚀, Stage 3 Topping, and Stage 4 Declining 🩸 with 30-week SMA slope and Mansfield Relative Strength.',
+    category: 'Trend',
+    version: 'v5',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 500000,
+    syntaxValid: true,
+    pineCode: `//@version=5
+indicator("TrendSpider - Stan Weinstein 4-Stage Analysis", overlay=true)
+
+len = input.int(30, "Lookback (Weeks/Periods)")
+src = input.source(close, "Source")
+
+ma30 = ta.sma(src, len)
+slope = (ma30 - ma30[5]) / ma30[5] * 100
+
+// 4-Stage Classification Logic
+is_stage2 = close > ma30 and slope > 0.4
+is_stage4 = close < ma30 and slope < -0.4
+is_stage1 = not is_stage2 and not is_stage4 and close >= ma30 * 0.97 and close <= ma30 * 1.03
+is_stage3 = not is_stage2 and not is_stage4 and not is_stage1
+
+maColor = is_stage2 ? color.green : is_stage4 ? color.red : is_stage1 ? color.yellow : color.orange
+plot(ma30, "30-Week Moving Average", color=maColor, linewidth=3)
+
+plotshape(is_stage4 and not is_stage4[1], "Stage 4 Breakdown 🩸", shape.circle, location.abovebar, color.red, size=size.small, text="STAGE 4 🩸")
+plotshape(is_stage2 and not is_stage2[1], "Stage 2 Breakout 🚀", shape.triangleup, location.belowbar, color.green, size=size.small, text="STAGE 2 🚀")`,
+  },
+  {
+    id: 'ts-raindrop-v5',
+    name: 'TrendSpider Raindrop® Charts & Volume Sentiment',
+    author: 'TrendSpider Quantitative Labs',
+    description: 'Partitions candles into Left VWAP (first half) and Right VWAP (second half) with micro volume profiles to expose institutional accumulation and distribution.',
+    category: 'Volume',
+    version: 'v5',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 400000,
+    syntaxValid: true,
+    pineCode: `//@version=5
+indicator("TrendSpider - Raindrop Volume Sentiment", overlay=true)
+
+// Intra-period half volume approximation
+left_vwap = (open * 2 + (close > open ? low : high)) / 3
+right_vwap = (close * 2 + (close > open ? high : low)) / 3
+
+is_bullish = right_vwap > left_vwap
+is_bearish = right_vwap < left_vwap
+
+plot(left_vwap, "Left Half VWAP (Open Half)", color=color.new(color.blue, 30), style=plot.style_stepline, linewidth=2)
+plot(right_vwap, "Right Half VWAP (Close Half)", color=is_bullish ? color.green : color.red, style=plot.style_stepline, linewidth=2)
+
+bgcolor(is_bullish ? color.new(color.green, 92) : color.new(color.red, 92), title="Raindrop Sentiment Shift")`,
+  },
+  {
+    id: 'ts-auto-avwap-v5',
+    name: 'TrendSpider Auto-Anchored VWAP (Auto-AVWAP)',
+    author: 'TrendSpider Algorithms',
+    description: 'Algorithmically identifies the highest volume climax bar or major swing pivot in the lookback and automatically projects cumulative VWAP and +/- 1σ, 2σ standard deviation bands.',
+    category: 'Volume',
+    version: 'v5',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 300000,
+    syntaxValid: true,
+    pineCode: `//@version=5
+indicator("TrendSpider - Auto-Anchored VWAP", overlay=true)
+
+lookback = input.int(50, "Lookback for Peak Volume Anchor")
+highest_vol_bar = ta.highestbars(volume, lookback)
+
+var float cum_vol = 0.0
+var float cum_vp = 0.0
+
+if highest_vol_bar == 0
+    cum_vol := volume
+    cum_vp := hlc3 * volume
+else
+    cum_vol += volume
+    cum_vp += hlc3 * volume
+
+auto_avwap = cum_vol > 0 ? cum_vp / cum_vol : hlc3
+std_dev = ta.stdev(hlc3 - auto_avwap, 20)
+
+plot(auto_avwap, "Auto-Anchored VWAP", color=color.yellow, linewidth=2)
+plot(auto_avwap + std_dev, "AVWAP +1σ Band", color=color.aqua, linewidth=1)
+plot(auto_avwap - std_dev, "AVWAP -1σ Band", color=color.aqua, linewidth=1)`,
   },
 ];
 

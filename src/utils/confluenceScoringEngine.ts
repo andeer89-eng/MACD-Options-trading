@@ -17,6 +17,7 @@ import { calculateIndicators, Candle } from './trullasStrategy';
 import { calculateNadarayaWatsonEnvelope, calculateSmartMoneyConcepts } from './luxalgoIndicators';
 import { evaluateCboeOptionsConfluence, CboeDecisionConfluence } from './automatedPortfolio';
 import { calculateRollingPriceMacdCorrelation, getTickerHistoricalAccuracy } from './signalWeightingEngine';
+import { calculateStageAnalysis } from './trendSpiderEngine';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
 import { lookupGlobalCompany } from '../data/globalTickers';
 
@@ -296,7 +297,35 @@ function evaluateIndicatorLibraryAngle(
   score += 10;
   evidence.push(`SuperTrend trend filter aligns with directional bias`);
 
-  score = Math.min(100, Math.max(40, score));
+  // TrendSpider Stan Weinstein Stage Analysis Confluence
+  const candleData = candles.map((c) => ({
+    time: c.dateStr || c.timestamp,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+  const stage = calculateStageAnalysis(candleData);
+  if (stage.currentStage === 'STAGE_4_DECLINING') {
+    if (isBull) {
+      score -= 20;
+      evidence.push(`TrendSpider Warning: Stage 4 Capitulation 🩸 (${stage.distanceFromMaPercent}% below declining 30w MA $${stage.ma30Week.toFixed(2)}). Counter-trend risk.`);
+    } else {
+      score += 15;
+      evidence.push(`TrendSpider Confluence: Stage 4 Markdown 🩸 validates bearish momentum.`);
+    }
+  } else if (stage.currentStage === 'STAGE_2_ADVANCING') {
+    if (isBull) {
+      score += 15;
+      evidence.push(`TrendSpider Confluence: Stage 2 Markup 🚀 (+${stage.distanceFromMaPercent}% above rising 30w MA $${stage.ma30Week.toFixed(2)}).`);
+    } else {
+      score -= 15;
+      evidence.push(`TrendSpider Warning: Stage 2 Bull Trend 🚀 resists short thesis.`);
+    }
+  }
+
+  score = Math.min(100, Math.max(30, score));
 
   return {
     id: 'indicator-library',
@@ -304,12 +333,13 @@ function evaluateIndicatorLibraryAngle(
     weightPct: 20,
     score,
     verdict: score >= 70 ? (isBull ? 'BULLISH' : 'BEARISH') : 'NEUTRAL',
-    headline: `VWAP ($${vwap.toFixed(2)}) + Bollinger %B (${(bbPercentB * 100).toFixed(0)}%) Alignment`,
+    headline: `VWAP ($${vwap.toFixed(2)}) + ${stage.stageName}`,
     evidencePoints: evidence,
     metrics: {
       'Institutional VWAP': `$${vwap.toFixed(2)}`,
       'Bollinger %B': `${(bbPercentB * 100).toFixed(1)}%`,
-      '20-Day SMA': `$${sma.toFixed(2)}`,
+      'Weinstein Stage': stage.stageName,
+      '30-Week SMA': `$${stage.ma30Week.toFixed(2)}`,
       'SuperTrend Alignment': isBull ? 'Bullish Support' : 'Bearish Ceiling',
     },
   };
@@ -543,6 +573,11 @@ export function evaluateCandidate360Confluence(
   if (angle3.score >= 75) allBadges.push('Anchored VWAP Support');
   if (angle5.score >= 80) allBadges.push('High Historical Accuracy (>75%)');
   if (angle6.score >= 75) allBadges.push('Sector Alpha Outperformance');
+  if (angle3.evidencePoints.some((e) => e.includes('Stage 4 Capitulation'))) {
+    allBadges.push('Stage 4 Capitulation 🩸');
+  } else if (angle3.evidencePoints.some((e) => e.includes('Stage 2 Markup'))) {
+    allBadges.push('Stage 2 Markup 🚀');
+  }
 
   // Execution Plan
   const atrVal = currentPrice * 0.022; // ~2.2% ATR

@@ -38,6 +38,7 @@ import { MarketOverview } from './MarketOverview';
 import { WorkerPool } from '../utils/workerPool';
 import { deduplicateSymbols, generateStableScanKey, generateCompositeKey } from '../utils/dataFetcher';
 import { evaluateCandidate360Confluence } from '../utils/confluenceScoringEngine';
+import { getUniverseStageSummary } from '../utils/trendSpiderUniverse';
 
 interface ScanResultItem {
   symbol: string;
@@ -85,6 +86,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     'all' | 'triple' | 'bullish' | 'bearish' | 'high-score'
   >('all');
   const [selectedSectorFilter, setSelectedSectorFilter] = useState<string>('All');
+  const [selectedStageFilter, setSelectedStageFilter] = useState<
+    'ALL' | 'STAGE_1' | 'STAGE_2' | 'STAGE_3' | 'STAGE_4'
+  >('ALL');
   const [selectedSP500Preset, setSelectedSP500Preset] = useState<string>('Top 50 Mega-Caps');
   const [selectedPreScanGicsSector, setSelectedPreScanGicsSector] = useState<string>('All Sectors');
   const [newTickerInput, setNewTickerInput] = useState('');
@@ -283,6 +287,19 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
     if (selectedSectorFilter !== 'All') {
       if (item.sector !== selectedSectorFilter) return false;
+    }
+
+    if (selectedStageFilter !== 'ALL') {
+      const summary = getUniverseStageSummary(item.symbol);
+      const stageMap: Record<string, string> = {
+        STAGE_1: 'STAGE_1_BASING',
+        STAGE_2: 'STAGE_2_ADVANCING',
+        STAGE_3: 'STAGE_3_TOPPING',
+        STAGE_4: 'STAGE_4_DECLINING',
+      };
+      if (summary.stage.currentStage !== stageMap[selectedStageFilter]) {
+        return false;
+      }
     }
 
     return true;
@@ -769,6 +786,55 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               <option value="Crypto">Crypto</option>
             </select>
           </div>
+
+          {/* TrendSpider Stan Weinstein Stage Filter */}
+          <div className="flex items-center space-x-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-xs">
+            <span className="text-zinc-500 text-[11px] px-1 font-mono">Stage:</span>
+            <button
+              onClick={() => setSelectedStageFilter('ALL')}
+              className={`px-2 py-0.5 rounded font-medium text-xs ${
+                selectedStageFilter === 'ALL' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setSelectedStageFilter('STAGE_2')}
+              className={`px-2 py-0.5 rounded font-medium text-xs ${
+                selectedStageFilter === 'STAGE_2' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Stan Weinstein Stage 2: Markup Bull Trend (Price > rising 30w SMA)"
+            >
+              Stage 2 🚀
+            </button>
+            <button
+              onClick={() => setSelectedStageFilter('STAGE_4')}
+              className={`px-2 py-0.5 rounded font-medium text-xs ${
+                selectedStageFilter === 'STAGE_4' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Stan Weinstein Stage 4: Capitulation / Markdown (Price < falling 30w SMA)"
+            >
+              Stage 4 🩸
+            </button>
+            <button
+              onClick={() => setSelectedStageFilter('STAGE_1')}
+              className={`px-2 py-0.5 rounded font-medium text-xs ${
+                selectedStageFilter === 'STAGE_1' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Stage 1: Basing & Accumulation"
+            >
+              Stage 1
+            </button>
+            <button
+              onClick={() => setSelectedStageFilter('STAGE_3')}
+              className={`px-2 py-0.5 rounded font-medium text-xs ${
+                selectedStageFilter === 'STAGE_3' ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Stage 3: Topping & Distribution"
+            >
+              Stage 3 ⚠️
+            </button>
+          </div>
         </div>
 
         <div className="text-xs text-zinc-500 font-mono">
@@ -852,6 +918,20 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                           >
                             <Sparkles className="w-3 h-3 text-indigo-400" />
                             <span>Grade {conf.overallGrade} ({conf.overallScore}%)</span>
+                          </span>
+                        );
+                      })()}
+                      {/* TrendSpider Stan Weinstein Stage Badge */}
+                      {(() => {
+                        const stageSummary = getUniverseStageSummary(item.symbol);
+                        const st = stageSummary.stage;
+                        return (
+                          <span
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 font-semibold border ${st.stageBadgeBg} ${st.stageBadgeColor} ${st.stageBadgeBorder}`}
+                            title={`TrendSpider Weinstein 4-Stage Analysis: ${st.stageName} • 30w SMA: $${st.ma30Week.toFixed(2)} (${st.distanceFromMaPercent}%)`}
+                          >
+                            <span>{st.stageNumber === 4 ? 'Stage 4 🩸' : st.stageNumber === 2 ? 'Stage 2 🚀' : st.stageNumber === 3 ? 'Stage 3 ⚠️' : 'Stage 1'}</span>
+                            <span className="text-[9px] opacity-80">({st.distanceFromMaPercent >= 0 ? '+' : ''}{st.distanceFromMaPercent}%)</span>
                           </span>
                         );
                       })()}
