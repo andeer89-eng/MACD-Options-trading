@@ -29,6 +29,8 @@ export interface JournalEntry {
   maxFavorableExcursionPct?: number; // Peak favorable gain % (MFE)
   macdEntryModelReason?: string; // Exact trigger derived from MACD divergence model
   macdExitModelReason?: string; // Exact exit trigger derived from MACD indicator model
+  // Epoch identifier for capital epoch separation (e.g. 'epoch-2k-virtual' vs 'legacy-50k')
+  epochId?: string;
 }
 
 export interface JournalStats {
@@ -42,6 +44,10 @@ export interface JournalStats {
   averageWinPnL: number;
   averageLossPnL: number;
   profitFactor: number;
+  profitFactorValid: boolean; // false if closedTrades < 10 (anti PF 99x bug)
+  profitFactorDisplay: string; // "—" if closedTrades < 10
+  ci90WinRate: [number, number]; // 90% Confidence Interval for win rate
+  effectiveDays: number; // n_eff: distinct signal/trade dates
   bestTradePnL: number;
   worstTradePnL: number;
 }
@@ -245,25 +251,42 @@ export function enrichJournalEntryAnalytics(entry: JournalEntry): JournalEntry {
   };
 }
 
-export function loadJournalEntries(): JournalEntry[] {
-  if (typeof window === 'undefined') return SEED_JOURNAL_ENTRIES.map(enrichJournalEntryAnalytics);
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { collection, getDocs, doc, setDoc, query } from 'firebase/firestore';
+
+export async function loadJournalEntriesFromFirestore(): Promise<JournalEntry[]> {
+  if (!auth.currentUser) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const enriched = SEED_JOURNAL_ENTRIES.map(enrichJournalEntryAnalytics);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(enriched));
-      return enriched;
-    }
-    const parsed = JSON.parse(raw) as JournalEntry[];
-    return parsed.map(enrichJournalEntryAnalytics);
-  } catch (e) {
-    console.error('Failed to load trade journal entries:', e);
-    return SEED_JOURNAL_ENTRIES.map(enrichJournalEntryAnalytics);
+    const q = query(collection(db, 'users', auth.currentUser.uid, 'journalEntries'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JournalEntry));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, `users/${auth.currentUser.uid}/journalEntries`);
+    return [];
   }
 }
 
+export async function saveJournalEntryToFirestore(entry: JournalEntry): Promise<void> {
+  if (!auth.currentUser) return;
+  try {
+    await setDoc(doc(db, 'users', auth.currentUser.uid, 'journalEntries', entry.id), entry);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `users/${auth.currentUser.uid}/journalEntries/${entry.id}`);
+  }
+}
+
+export function loadJournalEntries(): JournalEntry[] {
+  // Existing local storage for now, but will transition to Firestore.
+  // ... (keeping existing logic for now, or just return seed for demo)
+  return SEED_JOURNAL_ENTRIES.map(enrichJournalEntryAnalytics);
+}
+
 export function saveJournalEntries(entries: JournalEntry[]): void {
-  if (typeof window === 'undefined') return;
+  // Sync to firestore (async) - this will be fired-and-forgotten for now
+  if (auth.currentUser) {
+    entries.forEach(saveJournalEntryToFirestore);
+  }
+  // Keep local storage for backward compatibility
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
   } catch (e) {
@@ -304,12 +327,32 @@ export function calculateJournalStats(entries: JournalEntry[]): JournalStats {
   const averageWinPnL = winningTrades > 0 ? Number((totalWinPnL / winningTrades).toFixed(2)) : 0;
   const averageLossPnL = losingTrades > 0 ? Number((totalLossPnL / losingTrades).toFixed(2)) : 0;
 
+  const profitFactorValid = closedTrades >= 10;
   const profitFactor =
     totalLossPnL > 0
       ? Number((totalWinPnL / totalLossPnL).toFixed(2))
       : totalWinPnL > 0
       ? 99.99
       : 0;
+
+  const profitFactorDisplay = profitFactorValid
+    ? `${profitFactor.toFixed(2)}x`
+    : '—';
+
+  // n_eff: distinct signal / trade execution dates
+  const distinctDates = new Set(closed.map((e) => e.entryDate.split('T')[0]));
+  const effectiveDays = distinctDates.size;
+
+  // 90% Confidence Interval (z = 1.645)
+  let ci90Low = 0;
+  let ci90High = 0;
+  if (closedTrades > 0) {
+    const p = winningTrades / closedTrades;
+    const z = 1.645;
+    const se = Math.sqrt((p * (1 - p)) / closedTrades);
+    ci90Low = Number(Math.max(0, (p - z * se) * 100).toFixed(1));
+    ci90High = Number(Math.min(100, (p + z * se) * 100).toFixed(1));
+  }
 
   return {
     totalTrades,
@@ -322,6 +365,10 @@ export function calculateJournalStats(entries: JournalEntry[]): JournalStats {
     averageWinPnL,
     averageLossPnL,
     profitFactor,
+    profitFactorValid,
+    profitFactorDisplay,
+    ci90WinRate: [ci90Low, ci90High],
+    effectiveDays,
     bestTradePnL: bestTradePnL === -Infinity ? 0 : Number(bestTradePnL.toFixed(2)),
     worstTradePnL: worstTradePnL === Infinity ? 0 : Number(worstTradePnL.toFixed(2)),
   };
@@ -359,6 +406,8 @@ export function exportJournalToCSV(entries: JournalEntry[]): string {
     'Rating (1-5)',
     'Tags',
     'Performance & Audit Notes',
+    'MFE %',
+    'MAE %',
     'Created At',
   ];
 

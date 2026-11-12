@@ -18,6 +18,7 @@ import { WatchlistManagerView } from './components/WatchlistManagerView';
 import { SectorPerformanceView } from './components/SectorPerformanceView';
 import { ConfluenceMatrixView } from './components/ConfluenceMatrixView';
 import { TrendSpiderSuite } from './components/TrendSpiderSuite';
+import { TodayView } from './components/TodayView';
 
 import { PositionCalculatorModal } from './components/PositionCalculatorModal';
 import { TelegramConfigModal } from './components/TelegramConfigModal';
@@ -32,7 +33,7 @@ import { SP500_TOP_50, SP500_UNIVERSE } from './data/sp500Universe';
 import { deduplicateSymbols, generateStableAlertId } from './utils/dataFetcher';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('scanner');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('today');
   const [timeframe, setTimeframe] = useState<string>('1d');
   // Default to full S&P 500 universe (all 503 constituents)
   const [watchlist, setWatchlist] = useState<string[]>(() =>
@@ -359,6 +360,10 @@ export default function App() {
       />
 
       <main className="max-w-[1720px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {activeTab === 'today' && (
+          <TodayView onOpenChart={handleSelectSymbolForChart} />
+        )}
+
         {activeTab === 'action-zones' && (
           <ActionDashboard
             onSelectSymbolForChart={handleSelectSymbolForChart}

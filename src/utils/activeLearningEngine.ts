@@ -192,6 +192,16 @@ export function loadActiveMemoryState(): ActiveMemoryState {
     }
     const parsed = JSON.parse(raw) as ActiveMemoryState;
     if (parsed && Array.isArray(parsed.episodes) && parsed.setupWeights) {
+      // Ensure unique episode IDs to avoid duplicate key issues
+      const seenIds = new Set<string>();
+      parsed.episodes = parsed.episodes.map((ep, idx) => {
+        let epId = ep.id;
+        if (!epId || seenIds.has(epId)) {
+          epId = `${epId || 'ep'}-${idx}-${Date.now()}`;
+        }
+        seenIds.add(epId);
+        return { ...ep, id: epId };
+      });
       return parsed;
     }
   } catch (err) {
@@ -295,8 +305,9 @@ export function ingestTradeEpisode(
     trade.exitReason
   );
 
+  const seq = Math.floor(Math.random() * 10000);
   const newEpisode: TradeEpisode = {
-    id: `ep-${Date.now()}-${trade.symbol}`,
+    id: `ep-${Date.now()}-${seq}-${trade.symbol}`,
     timestamp: new Date().toISOString().replace('T', ' ').slice(0, 16),
     symbol: trade.symbol,
     companyName: trade.companyName || trade.symbol,

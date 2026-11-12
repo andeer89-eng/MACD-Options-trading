@@ -16,3 +16,19 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Suppress third-party TradingView attribution watermarks */
+a[href*="tradingview.com"],
+a[href*="tradingview"],
+div[class*="tv-watermark"],
+div[class*="tradingview"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  position: absolute !important;
+  overflow: hidden !important;
+}
+

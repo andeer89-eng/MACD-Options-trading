@@ -31,8 +31,11 @@ import {
   Sliders,
   Check,
 } from 'lucide-react';
+import { useAuth } from '../lib/AuthProvider';
+import { signInWithGoogle, logout } from '../lib/auth';
 
 export type ActiveTab =
+  | 'today'
   | 'action-zones'
   | 'scanner'
   | 'confluence'
@@ -66,6 +69,17 @@ export interface TabDefinition {
 
 export const ALL_TABS: TabDefinition[] = [
   // Scanner & Setups
+  {
+    id: 'today',
+    label: 'Today',
+    shortLabel: 'Today',
+    icon: Activity,
+    category: 'scanner',
+    badge: 'v3',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    color: 'text-emerald-400',
+    description: 'Master Plan v3 daily rhythm: Market Regime, Sector RRG, Watchlist with canTrade(), and Review',
+  },
   {
     id: 'scanner',
     label: 'Live Scanner',
@@ -245,7 +259,7 @@ export const ALL_TABS: TabDefinition[] = [
 ];
 
 export const CATEGORIES = [
-  { id: 'all', label: 'All Modules (17)' },
+  { id: 'all', label: `All Modules (${ALL_TABS.length})` },
   { id: 'scanner', label: 'Scanner & Setups' },
   { id: 'markets', label: 'Markets & Options' },
   { id: 'bots', label: 'Bots & Journal' },
@@ -266,6 +280,29 @@ interface HeaderProps {
   lastRefreshedAt?: Date | null;
   onRefreshMarketData?: () => void;
   isRefreshingData?: boolean;
+}
+
+function AuthButton() {
+  const { user } = useAuth();
+  return user ? (
+    <button
+      onClick={() => logout()}
+      className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 text-rose-400 border border-zinc-800 hover:border-rose-500/50 hover:bg-rose-500/10 transition-colors"
+      title="Logout"
+    >
+      <span>{user.email?.split('@')[0]}</span>
+      <X className="w-3.5 h-3.5" />
+    </button>
+  ) : (
+    <button
+      onClick={() => signInWithGoogle()}
+      className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+      title="Sign in with Google"
+    >
+      <Layers className="w-3.5 h-3.5" />
+      <span>Login</span>
+    </button>
+  );
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -378,7 +415,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="Browse all 17 trading modules in categorized grid"
             >
               <Grid className="w-3.5 h-3.5 text-indigo-400" />
-              <span>All Modules (17)</span>
+              <span>All Modules ({ALL_TABS.length})</span>
             </button>
 
             {/* Category Filter Pills */}
@@ -495,6 +532,9 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
+            {/* Auth Button */}
+            <AuthButton />
+
             {/* Mobile / Compact Menu Hamburger Button */}
             <button
               onClick={() => setShowMobileDrawer(true)}
@@ -506,6 +546,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
 
       {/* TIER 2: ADAPTIVE HORIZONTAL MODULE RAIL (Smooth Scroll with Indicators) */}
       <div className="w-full border-t border-zinc-800/80 bg-zinc-950/90 py-1.5 relative">

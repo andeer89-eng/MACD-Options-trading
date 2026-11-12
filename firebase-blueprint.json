@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "UserBotState": {
+      "title": "UserBotState",
+      "description": "User specific bot and capital configuration",
+      "type": "object",
+      "properties": {
+        "simCapitalUsd": { "type": "number" },
+        "maxRiskPerTradePct": { "type": "number" },
+        "dailyLossLimitPct": { "type": "number" },
+        "botStatus": { "type": "string", "enum": ["armed", "paused", "killed"] }
+      },
+      "required": ["simCapitalUsd", "maxRiskPerTradePct"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "A single trade journal entry",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string", "pattern": "^[A-Z0-9.-]+$" },
+        "setupType": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED_WIN", "CLOSED_LOSS", "BREAKEVEN"] },
+        "entryDate": { "type": "string", "format": "date" },
+        "entryPrice": { "type": "number" },
+        "realizedPnL": { "type": "number" },
+        "epochId": { "type": "string" }
+      },
+      "required": ["symbol", "setupType", "status", "entryDate", "entryPrice"]
+    },
+    "WatchlistItem": {
+      "title": "WatchlistItem",
+      "description": "An item in the daily watchlist",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string", "pattern": "^[A-Z0-9.-]+$" },
+        "status": { "type": "string", "enum": ["NEW", "WATCHING", "TRIGGERED", "EXPIRED", "INVALIDATED"] },
+        "totalScore": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["symbol", "status", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserBotState",
+      "description": "User specific configuration"
+    },
+    "/users/{userId}/journalEntries/{entryId}": {
+      "schema": "JournalEntry",
+      "description": "Trade journal entries"
+    },
+    "/users/{userId}/watchlistItems/{itemId}": {
+      "schema": "WatchlistItem",
+      "description": "Daily watchlist items"
+    }
+  }
+}

@@ -178,14 +178,26 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     setEntries(loadJournalEntries());
   }, []);
 
+  // Capital Epoch Selection (§8 Item 6)
+  const [selectedEpoch, setSelectedEpoch] = useState<'epoch-2k-virtual' | 'legacy-50k'>('epoch-2k-virtual');
+
   const updateEntriesState = (updated: JournalEntry[]) => {
     setEntries(updated);
     saveJournalEntries(updated);
   };
 
+  const epochEntries = useMemo(() => {
+    return entries.filter((e) => {
+      if (selectedEpoch === 'legacy-50k') {
+        return e.epochId === 'legacy-50k';
+      }
+      return !e.epochId || e.epochId === 'epoch-2k-virtual';
+    });
+  }, [entries, selectedEpoch]);
+
   const stats: JournalStats = useMemo(() => {
-    return calculateJournalStats(entries);
-  }, [entries]);
+    return calculateJournalStats(epochEntries);
+  }, [epochEntries]);
 
   // Handle Image File Upload (Convert File to Base64 Data URL)
   const handleImageUpload = (
@@ -269,9 +281,9 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     if (selectedEntryForView?.id === id) setSelectedEntryForView(null);
   };
 
-  // Filtered List
+  // Filtered List for active epoch
   const filteredEntries = useMemo(() => {
-    return entries.filter((item) => {
+    return epochEntries.filter((item) => {
       if (activeFilter !== 'ALL' && item.status !== activeFilter) {
         return false;
       }
@@ -284,7 +296,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
       }
       return true;
     });
-  }, [entries, activeFilter, searchQuery]);
+  }, [epochEntries, activeFilter, searchQuery]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-12">
@@ -412,42 +424,103 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           </div>
         )}
 
-        {/* PERFORMANCE STATS BAR */}
+        {/* CAPITAL EPOCH SELECTOR (§8 Item 6) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-zinc-950/80 border border-zinc-800 p-2.5 rounded-xl">
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Epocă Capital:</span>
+            <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-xs">
+              <button
+                onClick={() => setSelectedEpoch('epoch-2k-virtual')}
+                className={`px-3 py-1 rounded-md font-semibold transition ${
+                  selectedEpoch === 'epoch-2k-virtual'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                2k Virtual (Epoca Activă)
+              </button>
+              <button
+                onClick={() => setSelectedEpoch('legacy-50k')}
+                className={`px-3 py-1 rounded-md font-semibold transition flex items-center space-x-1.5 ${
+                  selectedEpoch === 'legacy-50k'
+                    ? 'bg-zinc-800 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <span>Legacy 50k</span>
+                <span className="text-[9px] px-1 py-0.2 bg-zinc-700/80 text-zinc-300 rounded font-mono">
+                  Read-Only
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3 text-[11px] text-zinc-400 font-mono">
+            <span>as of {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>
+            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
+              CALITATE DATE: LIVE
+            </span>
+          </div>
+        </div>
+
         {/* PERFORMANCE STATS HUD */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6 bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-inner font-mono">
-          <div className="border-r border-zinc-800">
+          <div className="border-r border-zinc-800 pr-2">
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Total Realized P&L</span>
             <div className="text-xl font-bold mt-1">
               <span className={stats.totalRealizedPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                 {stats.totalRealizedPnL >= 0 ? '+' : ''}${stats.totalRealizedPnL.toLocaleString()}
               </span>
             </div>
+            <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
+              n = {stats.closedTrades} tranzacții
+            </span>
           </div>
-          <div className="border-r border-zinc-800">
+
+          <div className="border-r border-zinc-800 pr-2">
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Win Rate</span>
             <div className="text-xl font-bold text-white mt-1">
               {stats.winRatePct}%
-              <span className="text-[10px] text-zinc-500 ml-1">({stats.winningTrades}W/{stats.losingTrades}L)</span>
             </div>
+            <span className="text-[10px] text-zinc-400 block mt-0.5 font-sans">
+              CI90: [{stats.ci90WinRate[0]}%, {stats.ci90WinRate[1]}%]
+            </span>
           </div>
-          <div className="border-r border-zinc-800">
+
+          <div className="border-r border-zinc-800 pr-2">
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Profit Factor</span>
-            <div className="text-xl font-bold text-indigo-400 mt-1">{stats.profitFactor}x</div>
-          </div>
-          <div className="border-r border-zinc-800">
-            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Total Trades</span>
-            <div className="text-xl font-bold text-white mt-1">
-              {stats.totalTrades}
-              <span className="text-[10px] text-zinc-500 ml-1">({stats.openTrades} Open)</span>
+            <div className={`text-xl font-bold mt-1 ${stats.profitFactorValid ? 'text-indigo-400' : 'text-zinc-500'}`}>
+              {stats.profitFactorDisplay}
             </div>
+            <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
+              {stats.profitFactorValid ? 'Audited' : 'Prag n ≥ 10 necesar'}
+            </span>
           </div>
-          <div className="border-r border-zinc-800">
+
+          <div className="border-r border-zinc-800 pr-2">
+            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Eșantion (n / n_eff)</span>
+            <div className="text-xl font-bold text-white mt-1">
+              {stats.closedTrades} <span className="text-xs font-normal text-zinc-400">/ {stats.effectiveDays}d</span>
+            </div>
+            <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
+              {stats.openTrades} deschise
+            </span>
+          </div>
+
+          <div className="border-r border-zinc-800 pr-2">
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Avg Win</span>
             <div className="text-xl font-bold text-emerald-400 mt-1">+${stats.averageWinPnL}</div>
+            <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
+              {stats.winningTrades} câștigătoare
+            </span>
           </div>
+
           <div>
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Avg Loss</span>
             <div className="text-xl font-bold text-rose-400 mt-1">-${stats.averageLossPnL}</div>
+            <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
+              {stats.losingTrades} pierzătoare
+            </span>
           </div>
         </div>
 
@@ -531,7 +604,10 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-950/80 text-[11px] font-mono text-zinc-400 uppercase tracking-wider select-none">
                   <th className="py-3 px-3 w-8 text-center"></th>
-                  <th className="py-3 px-3 font-semibold text-zinc-300">Date / Exit</th>
+                  <th className="py-3 px-3 font-semibold text-zinc-300">Entry Date</th>
+                  <th className="py-3 px-3 font-semibold text-zinc-300">Duration</th>
+                  <th className="py-3 px-3 font-semibold text-zinc-300 text-right">MFE %</th>
+                  <th className="py-3 px-3 font-semibold text-zinc-300 text-right">MAE %</th>
                   <th className="py-3 px-3 font-semibold text-zinc-300">Asset</th>
                   <th className="py-3 px-3 font-semibold text-zinc-300">Side &amp; Setup</th>
                   <th className="py-3 px-3 font-semibold text-right text-zinc-300">Shares / Units</th>
@@ -590,11 +666,29 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                           </span>
                         </td>
 
-                        {/* Date / Exit */}
+                        {/* Entry Date */}
                         <td className="py-3 px-3">
-                          <div className="font-semibold text-white">{item.entryDate}</div>
-                          <div className="text-[10px] text-zinc-500 font-sans">
-                            {item.exitDate ? `Exit: ${item.exitDate}` : 'Currently Holding'}
+                          <div className="font-bold text-white font-mono">{item.entryDate}</div>
+                        </td>
+
+                        {/* Duration */}
+                        <td className="py-3 px-3">
+                          <div className="text-zinc-300 font-mono">
+                            {item.tradeDurationDays || 1}d
+                          </div>
+                        </td>
+
+                        {/* MFE */}
+                        <td className="py-3 px-3 text-right">
+                          <div className="text-emerald-400 font-bold font-mono">
+                            {item.maxFavorableExcursionPct !== undefined ? `+${item.maxFavorableExcursionPct}%` : '—'}
+                          </div>
+                        </td>
+
+                        {/* MAE */}
+                        <td className="py-3 px-3 text-right">
+                          <div className="text-rose-400 font-bold font-mono">
+                            {item.drawdownFromPeakPct !== undefined ? `${item.drawdownFromPeakPct}%` : '—'}
                           </div>
                         </td>
 

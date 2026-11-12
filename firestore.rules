@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // --- Global Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- Validation Helpers ---
+    function isValidJournalEntry(data) {
+      return data.symbol is string && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.-]+$') &&
+             data.setupType is string && data.setupType.size() <= 50 &&
+             data.status is string && data.status in ['OPEN', 'CLOSED_WIN', 'CLOSED_LOSS', 'BREAKEVEN'] &&
+             data.entryDate is string && data.entryDate.size() == 10 &&
+             data.entryPrice is number && data.entryPrice >= 0;
+    }
+
+    function isValidWatchlistItem(data) {
+      return data.symbol is string && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.-]+$') &&
+             data.status is string && data.status in ['NEW', 'WATCHING', 'TRIGGERED', 'EXPIRED', 'INVALIDATED'] &&
+             data.updatedAt is timestamp;
+    }
+
+    // --- Master Gate ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow get, update: if isSignedIn() && request.auth.uid == userId;
+      
+      match /journalEntries/{entryId} {
+        allow get: if isSignedIn() && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && request.auth.uid == userId && 
+                         isValidJournalEntry(incoming()) && incoming().createdAt == request.time;
+        allow update: if isSignedIn() && request.auth.uid == userId && 
+                         isValidJournalEntry(incoming()) && 
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'exitPrice', 'exitDate', 'realizedPnL', 'pnlPercent', 'notes', 'updatedAt']) &&
+                         incoming().updatedAt == request.time;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      match /watchlistItems/{itemId} {
+        allow get: if isSignedIn() && request.auth.uid == userId;
+        allow list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && request.auth.uid == userId && 
+                         isValidWatchlistItem(incoming()) && incoming().createdAt == request.time;
+        allow update: if isSignedIn() && request.auth.uid == userId && 
+                         isValidWatchlistItem(incoming()) && 
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+  }
+}

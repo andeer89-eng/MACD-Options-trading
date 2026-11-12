@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRULLAS Today — prototip</title>
+<style>
+:root{--bg:#18181b;--card:#27272a;--card2:#202023;--line:#3f3f46;--tx:#e4e4e7;--mut:#a1a1aa;--grn:#4ade80;--red:#f87171;--amb:#fbbf24;--blu:#38bdf8;--vio:#a78bfa}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.sim-banner{background:#7c2d12;color:#fed7aa;text-align:center;padding:6px 12px;font-weight:600;font-size:13px}
+.dq-banner{background:#991b1b;color:#fee2e2;text-align:center;padding:6px 12px;font-weight:700;font-size:13px;letter-spacing:.04em}
+.status{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 16px;background:#111113;border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:.08em}
+.mut{color:var(--mut)}
+.small{font-size:12px}
+main{max-width:1320px;margin:0 auto;padding:16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0}
+.card h2{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);font-weight:700}
+.grid3{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
+.split{display:grid;gap:16px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}
+@media(max-width:1000px){.split{grid-template-columns:1fr}}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;font-weight:700;white-space:nowrap}
+.chip.g{color:var(--grn);border-color:#166534;background:#14532d33}
+.chip.r{color:var(--red);border-color:#991b1b;background:#7f1d1d33}
+.chip.a{color:var(--amb);border-color:#92400e;background:#78350f33}
+.chip.v{color:var(--vio);border-color:#5b21b6;background:#4c1d9533}
+.chip.b{color:var(--blu);border-color:#075985;background:#0c4a6e33}
+.chip.n{color:var(--mut)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button,.btn{background:transparent;color:var(--tx);border:0;padding:5px 11px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:#3f3f46}
+.seg button.kill[aria-pressed=true]{background:#991b1b}
+.btn{border:1px solid var(--line);border-radius:8px}
+select,input[type=range]{font:inherit;font-size:12px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+input[type=range]{padding:0;width:150px;vertical-align:middle}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.sim .row>label{display:flex;gap:8px;align-items:center;color:var(--mut);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid #35353a;vertical-align:middle}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.wl tbody tr{cursor:pointer}
+.wl tbody tr:hover{background:#303034}
+.wl tbody tr.sel{background:#2c3a4a}
+.wl tbody tr.dim{opacity:.55}
+.scroll{overflow-x:auto}
+.tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--mut);margin-left:4px}
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.kpi{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+.kpi .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:12px;color:var(--mut)}
+.pos{color:var(--grn)}.neg{color:var(--red)}
+.bar{height:7px;background:#3f3f46;border-radius:4px;overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--blu)}
+.comp{display:grid;grid-template-columns:minmax(0,1fr) 70px 34px;gap:8px;align-items:center;font-size:12px;margin:5px 0}
+.gate li{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #35353a;font-size:13px}
+.gate ul{list-style:none;margin:0;padding:0}
+.ok{color:var(--grn);font-weight:700}.bad{color:var(--red);font-weight:700}
+.foot{color:var(--mut);font-size:12px;padding:4px 2px 24px}
+svg text{font-family:inherit}
+.kvs{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:13px}
+.kvs dt{color:var(--mut)}.kvs dd{margin:0;font-variant-numeric:tabular-nums}
+ul.plain{margin:4px 0 0;padding-left:18px}
+h3{margin:16px 0 6px;font-size:13px;color:var(--tx)}
+.warn{color:var(--amb)}
+tr.sel{background:#2c3a4a}
+code{background:#18181b;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="sim-banner" role="note">PROTOTIP — DATE FICTIVE: simbolurile, prețurile și semnalele sunt generate. Nicio cifră de aici nu provine din piață; singurul element real este motorul de ieșiri.</div>
+<div id="dq-banner" class="dq-banner" hidden>SIMULATED DATA — calitatea datelor nu este LIVE; botul refuză intrări noi</div>
+<header class="status" id="status"></header>
+
+<main>
+  <section class="card sim" aria-label="Panou de simulare">
+    <h2>Panou de simulare (doar în prototip)</h2>
+    <div class="row">
+      <label>Sesiune
+        <select id="sim-session"><option value="real">Reală (ceasul tău, NY)</option><option value="REGULAR">Forțat REGULAR</option></select>
+      </label>
+      <label>Calitatea datelor
+        <span class="seg" id="sim-dq" role="group" aria-label="Calitatea datelor">
+          <button data-dq="live">LIVE</button><button data-dq="cached">CACHED</button><button data-dq="sim">SIM</button>
+        </span>
+      </label>
+      <label>Scor regim
+        <input type="range" id="sim-regime" min="0" max="100" step="1" aria-label="Scor regim simulat">
+        <span id="sim-regime-val" class="small"></span>
+        <button class="btn" id="sim-regime-reset" type="button">calculat</button>
+      </label>
+      <label>Capital alocat (simulare)
+        <input type="number" id="sim-capital" min="100" step="100" style="width:90px" aria-label="Capital alocat pentru simulare, în dolari">
+        <span class="mut small">$</span>
+      </label>
+      <label>Risc / tranzacție
+        <input type="number" id="sim-risk" min="0.1" max="10" step="0.1" style="width:64px" aria-label="Risc pe tranzacție, procent din capital">
+        <span class="mut small">%</span>
+      </label>
+      <span id="sim-risk-usd" class="chip n"></span>
+    </div>
+    <div class="small mut" style="margin-top:6px">Capitalul și risc-ul de mai sus alimentează <b>tot</b> modelul: mărimea poziției în <code>canTrade()</code>, KPI-urile din Review și P&amp;L-ul ipotetic din Calitatea semnalelor — nu sunt trei cifre separate. Schimbă oricare: bara de stare, politica de regim, gate-ul botului și coloana „Bot” din watchlist se recalculează din aceleași funcții. În aplicația reală: setări în Settings (<code>bot_state.sim_capital_usd</code> + <code>.max_risk_per_trade_pct</code>), nu constante în cod — convertesc R în $ pentru sizing și P&amp;L ipotetic, dar <b>nu ating statisticile R</b> (acelea rămân capital-independente, §6.5).</div>
+  </section>
+
+  <div class="grid3">
+    <section class="card" id="c-regime" aria-label="Regime Score"></section>
+    <section class="card" id="c-sector" aria-label="Rotație sectorială"></section>
+    <section class="card gate" id="c-auto" aria-label="Autopilot"></section>
+  </div>
+
+  <div class="split">
+    <section class="card" aria-label="Watchlist zilnică">
+      <h2>Watchlist zilnică</h2>
+      <div class="row" style="margin-bottom:8px">
+        <span class="seg" id="f-uni" role="group" aria-label="Univers">
+          <button data-uni="sp500">S&amp;P 500</button><button data-uni="ndx100">Nasdaq-100</button><button data-uni="both">Ambele</button>
+        </span>
+        <label class="small mut">Status
+          <select id="f-status"><option value="active">Active (NEW · WATCHING · TRIGGERED)</option><option value="all">Toate (inclusiv arhivate)</option></select>
+        </label>
+        <span class="small mut" id="wl-count"></span>
+      </div>
+      <div class="scroll"><table class="wl" id="wl"></table></div>
+      <div class="small mut" style="margin-top:8px">Regime Score se calculează mereu pe S&amp;P 500, indiferent de universul ales. Coloana „Bot” = rezultatul <code>canTrade()</code> pentru fiecare rând; click pe rând pentru niveluri și verificări.</div>
+    </section>
+    <section class="card" id="c-detail" aria-label="Detaliu simbol"></section>
+  </div>
+
+  <section class="card" aria-label="Review">
+    <h2>Review — jurnalul botului: trade-uri EXECUTATE în epoca activă „2k Virtual” (Legacy 50k: arhivată, read-only)</h2>
+    <div class="kpis" id="kpis"></div>
+    <div style="margin-top:14px"><div class="small mut" style="margin-bottom:4px">Equity (30 zile) și fâșia underwater. În prototip, execuția = modelul shadow (decalaj 0); în aplicație decalajul se măsoară cu <code>v_shadow_vs_executed</code>.</div><div id="equity"></div></div>
+  </section>
+
+  <section class="card" id="c-sq" aria-label="Calitatea semnalelor">
+    <h2>Calitatea semnalelor (shadow) — separat de jurnalul botului</h2>
+    <div class="small mut" style="margin-bottom:8px">Fiecare semnal confirmat se măsoară, luat sau nu de bot, cu ieșirea modelată (SL, TP, time-stop, trailing, structură), costuri și gap-uri. Date sintetice; motorul de ieșiri este cel real din <code>trullas-outcome-engine.js</code> (testat).</div>
+    <div class="row" style="margin-bottom:10px">
+      <label class="small mut">Strategie <select id="sq-strat"></select></label>
+      <label class="small mut">Politică de ieșire <select id="sq-pol"></select></label>
+      <label class="small mut">Perioadă <select id="sq-per"><option value="all">Toată</option><option value="cal">Calibrare (primele 70%)</option><option value="ver">Verificare (ultimele 30%)</option></select></label>
+      <label class="small mut">Semnale <select id="sq-grp"><option value="all">Toate</option><option value="taken">Luate de bot</option><option value="skip">Ne-luate (sărite + pre-epocă)</option></select></label>
+    </div>
+    <div id="sq-body"></div>
+  </section>
+
+  <div class="foot">Prototip pentru Master Plan v3. Fără apeluri externe, fără date reale. Calendarul NYSE e simplificat (fără sărbători/program scurt); în aplicație sesiunea vine din calendarul NYSE + fusul America/New_York. Statisticile de calitate sunt pe SEMNALE (shadow), nu doar pe trade-urile executate; CI90 e pe clustere zilnice și rămâne o limită optimistă (ferestrele de deținere se suprapun).</div>
+</main>
+
+<!--ENGINE:BEGIN--><script>
+/* =====================================================================
+   TRULLAS — Outcome engine (implementare de REFERINȚĂ, determinist, fără dependențe)
+   Ce face: dat un semnal confirmat + barele de DUPĂ `confirmed_bar_ts`, calculează
+     (1) simulateExit  — rezultatul în R sub o politică de ieșire versionată -> `signal_outcomes`
+     (2) computePath   — traiectoria pieței FĂRĂ ieșiri (fwdR la 1/3/5/10/20 bare, MFE/MAE) -> `signal_forward`
+     (3) clusterStats  — medie, SE pe clustere zilnice, CI90 (identic cu cluster_stats() din SQL 10.2)
+   Politicile X1/X2/X3 = EXACT cele din plan §6.5 și din `exit_policies` (SQL 10.6). Valori de pornire.
+   Convenții (conservatoare, anti look-ahead):
+     - bars[0] = prima bară DUPĂ bara de confirmare. Bară: {o,h,l,c, ma30?, earnNext?}
+     - `earnNext:true` pe bara j = earnings între închiderea lui j și deschiderea lui j+1 (data e în calendar,
+       deci nu e look-ahead). Politicile NU ies înainte de earnings; rezultatul poartă `earningsInWindow`
+     - intrare 'next_open': la deschiderea barei 0; 'trigger': ordin stop la `sig.trigger`, valabil `validBars`
+     - decizii pe închidere (invalidare, MA30, semnal opus, time-stop) => execuție la deschiderea barei următoare
+       (dacă bara următoare nu există încă: status 'open', `pendingExit` setat)
+     - SL și TP în aceeași bară => SL primul (`ambiguous:true`); gap peste stop => execuție la deschidere;
+       gap peste TP => umplere la nivelul TP (fără bonus de gap)
+     - o politică activă la bara k folosește doar bare <= k (proprietate testată: rezultatul unui semnal închis
+       nu se schimbă când sosesc bare noi)
+     - cost forfetar tur-retur în R: (2·slipAtr·ATR + roundTripBps·intrare/1e4) / risc; R net = R brut − costR
+   Unități: R = (preț − intrare)·direcție / risc, cu risc = |intrare − stop| măsurat la FILL.
+   ===================================================================== */
+(function (root) {
+  'use strict';
+  var ENGINE_VERSION = 'outcome-1.1.0';
+
+  /* ---- Politici (aceleași valori ca în SQL 10.6; time-stop pe timeframe) ---- */
+  var BASE = {
+    entryMode: 'next_open',        // 'next_open' | 'trigger'
+    validBars: 3,                  // doar 'trigger'
+    maxChaseAtr: 0.75,             // fill mai departe de intrarea planificată cu > 0,75 ATR -> void 'chase'
+    maxRiskAtr: 3,                 // risc > 3·ATR -> void 'stop_too_wide' (la fel ca Levels.stopTooWide)
+    tpMode: 'none',                // 'levels' = TP1 din Levels (sig.tp1Price), ieșire integrală | 'none'
+    tp1R: 2, tp1Fraction: 1, beAfterTp1: false, tp2R: null,   // fallback când semnalul nu are tp1Price
+    trail: null,                   // {after:'entry'|'tp1'|'r', activateR?, toBreakeven?, mult}
+    timeStop: null,                // {maxBars: număr | {'1w':8,'1d':15,'1h':20}}
+    invalidationExit: false, oppositeExit: false, maExit: false,
+    cost: { roundTripBps: 10, slipAtr: 0 }  // 5 bps/parte: ipoteză de calibrat cu fill-urile paper
+  };
+  function mk(o) { var r = {}, k; for (k in BASE) r[k] = BASE[k]; for (k in o) r[k] = o[k]; return r; }
+  var POLICIES = {
+    X1_fixed_v1: mk({ name: 'X1_fixed_v1', tpMode: 'levels', timeStop: { maxBars: { '1w': 8, '1d': 15, '1h': 20 } } }),
+    X2_trail_v1: mk({ name: 'X2_trail_v1', trail: { after: 'r', activateR: 1, toBreakeven: true, mult: 2 },
+      timeStop: { maxBars: { '1w': 12, '1d': 25, '1h': 30 } } }),
+    X3_structure_v1: mk({ name: 'X3_structure_v1', invalidationExit: true, oppositeExit: true, maExit: true,
+      timeStop: { maxBars: { '1w': 12, '1d': 25, '1h': 30 } } })
+  };
+  var DEFAULT_POLICY = POLICIES.X1_fixed_v1;   // politica primară = ce face botul
+
+  /* Mapare motiv de ieșire (engine) -> valorile permise de signal_outcomes.exit_reason */
+  var SQL_REASON = { sl: 'sl', be: 'sl', trail: 'trail', tp1: 'tp', tp2: 'tp', invalidation: 'invalidation',
+    opposite: 'structure', ma30: 'structure', time: 'time' };
+
+  /* ---- t unilateral 95% (= CI90 bilateral). IDENTIC cu t95(df) din SQL 10.1 (conservator pentru df > 30) ---- */
+  var T95 = [6.314, 2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812, 1.796, 1.782, 1.771, 1.761,
+    1.753, 1.746, 1.740, 1.734, 1.729, 1.725, 1.721, 1.717, 1.714, 1.711, 1.708, 1.706, 1.703, 1.701, 1.699, 1.697];
+  function t95(df) {
+    if (!(df >= 1)) return NaN;
+    if (df <= 30) return T95[df - 1];
+    if (df <= 40) return 1.697;
+    if (df <= 60) return 1.684;
+    if (df <= 120) return 1.671;
+    return 1.658;
+  }
+  function tq(n) { return t95(n - 1); }   // pentru n observații independente
+
+  function mergePolicy(p) {
+    var o = mk({}), k;
+    if (p) for (k in p) o[k] = p[k];
+    return o;
+  }
+  // NOTĂ: mergePolicy e superficial — `trail`, `timeStop`, `cost` se înlocuiesc ÎNTREGI dacă sunt date.
+  function dirOf(sig) { return sig.direction === 'short' ? -1 : 1; }
+  function maxBarsOf(pol, sig) {
+    if (!pol.timeStop) return null;
+    var m = pol.timeStop.maxBars;
+    return typeof m === 'object' ? m[sig.timeframe || '1d'] : m;
+  }
+
+  /* Rezolvă intrarea: {idx, fill, risk} | {void:'...'} | {wait:true} */
+  function resolveEntry(sig, bars, pol) {
+    var d = dirOf(sig), atr = sig.atr, idx = -1, fill, i, b;
+    if (!bars || !bars.length) return { wait: true };
+    if (pol.entryMode === 'trigger') {
+      var lim = Math.min(pol.validBars, bars.length);
+      for (i = 0; i < lim; i++) {
+        b = bars[i];
+        if (d === 1 ? b.h >= sig.trigger : b.l <= sig.trigger) {
+          idx = i;
+          fill = d === 1 ? Math.max(sig.trigger, b.o) : Math.min(sig.trigger, b.o); // gap peste trigger => la deschidere
+          break;
+        }
+      }
+      if (idx < 0) return bars.length >= pol.validBars ? { void: 'not_triggered' } : { wait: true };
+    } else { idx = 0; fill = bars[0].o; }
+    if (sig.entry != null && pol.maxChaseAtr != null && d * (fill - sig.entry) > pol.maxChaseAtr * atr) return { void: 'chase' };
+    var risk = d * (fill - sig.stop);
+    if (!(risk > 0)) return { void: 'stop_beyond_entry' };
+    if (risk > pol.maxRiskAtr * atr) return { void: 'stop_too_wide' };
+    return { idx: idx, fill: fill, risk: risk };
+  }
+
+  /* sig: {direction, stop, atr, timeframe?, entry?, trigger?, invalidation?, tp1Price?, tp2Price?}
+     ctx: {oppositeBars?: number[]}  (indici de bară la a căror ÎNCHIDERE a apărut semnal opus) */
+  function simulateExit(sig, bars, policy, ctx) {
+    var pol = mergePolicy(policy); ctx = ctx || {};
+    var d = dirOf(sig), atr = sig.atr, n = bars.length;
+    var en = resolveEntry(sig, bars, pol);
+    if (en.wait) return { engineVersion: ENGINE_VERSION, status: 'open', openReason: 'awaiting_trigger' };
+    if (en.void) return { engineVersion: ENGINE_VERSION, status: 'void', voidReason: en.void };
+
+    var fill = en.fill, risk = en.risk, ei = en.idx;
+    function R(px) { return d * (px - fill) / risk; }
+    var tp1P = null, tp2P = null;
+    if (pol.tpMode === 'levels') {
+      tp1P = sig.tp1Price != null ? sig.tp1Price : (pol.tp1R != null ? fill + d * pol.tp1R * risk : null);
+      tp2P = sig.tp2Price != null ? sig.tp2Price : (pol.tp2R != null ? fill + d * pol.tp2R * risk : null);
+    }
+    var costR = (2 * pol.cost.slipAtr * atr + pol.cost.roundTripBps / 1e4 * fill) / risk;
+    var maxBars = maxBarsOf(pol, sig);
+
+    var stop = sig.stop, kind = 'sl', tp1Hit = false, remaining = 1, realized = 0, extreme = fill;
+    var mfe = 0, mae = 0, ambiguous = false, pending = null, trailOn = false, sawEarn = false, i, b;
+
+    function done(idx, px, reason, atOpen, gap) {
+      if (remaining > 1e-12) { realized += remaining * R(px); remaining = 0; }
+      mfe = Math.max(mfe, R(px)); mae = Math.min(mae, R(px));
+      return {
+        engineVersion: ENGINE_VERSION, status: 'closed',
+        entryIdx: ei, entryFill: fill, risk: risk,
+        exitIdx: idx, exitReason: reason, exitReasonSql: SQL_REASON[reason], exitPrice: px, gapExit: !!gap,
+        barsHeld: idx - ei + (atOpen ? 0 : 1), tp1Hit: tp1Hit,
+        rGross: realized, costR: costR, rNet: realized - costR,
+        mfeR: mfe, maeR: mae, ambiguous: ambiguous, earningsInWindow: sawEarn
+      };
+    }
+
+    for (i = ei; i < n; i++) {
+      b = bars[i];
+      if (pending) return done(i, b.o, pending, true, false);                     // decizie la închiderea barei anterioare
+      if (i > ei && d * (b.o - stop) <= 0) return done(i, b.o, kind, true, true); // gap peste stop
+      var slHit = d === 1 ? b.l <= stop : b.h >= stop;
+      var tp = tp1Hit ? tp2P : tp1P;
+      var tpHit = tp != null && (d === 1 ? b.h >= tp : b.l <= tp);
+      if (slHit) {                                                                // SL primul
+        if (tpHit) ambiguous = true;
+        return done(i, stop, kind, false, false);
+      }
+      mfe = Math.max(mfe, R(d === 1 ? b.h : b.l));
+      mae = Math.min(mae, R(d === 1 ? b.l : b.h));
+      if (tpHit) {
+        if (!tp1Hit) {
+          realized += pol.tp1Fraction * R(tp1P); remaining -= pol.tp1Fraction; tp1Hit = true;
+          if (remaining <= 1e-12) { remaining = 0; return done(i, tp1P, 'tp1', false, false); }
+          if (pol.beAfterTp1 && d * (fill - stop) > 0) { stop = fill; kind = 'be'; }
+        } else {
+          return done(i, tp2P, 'tp2', false, false);
+        }
+      }
+      extreme = d === 1 ? Math.max(extreme, b.h) : Math.min(extreme, b.l);
+      if (pol.trail) {
+        var tr = pol.trail;
+        if (!trailOn) {
+          if (tr.after === 'entry') trailOn = true;
+          else if (tr.after === 'tp1') trailOn = tp1Hit;
+          else if (tr.after === 'r' && R(extreme) >= tr.activateR) {              // efectiv de la bara următoare
+            trailOn = true;
+            if (tr.toBreakeven && d * (fill - stop) > 0) { stop = fill; kind = 'be'; }
+          }
+        }
+        if (trailOn) {
+          var cand = extreme - d * tr.mult * atr;
+          if (d * (cand - stop) > 0) { stop = cand; kind = 'trail'; }
+        }
+      }
+      if (pol.invalidationExit && sig.invalidation != null && d * (b.c - sig.invalidation) < 0) pending = 'invalidation';
+      else if (pol.oppositeExit && ctx.oppositeBars && ctx.oppositeBars.indexOf(i) >= 0) pending = 'opposite';
+      else if (pol.maExit && b.ma30 != null && d * (b.c - b.ma30) < 0) pending = 'ma30';
+      else if (maxBars != null && i - ei + 1 >= maxBars) pending = 'time';
+      if (b.earnNext) sawEarn = true;
+    }
+    var last = bars[n - 1];
+    var mark = realized + remaining * R(last.c);
+    return {
+      engineVersion: ENGINE_VERSION, status: 'open',
+      entryIdx: ei, entryFill: fill, risk: risk, tp1Hit: tp1Hit, barsHeld: n - ei,
+      markR: mark, costR: costR, markNet: mark - costR, mfeR: mfe, maeR: mae,
+      pendingExit: pending, ambiguous: ambiguous, earningsInWindow: sawEarn
+    };
+  }
+
+  /* Traiectoria după semnal, FĂRĂ ieșiri (calitatea semnalului în sine) -> `signal_forward`.
+     fwdR[h] = R la ÎNCHIDEREA barei a h-a (bara de intrare = bara 1), stop-ul semnalului ignorat.
+     mfe20R >= 0 >= mae20R pe primele 20 de bare. `complete` = toate orizonturile calculate. */
+  var HORIZONS = [1, 3, 5, 10, 20];
+  function computePath(sig, bars, policy) {
+    var pol = mergePolicy(policy);
+    var en = resolveEntry(sig, bars, pol);
+    if (en.void) return { status: 'void', voidReason: en.void };
+    if (en.wait) return { status: 'open' };
+    var d = dirOf(sig), fill = en.fill, risk = en.risk, ei = en.idx, h, k, b;
+    var fwdR = {}, mfe = 0, mae = 0, avail = bars.length - ei;
+    for (k = 0; k < Math.min(20, avail); k++) {
+      b = bars[ei + k];
+      mfe = Math.max(mfe, d * ((d === 1 ? b.h : b.l) - fill) / risk);
+      mae = Math.min(mae, d * ((d === 1 ? b.l : b.h) - fill) / risk);
+    }
+    for (h = 0; h < HORIZONS.length; h++) {
+      if (HORIZONS[h] <= avail) fwdR[HORIZONS[h]] = d * (bars[ei + HORIZONS[h] - 1].c - fill) / risk;
+    }
+    return { status: 'ok', entryIdx: ei, entryFill: fill, risk: risk, fwdR: fwdR, mfe20R: mfe, mae20R: mae,
+      complete: avail >= 20 };
+  }
+
+  /* Medie, SE pe clustere (o zi de semnal = un cluster), CI90. Formula din SQL 10.2:
+     SE = sqrt( G/(G−1) · Σ_g (Σ_{i∈g}(x_i − μ))² ) / n ;  CI90 = μ ± t95(G−1)·SE ; G = n_eff */
+  function clusterStats(vals, days) {
+    var n = vals.length, i, mu = 0;
+    if (!n) return { n: 0, nEff: 0, mean: NaN, se: NaN, lo: NaN, hi: NaN };
+    for (i = 0; i < n; i++) mu += vals[i];
+    mu /= n;
+    var dev = {}, g = 0, key;
+    for (i = 0; i < n; i++) { key = String(days[i]); if (!(key in dev)) { dev[key] = 0; g++; } dev[key] += vals[i] - mu; }
+    var ss = 0;
+    for (key in dev) ss += dev[key] * dev[key];
+    var se = g >= 2 ? Math.sqrt(g / (g - 1) * ss) / n : NaN;
+    var q = t95(g - 1);
+    return { n: n, nEff: g, mean: mu, se: se, lo: mu - q * se, hi: mu + q * se };
+  }
+
+  /* Rezumat descriptiv (fără CI): PF „—" (null) sub n = 10, ca în SQL; capture = Σ R realizat / Σ MFE */
+  function summarize(rs) {
+    var n = rs.length, i;
+    if (!n) return { n: 0, mean: NaN, sd: NaN, wins: 0, winRate: NaN, avgWin: NaN, avgLoss: NaN, pf: null, median: NaN, sum: 0 };
+    var sum = 0, gw = 0, gl = 0, nw = 0, nl = 0;
+    for (i = 0; i < n; i++) { sum += rs[i]; if (rs[i] > 0) { gw += rs[i]; nw++; } else if (rs[i] < 0) { gl -= rs[i]; nl++; } }
+    var mean = sum / n, ss = 0;
+    for (i = 0; i < n; i++) ss += (rs[i] - mean) * (rs[i] - mean);
+    var sd = n > 1 ? Math.sqrt(ss / (n - 1)) : NaN;
+    var s = rs.slice().sort(function (a, b) { return a - b; });
+    var med = n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+    return { n: n, mean: mean, sd: sd, wins: nw, winRate: nw / n, avgWin: nw ? gw / nw : NaN,
+      avgLoss: nl ? gl / nl : NaN, pf: n >= 10 && gl > 0 ? gw / gl : null, median: med, sum: sum };
+  }
+
+  var api = {
+    ENGINE_VERSION: ENGINE_VERSION, POLICIES: POLICIES, DEFAULT_POLICY: DEFAULT_POLICY, HORIZONS: HORIZONS,
+    mergePolicy: mergePolicy, resolveEntry: resolveEntry, simulateExit: simulateExit, computePath: computePath,
+    clusterStats: clusterStats, summarize: summarize, t95: t95, tq: tq
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.TrullasEngine = api;
+})(typeof window !== 'undefined' ? window : this);
+</script><!--ENGINE:END-->
+<script>
+(function(){
+'use strict';
+var $=function(id){return document.getElementById(id);};
+var n2=function(x,d){d=d==null?2:d;return Number(x).toLocaleString('ro-RO',{minimumFractionDigits:d,maximumFractionDigits:d});};
+var sg=function(x,d){return (x>0?'+':x<0?'−':'')+n2(Math.abs(x),d);};
+var clamp=function(x,a,b){return Math.min(b,Math.max(a,x));};
+function rng(seed){var a=seed>>>0;return function(){a=(a+0x6D2B79F5)>>>0;var t=a;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
+var SEED=20261110;
+
+/* ---------- constante de cont ---------- */
+/* Capital alocat + risc% sunt setări manuale (bot_state.sim_capital_usd / .max_risk_per_trade_pct), nu constante:
+   citite din S.capital / S.riskPct mai jos. RISK_USD derivă mereu din ele (nu e o a treia valoare separată). */
+var DAILY_LOSS=-0.6,DAILY_LIMIT=2.0,SECTOR_CAP=30,HB_MIN=4,HB_MAX=10;
+function EQUITY0(){return S.capital;}
+function RISK_PCT(){return S.riskPct;}
+function RISK_USD(){return S.capital*S.riskPct/100;}
+var POS=[];
+
+/* ---------- stare UI ---------- */
+var S={session:'real',dq:'live',regime:null,bot:'armed',uni:'both',status:'active',sel:'SIM01',capital:2000,riskPct:1.0};
+
+/* ---------- Motorul real de ieșiri (inline din trullas-outcome-engine.js) ---------- */
+var E=window.TrullasEngine;
+function tq(n){return E.tq(n);}
+
+/* ---------- Regime ---------- */
+var COMPS=[{k:'Trend S&P (stage Weinstein)',w:25,v:72},{k:'Breadth (% > MA50/MA200, NH/NL)',w:25,v:55},{k:'VIX + term structure',w:20,v:48},{k:'Put/Call (CBOE)',w:15,v:40},{k:'Participare sectorială',w:15,v:60}];
+function calcScore(){return Math.round(COMPS.reduce(function(a,c){return a+c.w*c.v/100;},0));}
+var HIST=(function(){var r=rng(SEED+1),h=new Array(30);h[29]=calcScore();for(var i=29;i>0;i--){h[i-1]=clamp(h[i]+(r()-0.5)*7,5,95);}return h.map(Math.round);})();
+var BANDS=[
+ {name:'Risk-off',max:30,cls:'r',min:75,size:0,txt:'fără intrări noi long; short doar la scor ≥ 75, mărime ×0,5',col:'#f87171'},
+ {name:'Neutral',max:60,cls:'a',min:75,size:0.5,txt:'sizing ×0,5 · scor setup ≥ 75',col:'#fbbf24'},
+ {name:'Risk-on',max:85,cls:'g',min:60,size:1,txt:'sizing ×1,0 · scor setup ≥ 60',col:'#4ade80'},
+ {name:'Extins',max:101,cls:'v',min:70,size:0.75,txt:'sizing ×0,75 · scor ≥ 70 · stop-uri strânse',col:'#a78bfa'}];
+function band(s){for(var i=0;i<BANDS.length;i++){if(s<BANDS[i].max)return BANDS[i];}return BANDS[3];}
+function score(){return S.regime==null?calcScore():S.regime;}
+
+/* ---------- Sesiune (NY) ---------- */
+function session(){
+  if(S.session==='REGULAR')return{name:'REGULAR',cls:'g',txt:'sesiune forțată (simulare)'};
+  var now=new Date();
+  var p={};new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now).forEach(function(x){p[x.type]=x.value;});
+  var mins=(+p.hour)*60+(+p.minute),wk=p.weekday,name='ÎNCHIS',cls='r';
+  if(wk!=='Sat'&&wk!=='Sun'){
+    if(mins>=570&&mins<960){name='REGULAR';cls='g';}
+    else if(mins>=240&&mins<570){name='PREMARKET';cls='a';}
+    else if(mins>=960&&mins<1200){name='AFTERHOURS';cls='a';}
+  }
+  var loc=new Intl.DateTimeFormat('ro-RO',{timeZone:'Europe/Chisinau',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(now);
+  return{name:name,cls:cls,txt:p.hour+':'+p.minute+' ET · '+loc+' Chișinău'};
+}
+
+/* ---------- Semnale shadow: motorul REAL (trullas-outcome-engine.js, inline) pe date SINTETICE ---------- */
+var NS=120,EPOCH0=90,TODAY=NS-1,HOLD0=Math.floor(NS*0.7);   // sesiuni 0..119; epoca botului = ultimele 30; verificare = ultimele 30%
+var POLS=['X1_fixed_v1','X2_trail_v1','X3_structure_v1'];
+var POLNAME={X1_fixed_v1:'X1 · SL / TP1 / time-stop (primară)',X2_trail_v1:'X2 · breakeven + trailing 2×ATR',X3_structure_v1:'X3 · structură (MA30 / invalidare / opus)'};
+var DATES=(function(){var a=[],t=Date.UTC(2026,10,10);while(a.length<NS){var dt=new Date(t),w=dt.getUTCDay();if(w!==0&&w!==6)a.unshift(dt.toISOString().slice(0,10));t-=864e5;}return a;})();
+var RS=(function(){var r=rng(SEED+7),a=new Array(NS),i;a[NS-1]=calcScore();for(i=NS-1;i>0;i--)a[i-1]=clamp(a[i]+(r()-0.5)*6,8,92);return a.map(Math.round);})();
+HIST=RS.slice(-30);
+function rkey(s){return s<30?'risk_off':s<60?'neutral':s<85?'risk_on':'extended';}
+var RNAME={risk_off:'Risk-off',neutral:'Neutral',risk_on:'Risk-on',extended:'Extins'};
+var SDEF=[
+ {code:'weinstein_breakout',name:'Weinstein breakout',n:112,mu:0.075},
+ {code:'four_pillars_div',name:'4-Pillars divergență',n:64,mu:0.045},
+ {code:'exhaustion',name:'Epuizare (exhaustion)',n:41,mu:-0.04},
+ {code:'avwap_reclaim',name:'AVWAP reclaim',n:17,mu:0.02}];
+var SECTORS=['Information Technology','Health Care','Financials','Industrials','Communication Services','Consumer Discretionary','Consumer Staples','Energy','Materials','Utilities','Real Estate'];
+function zn(r){return Math.sqrt(-2*Math.log(r()+1e-12))*Math.cos(2*Math.PI*r());}
+/* Traiectorie în unități ATR „favorabile" (d=+1 long, −1 short), apoi convertită în bare de preț.
+   Gap-uri rare (4%), evenimente de earnings (0,6% / bară) urmate de gap mare; MA30 pornește sub intrare și urcă încet. */
+function genBars(r,P0,atr,d,mu,nb){
+  var bars=[],pc=0,earn=false,i;
+  for(i=0;i<nb;i++){
+    var gap=i===0?zn(r)*0.2:(earn?zn(r)*2.0:(r()<0.04?zn(r)*1.2:zn(r)*0.12));
+    var o=pc+gap,c=o+mu+zn(r)*0.55,h=Math.max(o,c)+r()*0.45,l=Math.min(o,c)-r()*0.45,m=-0.6+0.02*i;
+    earn=r()<0.006;
+    bars.push(d===1?{o:P0+o*atr,h:P0+h*atr,l:P0+l*atr,c:P0+c*atr,ma30:P0+m*atr,earnNext:earn}
+                   :{o:P0-o*atr,h:P0-l*atr,l:P0-h*atr,c:P0-c*atr,ma30:P0-m*atr,earnNext:earn});
+    pc=c;
+  }
+  return bars;
+}
+var SIGS=(function(){
+  var r=rng(SEED+500),all=[],id=0,NB=45;
+  SDEF.forEach(function(sd){
+    for(var i=0;i<sd.n;i++){
+      var c=Math.floor(r()*(NS-1)),d=(sd.code==='four_pillars_div'&&r()<0.15)?-1:1;
+      var P0=Math.round(30*Math.pow(30,r())*100)/100,atr=P0*(0.014+0.016*r()),k=1.2+1.4*r(),risk0=k*atr;
+      var score=Math.round(55+r()*38+(sd.code==='weinstein_breakout'?4:0));
+      var mu=sd.mu+0.0012*(score-75)+(RS[c]<30?-0.03:0);
+      var sig={direction:d===1?'long':'short',timeframe:'1d',entry:P0,stop:P0-d*risk0,atr:atr,
+        tp1Price:P0+d*(2+r())*risk0,invalidation:P0-d*(0.5+0.3*r())*risk0};
+      var avail=Math.min(NB,TODAY-c),bars=genBars(r,P0,atr,d,mu,NB).slice(0,avail),cbars=genBars(r,P0,atr,d,0.014,NB).slice(0,avail);
+      var opp=[],oppC=[],b;for(b=0;b<avail;b++){if(r()<0.02)opp.push(b);if(r()<0.02)oppC.push(b);}
+      var out={},cout={};
+      POLS.forEach(function(P){out[P]=E.simulateExit(sig,bars,E.POLICIES[P],{oppositeBars:opp});cout[P]=E.simulateExit(sig,cbars,E.POLICIES[P],{oppositeBars:oppC});});
+      all.push({id:id++,c:c,day:DATES[c],sym:'S'+('0'+Math.floor(r()*45)).slice(-2),strat:sd.code,dir:sig.direction,score:score,regime:RS[c],band:rkey(RS[c]),
+        sector:SECTORS[Math.floor(r()*SECTORS.length)],sig:sig,out:out,cout:cout,path:E.computePath(sig,bars,E.POLICIES.X1_fixed_v1),
+        riskPS:risk0,est:r()<0.035,dup:false,taken:false,skip:null,qty:0});
+    }
+  });
+  all.sort(function(a,b){return a.c-b.c||a.id-b.id;});
+  /* un singur semnal per (simbol, strategie, direcție) cât timp altul e deschis sau în cooldown de 5 bare (plan §6.5) */
+  var lastEnd={};
+  all.forEach(function(s){
+    var key=s.strat+'|'+s.sym+'|'+s.dir,o=s.out.X1_fixed_v1,end=o.status==='closed'?s.c+1+o.exitIdx:(o.status==='void'?s.c:TODAY+99);
+    if(lastEnd[key]!=null&&s.c<=lastEnd[key]+5)s.dup=true;else lastEnd[key]=end;
+  });
+  /* Decizii ale botului în epocă (ultimele 30 de sesiuni): max 1 intrare / zi, max 3 deschise, prag de scor din politica de regim,
+     lot minim ($20 risc), gate-uri. Semnalele dinainte de epocă rămân „necunoscut" (taken=false, fără motiv). */
+  var rg=rng(SEED+900),taken=[],byDay={},day;
+  all.forEach(function(s){if(s.c>=EPOCH0&&!s.dup&&!s.est)(byDay[s.c]=byDay[s.c]||[]).push(s);});
+  for(day=EPOCH0;day<TODAY;day++){
+    var L=(byDay[day]||[]).slice().sort(function(a,b){return b.score-a.score;});
+    var openNow=taken.filter(function(t){var o=t.out.X1_fixed_v1,end=o.status==='closed'?t.c+1+o.exitIdx:99999;return t.c+1<=day&&end>day;}).length,took=false,b=band(RS[day]);
+    L.forEach(function(s){
+      var o=s.out.X1_fixed_v1;
+      if(o.status==='void'){s.skip='guard';return;}
+      if(b.name==='Risk-off'&&s.dir==='long'){s.skip='regime';return;}
+      if(Math.floor(RISK_USD()/s.riskPS)<1){s.skip='size';return;}
+      if(rg()<0.06){s.skip='guard';return;}
+      if(took||openNow>=3||s.score<b.min){s.skip='not_selected';return;}
+      s.taken=true;s.qty=Math.floor(RISK_USD()/s.riskPS);took=true;openNow++;taken.push(s);
+    });
+  }
+  return all;
+})();
+
+/* ---------- Statistica semnalelor: aceleași formule ca v_signal_* (SQL 10.7–10.12) ---------- */
+function usable(s){return !s.dup&&!s.est;}
+function closedOf(L,P){return L.filter(function(s){return usable(s)&&s.out[P].status==='closed';});}
+function stat(L,P){
+  var cl=closedOf(L,P),vals=cl.map(function(s){return s.out[P].rNet;}),days=cl.map(function(s){return s.c;});
+  var cs=E.clusterStats(vals,days),sm=E.summarize(vals),mfe=0,gr=0,gb=0,bars=0,ex={tp:0,sl:0,time:0,trail:0,structure:0,invalidation:0},amb=0,gap=0,earn=0;
+  cl.forEach(function(s){var o=s.out[P];if(o.mfeR>0){mfe+=o.mfeR;gr+=o.rGross;}gb+=o.mfeR-o.rGross;bars+=o.barsHeld;ex[o.exitReasonSql]++;if(o.ambiguous)amb++;if(o.gapExit)gap++;if(o.earningsInWindow)earn++;});
+  var n=cl.length,nn=function(x){return n?x/n:NaN;};
+  return{n:n,nEff:cs.nEff,mean:cs.mean,lo:cs.lo,hi:cs.hi,win:sm.winRate,pf:sm.pf,sd:sm.sd,median:sm.median,sum:sm.sum,
+    mde:n>1?2.486*sm.sd/Math.sqrt(cs.nEff):NaN,capture:mfe>0?gr/mfe:null,giveback:nn(gb),bars:nn(bars),
+    ex:ex,amb:nn(amb),gap:nn(gap),earn:nn(earn),sampleOk:cs.nEff>=30,
+    nOpen:L.filter(function(s){return usable(s)&&s.out[P].status==='open';}).length,
+    nVoid:L.filter(function(s){return usable(s)&&s.out[P].status==='void';}).length};
+}
+/* Starea strategiei (plan §6.2): n<30 colectează · n≥30 și R<−0,1 pauză (tripwire) · boost doar cu n_eff≥100 și CI90 jos>0, cu aprobare */
+var STRAT={};
+SDEF.forEach(function(sd){
+  var st=stat(SIGS.filter(function(s){return s.strat===sd.code;}),'X1_fixed_v1'),act,cls,txt;
+  if(st.n<30){act='collect';cls='b';txt='COLECTEAZĂ — lipsesc '+(30-st.n)+' până la prag';}
+  else if(st.mean<-0.1){act='pause';cls='r';txt='PAUZĂ (tripwire, nu verdict)';}
+  else if(st.nEff>=100&&st.lo>0){act='boost';cls='g';txt='CANDIDAT BOOST — cere aprobare';}
+  else{act='active';cls='n';txt='ACTIV — boost cere n_eff ≥ 100 și CI90 jos > 0';}
+  STRAT[sd.code]=Object.assign({name:sd.name,act:act,cls:cls,txt:txt},st);
+});
+
+/* ---------- Jurnalul botului (epoca activă) = semnalele LUATE, la politica primară ---------- */
+var TRADES=SIGS.filter(function(s){return s.taken&&s.out.X1_fixed_v1.status==='closed';}).map(function(s){var o=s.out.X1_fixed_v1;return{d:s.c+1+o.exitIdx-EPOCH0,r:o.rNet,st:s.strat};});
+POS=SIGS.filter(function(s){return s.taken&&s.out.X1_fixed_v1.status==='open';}).map(function(s){var o=s.out.X1_fixed_v1;return{s:s.sym,sec:s.sector,notional:Math.round(s.qty*o.entryFill),dir:s.dir,r:sg(o.markNet,1)+'R'};});
+var J=(function(){
+  var n=TRADES.length,rs=TRADES.map(function(t){return t.r;});
+  var mean=n?rs.reduce(function(a,b){return a+b;},0)/n:NaN;
+  var sd=n>1?Math.sqrt(rs.reduce(function(a,b){return a+(b-mean)*(b-mean);},0)/(n-1)):NaN;
+  var se=sd/Math.sqrt(n),q=tq(n);
+  var gw=rs.filter(function(r){return r>0;}).reduce(function(a,b){return a+b;},0);
+  var gl=-rs.filter(function(r){return r<0;}).reduce(function(a,b){return a+b;},0);
+  /* n, mean, sd, CI90, win rate, PF: toate în R — capital-independente, nu se recalculează la schimbarea setărilor. */
+  return{n:n,mean:mean,sd:sd,lo:mean-q*se,hi:mean+q*se,wins:rs.filter(function(r){return r>0;}).length,
+    pf:n>=10&&gl>0?gw/gl:null};
+})();
+/* Conversia R -> $ (capital alocat + risc%): recalculată la fiecare render, niciodată cache-uită static. */
+function equityCurve(){
+  var eq=[],e=EQUITY0(),d,peak=EQUITY0(),dd=[],maxdd=0,ru=RISK_USD();
+  for(d=0;d<30;d++){TRADES.forEach(function(t){if(t.d===d)e+=t.r*ru;});eq.push(e);peak=Math.max(peak,e);var x=(e-peak)/peak*100;dd.push(x);maxdd=Math.min(maxdd,x);}
+  return{net:e-EQUITY0(),eq:eq,dd:dd,maxdd:maxdd};
+}
+
+/* ---------- Watchlist (date fictive) ---------- */
+var DEF=[
+ {s:'SIM01',sec:'Information Technology',u:['sp500','ndx100'],setup:'Weinstein breakout',st:'weinstein_breakout',dir:'long',p:128.40,atr:3.10,zone:[1.002,1.012],status:'WATCHING',sc:[27,18,17,16],why:['Stage 2, MA30 în urcare','Breakout peste rezistența de 6 săptămâni','ATR 2,4% — volatilitate normală'],sm:'Form 4: cluster de 3 insideri / 30 zile',earn:23,extra:0,res:6,div:false},
+ {s:'SIM02',sec:'Health Care',u:['sp500'],setup:'4-Pillars divergență bullish',st:'four_pillars_div',dir:'long',p:62.10,atr:1.55,zone:[0.996,1.006],status:'NEW',sc:[22,27,14,12],why:['Divergență MACD triplă pe 1d','Stage 1→2 în curs','Volum sub medie'],sm:'13F: net +1,8% QoQ (lag ≥ 45 zile)',earn:31,extra:0,res:5,div:true},
+ {s:'SIM03',sec:'Financials',u:['sp500'],setup:'AVWAP reclaim',st:'avwap_reclaim',dir:'long',p:48.75,atr:0.95,zone:[1.000,1.008],status:'NEW',sc:[20,15,15,18],why:['Reclaim AVWAP (ancoră earnings)','Stage 2 târziu','Volum peste medie'],sm:null,earn:12,extra:0,res:4,div:false},
+ {s:'SIM04',sec:'Industrials',u:['sp500'],setup:'Weinstein breakout',st:'weinstein_breakout',dir:'long',p:212.30,atr:5.40,zone:[1.003,1.015],status:'NEW',sc:[28,20,16,19],why:['Stage 2 confirmat pe weekly','Bază de 9 săptămâni, închidere peste pivot','Volum +60% vs medie'],sm:null,earn:40,extra:0,res:6,div:false},
+ {s:'SIM05',sec:'Communication Services',u:['sp500','ndx100'],setup:'4-Pillars divergență bullish',st:'four_pillars_div',dir:'long',p:481.50,atr:11.80,zone:[0.997,1.004],status:'WATCHING',sc:[24,26,15,15],why:['Divergență triplă pe 1d','Suport AVWAP aproape','Preț mare: lotul minim riscă mult'],sm:'Form 4: o vânzare programată',earn:4,extra:0,res:5,div:true},
+ {s:'SIM06',sec:'Information Technology',u:['ndx100'],setup:'Epuizare bullish',st:'exhaustion',dir:'long',p:94.20,atr:2.60,zone:[0.998,1.006],status:'NEW',sc:[18,24,13,17],why:['Epuizare vânzare după 5 zile roșii','Sub MA30 (stage 4→1)','Strategie aflată în pauză'],sm:null,earn:19,extra:0,res:4,div:true},
+ {s:'SIM07',sec:'Consumer Discretionary',u:['sp500','ndx100'],setup:'AVWAP reclaim',st:'avwap_reclaim',dir:'long',p:171.60,atr:4.10,zone:[1.000,1.010],status:'WATCHING',sc:[26,17,18,17],why:['Reclaim AVWAP de la pivotul de stage','Stage 2','ATR 2,4%'],sm:'13F: net +0,6% QoQ (lag ≥ 45 zile)',earn:27,extra:0,res:5,div:false},
+ {s:'SIM08',sec:'Energy',u:['sp500'],setup:'Weinstein breakout',st:'weinstein_breakout',dir:'long',p:83.40,atr:2.40,zone:[0.995,1.005],status:'TRIGGERED',sc:[27,19,15,20],why:['Breakout confirmat la închidere','Volum +85% vs medie','Sector Leading în RRG'],sm:null,earn:35,extra:0,res:6,div:false},
+ {s:'SIM09',sec:'Consumer Staples',u:['sp500'],setup:'4-Pillars divergență bearish',st:'four_pillars_div',dir:'short',p:77.80,atr:1.30,zone:[0.994,1.000],status:'WATCHING',sc:[21,23,12,14],why:['Divergență bearish pe 1d','Stage 3 — MA30 aplatizat','Sector Lagging în RRG'],sm:null,earn:16,extra:0,res:5,div:true},
+ {s:'SIM10',sec:'Materials',u:['sp500'],setup:'Weinstein breakout',st:'weinstein_breakout',dir:'long',p:55.10,atr:1.70,zone:[1.001,1.010],status:'NEW',sc:[29,21,18,18],why:['Stage 2 puternic','Breakout cu gap','Structura de suport e departe de intrare'],sm:null,earn:22,extra:3.0,res:6,div:false},
+ {s:'SIM11',sec:'Information Technology',u:['sp500','ndx100'],setup:'4-Pillars divergență bullish',st:'four_pillars_div',dir:'long',p:305.20,atr:7.30,zone:[0.998,1.005],status:'TRIGGERED',sc:[25,25,16,17],why:['Divergență confirmată (+5 bare)','Reclaim MA30','Volum peste medie'],sm:'Form 4: cluster de 2 insideri / 30 zile',earn:28,extra:0,res:5,div:true},
+ {s:'SIM12',sec:'Health Care',u:['ndx100'],setup:'Weinstein breakout',st:'weinstein_breakout',dir:'long',p:36.90,atr:1.15,zone:[1.002,1.012],status:'INVALIDATED',sc:[22,10,10,8],why:['Închidere sub nivelul de invalidare','Volum sub medie','Stage 1 prelungit'],sm:null,earn:50,extra:0,res:4,div:false}];
+
+function series(it,idx){
+  var r=rng(SEED+100+idx),n=60,c=new Array(n),i;
+  c[n-1]=it.p;var drift=it.dir==='long'?0.0012:-0.0008;
+  for(i=n-1;i>0;i--){var ret=drift+(r()-0.5)*2*(it.atr/it.p)*0.45;c[i-1]=c[i]/(1+ret);}
+  return c.map(function(cl,k){
+    var o=k?c[k-1]*(1+(r()-0.5)*0.004):cl;
+    return{o:o,c:cl,h:Math.max(o,cl)+r()*it.atr*0.35,l:Math.min(o,cl)-r()*it.atr*0.35};
+  });
+}
+function levelsFor(it,bars){
+  var lo=it.p*it.zone[0],hi=it.p*it.zone[1],mid=(lo+hi)/2,last=bars.slice(-10),stop,basis,struct,atrStop;
+  if(it.dir==='long'){
+    struct=Math.min.apply(null,last.map(function(b){return b.l;}))-it.extra*it.atr;atrStop=mid-1.5*it.atr;
+    stop=Math.min(struct,atrStop);basis=struct<=atrStop?'structură':'ATR';
+  }else{
+    struct=Math.max.apply(null,last.map(function(b){return b.h;}))+it.extra*it.atr;atrStop=mid+1.5*it.atr;
+    stop=Math.max(struct,atrStop);basis=struct>=atrStop?'structură':'ATR';
+  }
+  var R=Math.abs(mid-stop),d=it.dir==='long'?1:-1;
+  var tp1=mid+d*Math.max(2*R,it.res*it.atr),tp2=mid+d*Math.max(3*R,it.res*it.atr*1.5);
+  return{lo:lo,hi:hi,mid:mid,stop:stop,basis:basis,R:R,tp1:tp1,tp2:tp2,rr:Math.abs(tp1-mid)/R,tooWide:R>3*it.atr};
+}
+var ITEMS=DEF.map(function(d,i){
+  var it=Object.assign({},d);
+  it.score=d.sc[0]+d.sc[1]+d.sc[2]+d.sc[3];
+  it.bars=series(it,i);it.lv=levelsFor(it,it.bars);
+  return it;
+});
+
+/* ---------- Gate: canTrade() ---------- */
+function equityNow(){return EQUITY0()+equityCurve().net;}
+function exposure(sec){return POS.filter(function(p){return p.sec===sec;}).reduce(function(a,p){return a+p.notional;},0)/equityNow()*100;}
+function globalChecks(){
+  var se=session(),c=[];
+  c.push({k:'calendar',name:'Calendar NYSE deschis',ok:se.name==='REGULAR',det:se.name});
+  c.push({k:'date',name:'Date LIVE și proaspete',ok:S.dq==='live',det:S.dq==='live'?'LIVE':S.dq==='cached'?'CACHED':'SIMULATED'});
+  c.push({k:'bot',name:'Kill switch / stare',ok:S.bot==='armed',det:S.bot==='armed'?'armat':S.bot==='paused'?'în pauză':'KILLED'});
+  c.push({k:'pierdere',name:'Pierdere zilnică sub limită',ok:Math.abs(DAILY_LOSS)<DAILY_LIMIT,det:sg(DAILY_LOSS,1)+'% / limită '+n2(DAILY_LIMIT,1)+'%'});
+  c.push({k:'heartbeat',name:'Heartbeat worker',ok:HB_MIN<HB_MAX,det:HB_MIN+' min / limită '+HB_MAX+' min'});
+  return c;
+}
+function gateRow(it){
+  var sc=score(),b=band(sc),eq=equityNow(),maxRisk=eq*RISK_PCT()/100;
+  var mult=b.name==='Risk-off'?(it.dir==='long'?0:0.5):b.size;
+  var qty=(mult>0&&!it.lv.tooWide)?Math.floor(maxRisk*mult/it.lv.R):0;
+  var notional=qty*it.p,secExp=exposure(it.sec)+notional/eq*100,g=globalChecks(),c=[];
+  var gm={};g.forEach(function(x){gm[x.k]=x;});
+  c.push({short:'calendar',name:'1 · Calendar NYSE',ok:gm.calendar.ok,det:gm.calendar.det});
+  c.push({short:'date',name:'2 · Date LIVE',ok:gm.date.ok,det:gm.date.det});
+  c.push({short:'bot',name:'3 · Kill switch / stare',ok:gm.bot.ok,det:gm.bot.det});
+  c.push({short:'pierdere',name:'4 · Pierdere zilnică',ok:gm.pierdere.ok,det:gm.pierdere.det});
+  c.push({short:'sector',name:'5 · Expunere sector',ok:secExp<=SECTOR_CAP,det:n2(secExp,1)+'% / plafon '+SECTOR_CAP+'%'});
+  var stt=STRAT[it.st];
+  c.push({short:'strategie',name:'6 · Strategie activă',ok:stt.act!=='pause',det:stt.act==='pause'?'în pauză':'activă'});
+  c.push({short:'mărime',name:'7 · Mărime minimă',ok:qty>=1,det:qty>=1?qty+' buc. (risc max '+n2(maxRisk*mult)+' $)':(it.lv.tooWide?'niciun lot (stop invalid)':mult===0?'regim ×0':'1 lot riscă > '+n2(maxRisk*mult)+' $ → skipped_size')});
+  c.push({short:'opțiuni',name:'8 · Opțiuni (spread/OI)',ok:true,det:'n/a — acțiuni'});
+  var regOk=mult>0&&it.score>=b.min;
+  c.push({short:'regim',name:'9 · Politică de regim',ok:regOk,det:b.name+' ('+sc+'): '+(mult===0?'long blocat':'scor '+it.score+(it.score>=b.min?' ≥ ':' < ')+b.min)});
+  c.push({short:'heartbeat',name:'10 · Heartbeat',ok:gm.heartbeat.ok,det:gm.heartbeat.det});
+  c.push({short:'niveluri',name:'Niveluri valide (stop ≤ 3×ATR)',ok:!it.lv.tooWide,det:n2(it.lv.R/it.atr,1)+'×ATR'});
+  var fails=c.filter(function(x){return !x.ok;});
+  return{checks:c,fails:fails,allow:fails.length===0,qty:qty,mult:mult};
+}
+
+/* ---------- Randare ---------- */
+function polar(cx,cy,r,deg){var a=deg*Math.PI/180;return[cx+r*Math.cos(a),cy-r*Math.sin(a)];}
+function arcPath(cx,cy,r,v0,v1){var a0=180-v0*1.8,a1=180-v1*1.8,p0=polar(cx,cy,r,a0),p1=polar(cx,cy,r,a1);return'M'+p0[0].toFixed(1)+','+p0[1].toFixed(1)+' A'+r+','+r+' 0 0 1 '+p1[0].toFixed(1)+','+p1[1].toFixed(1);}
+
+function renderStatus(){
+  var se=session(),sc=score(),b=band(sc),g=globalChecks().every(function(x){return x.ok;});
+  var dqCls=S.dq==='live'?'g':S.dq==='cached'?'a':'r',dqTxt=S.dq==='live'?'LIVE':S.dq==='cached'?'CACHED':'SIMULATED';
+  var botCls=S.bot==='armed'?'g':S.bot==='paused'?'a':'r',botTxt=S.bot==='armed'?'ARMAT':S.bot==='paused'?'PAUZĂ':'KILLED';
+  $('status').innerHTML='<div class="brand">TRULLAS <span class="mut">· Today</span></div>'+
+   '<span class="chip '+se.cls+'" title="Calendar NYSE simplificat în prototip">'+se.name+'</span><span class="mut small">'+se.txt+'</span>'+
+   '<span class="chip '+dqCls+'">date: '+dqTxt+'</span><span class="mut small">as of 17:30 ET (EOD) · refresh premarket 08:30 ET</span>'+
+   '<span class="chip '+b.cls+'">Regime '+sc+' · '+b.name+'</span>'+
+   '<span class="chip '+botCls+'">Bot '+botTxt+'</span>'+
+   '<span class="chip '+(g?'g':'r')+'">Gate global: '+(g?'PERMIS':'BLOCAT')+'</span>';
+  $('dq-banner').hidden=(S.dq==='live');
+  $('dq-banner').textContent=S.dq==='sim'?'SIMULATED DATA — botul refuză intrări noi':'DATE CACHED — nu sunt proaspete; botul refuză intrări noi';
+}
+function renderSim(){
+  $('sim-session').value=S.session;
+  Array.prototype.forEach.call(document.querySelectorAll('#sim-dq button'),function(b){b.setAttribute('aria-pressed',String(b.dataset.dq===S.dq));});
+  var sc=score();$('sim-regime').value=sc;
+  $('sim-regime-val').textContent=sc+(S.regime==null?' (calculat)':' (override; calculat '+calcScore()+')');
+  if(document.activeElement!==$('sim-capital'))$('sim-capital').value=S.capital;
+  if(document.activeElement!==$('sim-risk'))$('sim-risk').value=S.riskPct;
+  $('sim-risk-usd').textContent='= $'+n2(RISK_USD(),0)+' / tranzacție';
+}
+function onCapitalRiskChange(){
+  var c=+$('sim-capital').value,r=+$('sim-risk').value;
+  if(isFinite(c)&&c>=100)S.capital=c;
+  if(isFinite(r)&&r>0&&r<=10)S.riskPct=r;
+  render();renderKpis();renderEquity();renderSQ();
+}
+function renderRegime(){
+  var sc=score(),b=band(sc),cx=110,cy=100,r=84,i,arcs='',bounds=[0,30,60,85,100];
+  for(i=0;i<4;i++){arcs+='<path d="'+arcPath(cx,cy,r,bounds[i],bounds[i+1]-(i<3?0.6:0))+'" stroke="'+BANDS[i].col+'" stroke-width="14" fill="none" opacity="'+(band(sc)===BANDS[i]?1:0.35)+'"/>';}
+  var np=polar(cx,cy,r-10,180-sc*1.8);
+  var needle='<line x1="'+cx+'" y1="'+cy+'" x2="'+np[0].toFixed(1)+'" y2="'+np[1].toFixed(1)+'" stroke="#e4e4e7" stroke-width="3" stroke-linecap="round"/><circle cx="'+cx+'" cy="'+cy+'" r="5" fill="#e4e4e7"/>';
+  var spark=(function(){var w=140,h=36,pts=HIST.map(function(v,k){return(k*(w/29)).toFixed(1)+','+(h-v/100*h).toFixed(1);}).join(' ');return'<svg viewBox="0 0 '+w+' '+h+'" width="140" height="36" role="img" aria-label="Regime Score, ultimele 30 de zile"><polyline points="'+pts+'" fill="none" stroke="#38bdf8" stroke-width="2"/></svg>';})();
+  var comps=COMPS.map(function(c){return'<div class="comp"><span>'+c.k+' <span class="mut">('+c.w+'%)</span></span><div class="bar"><span style="width:'+c.v+'%"></span></div><span class="num" style="text-align:right">'+c.v+'</span></div>';}).join('');
+  $('c-regime').innerHTML='<h2>Regime Score — la ce etapă e piața</h2>'+
+   '<div class="row" style="align-items:flex-end"><svg viewBox="0 0 220 112" width="220" height="112" role="img" aria-label="Regime Score '+sc+', '+b.name+'">'+arcs+needle+
+   '<text x="110" y="92" text-anchor="middle" font-size="26" font-weight="800" fill="#e4e4e7">'+sc+'</text></svg>'+
+   '<div><span class="chip '+b.cls+'">'+b.name+'</span><div class="small mut" style="margin:6px 0 2px">ultimele 30 de zile</div>'+spark+'</div></div>'+
+   '<div class="small" style="margin:6px 0"><b>Politică:</b> '+b.txt+'</div>'+comps+
+   '<div class="small mut">Calculat pe S&amp;P 500. Banda se schimbă doar după 2 cicluri consecutive (debounce). Greutățile sunt o ipoteză de validat (Spike R).'+(S.regime==null?'':' <b>Override simulat activ.</b>')+'</div>';
+}
+var SECT=[['XLK','Tehnologie',103.2,101.8],['XLC','Comunicații',101.1,99.2],['XLY','Cons. discreționar',99.4,100.9],['XLI','Industriale',100.6,100.4],['XLF','Financiar',98.9,99.6],['XLV','Sănătate',97.8,100.7],['XLP','Cons. de bază',98.2,98.9],['XLE','Energie',96.9,97.8],['XLU','Utilități',99.7,101.3],['XLB','Materiale',100.3,99.1],['XLRE','Imobiliare',98.4,101.1]];
+function renderSector(){
+  var W=330,H=250,L=30,R=10,T=10,B=24,pw=W-L-R,ph=H-T-B,x0=96,x1=104,y0=96,y1=104;
+  var X=function(v){return L+pw*(v-x0)/(x1-x0);},Y=function(v){return T+ph*(1-(v-y0)/(y1-y0));};
+  function quad(rs,mo){return rs>=100?(mo>=100?['Leading','g']:['Weakening','a']):(mo>=100?['Improving','b']:['Lagging','r']);}
+  var colr={g:'#4ade80',a:'#fbbf24',b:'#38bdf8',r:'#f87171'};
+  var dots=SECT.map(function(s){var q=quad(s[2],s[3]);return'<g><circle cx="'+X(s[2]).toFixed(1)+'" cy="'+Y(s[3]).toFixed(1)+'" r="6" fill="'+colr[q[1]]+'" opacity=".9"><title>'+s[0]+' '+s[1]+' — '+q[0]+' (RS '+n2(s[2],1)+', mom. '+n2(s[3],1)+')</title></circle><text x="'+(X(s[2])+8).toFixed(1)+'" y="'+(Y(s[3])+3).toFixed(1)+'" font-size="9" fill="#e4e4e7">'+s[0]+'</text></g>';}).join('');
+  var counts={};SECT.forEach(function(s){var q=quad(s[2],s[3])[0];counts[q]=(counts[q]||0)+1;});
+  $('c-sector').innerHTML='<h2>Rotație sectorială (RRG, RS vs SPY)</h2>'+
+   '<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Rotație sectorială: cadrane Leading, Weakening, Lagging, Improving">'+
+   '<line x1="'+X(100)+'" y1="'+T+'" x2="'+X(100)+'" y2="'+(T+ph)+'" stroke="#52525b"/><line x1="'+L+'" y1="'+Y(100)+'" x2="'+(L+pw)+'" y2="'+Y(100)+'" stroke="#52525b"/>'+
+   '<text x="'+(L+pw-4)+'" y="'+(T+12)+'" text-anchor="end" font-size="10" fill="#4ade80">LEADING</text><text x="'+(L+pw-4)+'" y="'+(T+ph-6)+'" text-anchor="end" font-size="10" fill="#fbbf24">WEAKENING</text>'+
+   '<text x="'+(L+4)+'" y="'+(T+ph-6)+'" font-size="10" fill="#f87171">LAGGING</text><text x="'+(L+4)+'" y="'+(T+12)+'" font-size="10" fill="#38bdf8">IMPROVING</text>'+
+   '<text x="'+(L+pw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="10" fill="#a1a1aa">RS ratio →</text><text x="10" y="'+(T+ph/2)+'" font-size="10" fill="#a1a1aa" transform="rotate(-90 10 '+(T+ph/2)+')" text-anchor="middle">Momentum →</text>'+
+   dots+'</svg><div class="small mut">Leading '+(counts.Leading||0)+' · Improving '+(counts.Improving||0)+' · Weakening '+(counts.Weakening||0)+' · Lagging '+(counts.Lagging||0)+'. ETF-urile SPDR sunt aceleași 11 din planul curent.</div>';
+}
+function renderAuto(){
+  var g=globalChecks(),allow=g.every(function(x){return x.ok;});
+  var list=g.map(function(x){return'<li><span>'+x.name+'</span><span class="'+(x.ok?'ok':'bad')+'">'+(x.ok?'✓':'✕')+' <span class="mut small">'+x.det+'</span></span></li>';}).join('');
+  var secs={};POS.forEach(function(p){secs[p.sec]=(secs[p.sec]||0)+exposure(p.sec)/Math.max(1,POS.filter(function(q){return q.sec===p.sec;}).length);});
+  var pos=POS.map(function(p){return'<li><span>'+p.s+' <span class="tag">'+p.dir+'</span> <span class="mut small">'+p.sec+'</span></span><span class="small">$'+p.notional+' · '+p.r+'</span></li>';}).join('');
+  $('c-auto').innerHTML='<h2>Autopilot — gate-ul botului</h2>'+
+   '<div class="row" style="margin-bottom:8px"><span class="seg" id="bot-seg" role="group" aria-label="Starea botului">'+
+   '<button data-bot="armed" aria-pressed="'+(S.bot==='armed')+'">Armat</button><button data-bot="paused" aria-pressed="'+(S.bot==='paused')+'">Pauză</button><button class="kill" data-bot="killed" aria-pressed="'+(S.bot==='killed')+'">KILL SWITCH</button></span>'+
+   '<span class="chip '+(allow?'g':'r')+'">'+(allow?'PERMIS':'BLOCAT')+'</span></div>'+
+   '<ul>'+list+'</ul>'+
+   '<div class="small mut" style="margin:10px 0 2px">Pe rând, în watchlist: sector, strategie, regim, mărime minimă, niveluri. Capital epocă: $'+n2(equityNow())+' · risc/trade '+RISK_PCT()+'% = $'+n2(equityNow()*RISK_PCT()/100)+' <span class="mut">(editabil mai sus — Panou de simulare)</span>.</div>'+
+   '<div class="small" style="margin-top:8px"><b>Poziții deschise</b></div><ul>'+pos+'</ul>';
+}
+function renderWatch(){
+  var sc=score(),b=band(sc);
+  Array.prototype.forEach.call(document.querySelectorAll('#f-uni button'),function(x){x.setAttribute('aria-pressed',String(x.dataset.uni===S.uni));});
+  $('f-status').value=S.status;
+  var rows=ITEMS.filter(function(it){
+    var uOk=S.uni==='both'||it.u.indexOf(S.uni)>=0;
+    var sOk=S.status==='all'||['NEW','WATCHING','TRIGGERED'].indexOf(it.status)>=0;
+    return uOk&&sOk;
+  }).sort(function(a,b2){return b2.score-a.score;});
+  $('wl-count').textContent=rows.length+' rânduri · prag regim: scor ≥ '+b.min;
+  var head='<thead><tr><th>#</th><th>Simbol</th><th>Setup</th><th class="num">Scor</th><th class="num">Zonă intrare</th><th class="num">SL</th><th class="num">TP1</th><th class="num">R:R</th><th>Status</th><th>Bot</th></tr></thead>';
+  var body=rows.map(function(it,i){
+    var gr=gateRow(it),bot,act=it.status==='NEW'||it.status==='WATCHING';
+    if(it.status==='TRIGGERED')bot='<span class="chip b">în execuție</span>';
+    else if(!act)bot='<span class="chip n">—</span>';
+    else if(gr.allow)bot='<span class="chip g">ACCEPT × '+gr.qty+'</span>';
+    else bot='<span class="chip r" title="'+gr.fails.map(function(f){return f.name+': '+f.det;}).join(' | ')+'">BLOCAT: '+gr.fails.slice(0,2).map(function(f){return f.short;}).join(' · ')+(gr.fails.length>2?' +'+(gr.fails.length-2):'')+'</span>';
+    var stCls=it.status==='TRIGGERED'?'g':it.status==='INVALIDATED'?'r':it.status==='NEW'?'b':'a';
+    var uTag=it.u.indexOf('sp500')<0?'<span class="tag">NDX</span>':'';
+    var earn=it.earn<=7?'<span class="tag" style="color:#fbbf24" title="Earnings în '+it.earn+' zile">E '+it.earn+'z</span>':'';
+    return'<tr data-sym="'+it.s+'" tabindex="0" role="button" class="'+(S.sel===it.s?'sel':'')+(act||it.status==='TRIGGERED'?'':' dim')+'" aria-label="'+it.s+' '+it.setup+'">'+
+     '<td class="mut">'+(i+1)+'</td><td><b>'+it.s+'</b>'+uTag+earn+'<div class="mut small">'+it.sec+'</div></td>'+
+     '<td>'+it.setup+' <span class="tag">'+it.dir+'</span></td><td class="num"><b>'+it.score+'</b></td>'+
+     '<td class="num">'+n2(it.lv.lo)+'–'+n2(it.lv.hi)+'</td><td class="num neg">'+n2(it.lv.stop)+'</td><td class="num pos">'+n2(it.lv.tp1)+'</td>'+
+     '<td class="num">'+n2(it.lv.rr,1)+'</td><td><span class="chip '+stCls+'">'+it.status+'</span></td><td>'+bot+'</td></tr>';
+  }).join('');
+  $('wl').innerHTML=head+'<tbody>'+body+'</tbody>';
+}
+function chartSVG(it){
+  var bars=it.bars,lv=it.lv,n=bars.length,fut=14,W=560,H=300,L=8,R=70,T=14,B=16,pw=W-L-R,ph=H-T-B,bw=pw/(n+fut);
+  var vals=[lv.stop,lv.tp2,lv.lo,lv.hi].concat(bars.map(function(b){return b.l;}),bars.map(function(b){return b.h;}));
+  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),pad=(mx-mn)*0.04;mn-=pad;mx+=pad;
+  var X=function(i){return L+bw*(i+0.5);},Y=function(v){return T+ph*(1-(v-mn)/(mx-mn));};
+  var xf0=X(n-1)+bw*0.5,xf1=W-R,s='',i;
+  for(i=0;i<5;i++){var gv=mn+(mx-mn)*i/4;s+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(gv).toFixed(1)+'" y2="'+Y(gv).toFixed(1)+'" stroke="#35353a"/><text x="'+(W-R+4)+'" y="'+(Y(gv)+3).toFixed(1)+'" font-size="9" fill="#71717a">'+n2(gv)+'</text>';}
+  /* cutia TP/SL + zona de intrare (viitor) */
+  var yM=Y(lv.mid),yS=Y(lv.stop),yT=Y(lv.tp1);
+  s+='<rect x="'+xf0+'" y="'+Math.min(yM,yS)+'" width="'+(xf1-xf0)+'" height="'+Math.abs(yS-yM)+'" fill="#f87171" opacity=".16"/>';
+  s+='<rect x="'+xf0+'" y="'+Math.min(yM,yT)+'" width="'+(xf1-xf0)+'" height="'+Math.abs(yT-yM)+'" fill="#4ade80" opacity=".14"/>';
+  s+='<rect x="'+xf0+'" y="'+Math.min(Y(lv.lo),Y(lv.hi))+'" width="'+(xf1-xf0)+'" height="'+Math.max(2,Math.abs(Y(lv.lo)-Y(lv.hi)))+'" fill="#fbbf24" opacity=".35"/>';
+  /* AVWAP */
+  var a=n-28,sum=0,cnt=0,pts=[];
+  for(i=a;i<n;i++){sum+=(bars[i].h+bars[i].l+bars[i].c)/3;cnt++;pts.push(X(i).toFixed(1)+','+Y(sum/cnt).toFixed(1));}
+  s+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="#a78bfa" stroke-width="1.5"/><text x="'+(X(a)+2)+'" y="'+(Y((bars[a].h+bars[a].l+bars[a].c)/3)-6)+'" font-size="9" fill="#a78bfa">AVWAP (ancoră SIM)</text>';
+  /* lumânări */
+  for(i=0;i<n;i++){var b=bars[i],up=b.c>=b.o,col=up?'#4ade80':'#f87171',yo=Y(b.o),yc=Y(b.c);
+    s+='<line x1="'+X(i).toFixed(1)+'" x2="'+X(i).toFixed(1)+'" y1="'+Y(b.h).toFixed(1)+'" y2="'+Y(b.l).toFixed(1)+'" stroke="'+col+'"/><rect x="'+(X(i)-bw*0.32).toFixed(1)+'" y="'+Math.min(yo,yc).toFixed(1)+'" width="'+(bw*0.64).toFixed(1)+'" height="'+Math.max(1,Math.abs(yo-yc)).toFixed(1)+'" fill="'+col+'"/>';}
+  /* linii + etichete */
+  function hl(v,col,lab,dash){return'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" stroke="'+col+'" stroke-dasharray="'+dash+'" opacity=".9"/><text x="'+(W-R+4)+'" y="'+(Y(v)-3).toFixed(1)+'" font-size="9.5" font-weight="700" fill="'+col+'">'+lab+' '+n2(v)+'</text>';}
+  s+=hl(lv.stop,'#f87171','SL','5 3')+hl(lv.tp1,'#4ade80','TP1','5 3')+hl(lv.tp2,'#4ade80','TP2','2 3')+hl(lv.mid,'#fbbf24','Intrare','1 0');
+  /* markeri: pivot vs confirmare */
+  function tri(i,up,col,lab){var x=X(i),y=up?Y(bars[i].l)+12:Y(bars[i].h)-12;
+    return'<path d="M'+x.toFixed(1)+','+(up?y-6:y+6)+' L'+(x-5).toFixed(1)+','+(up?y+3:y-3)+' L'+(x+5).toFixed(1)+','+(up?y+3:y-3)+' Z" fill="'+col+'"/><text x="'+x.toFixed(1)+'" y="'+(up?y+14:y-8)+'" text-anchor="middle" font-size="9" font-weight="700" fill="'+col+'">'+lab+'</text>';}
+  var longSide=it.dir==='long';
+  if(it.div){
+    var pi=n-8,ci=n-3,px=X(pi),py=longSide?Y(bars[pi].l)+10:Y(bars[pi].h)-10;
+    s+='<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="4" fill="none" stroke="#38bdf8" stroke-width="1.5"/><text x="'+px.toFixed(1)+'" y="'+(longSide?py+14:py-8)+'" text-anchor="middle" font-size="9" fill="#38bdf8">pivot</text>';
+    s+=tri(ci,longSide,longSide?'#4ade80':'#f87171',longSide?'confirmat (+5)':'REVERSAL (+5)');
+  }
+  if(it.status==='TRIGGERED'&&longSide)s+=tri(n-1,true,'#4ade80','BUY');
+  return'<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Grafic '+it.s+' cu nivele de intrare, SL și TP">'+s+'</svg>';
+}
+function renderDetail(){
+  var it=ITEMS.filter(function(x){return x.s===S.sel;})[0];
+  if(!it){$('c-detail').innerHTML='<h2>Detaliu</h2><div class="mut">Alege un rând din watchlist.</div>';return;}
+  var gr=gateRow(it),lv=it.lv,p=it.p;
+  var dist=p<lv.lo?'↑ '+n2((lv.lo-p)/p*100)+'%':p>lv.hi?'↓ '+n2((p-lv.hi)/p*100)+'%':'în zonă';
+  var parts=[['Stage',it.sc[0],30],['Divergență',it.sc[1],30],['ATR / regim vol.',it.sc[2],20],['Volum',it.sc[3],20]];
+  var bars=parts.map(function(q){return'<div class="comp"><span>'+q[0]+'</span><div class="bar"><span style="width:'+(q[1]/q[2]*100)+'%"></span></div><span style="text-align:right">'+q[1]+'/'+q[2]+'</span></div>';}).join('');
+  var checks=gr.checks.map(function(c){return'<li><span>'+c.name+'</span><span class="'+(c.ok?'ok':'bad')+'">'+(c.ok?'✓':'✕')+' <span class="mut small">'+c.det+'</span></span></li>';}).join('');
+  $('c-detail').innerHTML='<h2>'+it.s+' · '+it.setup+'</h2>'+
+   '<div class="row" style="margin-bottom:6px"><span class="chip '+(it.dir==='long'?'g':'r')+'">'+it.dir.toUpperCase()+'</span><span class="mut small">'+it.sec+' · '+it.u.map(function(u){return u==='sp500'?'S&P 500':'Nasdaq-100';}).join(' + ')+'</span><span class="chip n">date: '+(S.dq==='live'?'LIVE':S.dq==='cached'?'CACHED':'SIMULATED')+'</span></div>'+
+   chartSVG(it)+
+   '<dl class="kvs" style="margin-top:8px"><dt>Zonă intrare</dt><dd>'+n2(lv.lo)+' – '+n2(lv.hi)+' <span class="mut">('+dist+' față de '+n2(p)+')</span></dd>'+
+   '<dt>Stop-loss</dt><dd class="neg">'+n2(lv.stop)+' <span class="mut">(bază: '+lv.basis+' · '+n2(lv.R/it.atr,1)+'×ATR'+(lv.tooWide?' — <b>SKIP: stop prea larg</b>':'')+')</span></dd>'+
+   '<dt>TP1 / TP2</dt><dd class="pos">'+n2(lv.tp1)+' / '+n2(lv.tp2)+' <span class="mut">(R:R '+n2(lv.rr,1)+')</span></dd>'+
+   '<dt>Earnings</dt><dd>'+(it.earn<=7?'<span style="color:#fbbf24">în '+it.earn+' zile — risc</span>':'în '+it.earn+' zile')+'</dd>'+
+   '<dt>Smart money</dt><dd>'+(it.sm?it.sm:'<span class="mut">fără semnal</span>')+'</dd></dl>'+
+   '<div style="margin-top:8px"><b class="small">De ce e aici</b><ul class="plain small">'+it.why.map(function(w){return'<li>'+w+'</li>';}).join('')+'</ul></div>'+
+   '<div style="margin-top:8px"><b class="small">Scor '+it.score+'/100</b>'+bars+'</div>'+
+   '<div class="gate" style="margin-top:8px"><b class="small">canTrade() — '+(gr.allow?'PERMIS × '+gr.qty:'BLOCAT')+'</b><ul>'+checks+'</ul></div>';
+}
+function renderKpis(){
+  var EC=equityCurve();
+  var ci=isFinite(J.lo)?'['+sg(J.lo)+' ; '+sg(J.hi)+']':'—',zero=(J.lo<=0&&J.hi>=0);
+  var k=[
+   ['P&amp;L net',(EC.net>=0?'<span class="pos">':'<span class="neg">')+'$'+sg(EC.net)+'</span>',sg(EC.net/EQUITY0()*100,1)+'% din $'+n2(EQUITY0(),0)],
+   ['Trade-uri închise',String(J.n),'<span class="chip a">eșantion mic</span>'],
+   ['Expectancy',sg(J.mean)+'R','CI90 '+ci+(zero?' — include 0':'')],
+   ['Profit factor',J.pf==null?'—':n2(J.pf),J.pf==null?'ascuns: n='+J.n+' &lt; 10':'n='+J.n],
+   ['Win rate',n2(J.wins/J.n*100,0)+'%',J.wins+' din '+J.n],
+   ['Max drawdown',n2(EC.maxdd,1)+'%','pe equity zilnic']];
+  $('kpis').innerHTML=k.map(function(x){return'<div class="kpi"><div class="l">'+x[0]+'</div><div class="v">'+x[1]+'</div><div class="s">'+x[2]+'</div></div>';}).join('');
+}
+function renderEquity(){
+  var EC=equityCurve();
+  var W=560,Hq=150,Hd=56,L=44,R=8,T=8,eq=EC.eq,mn=Math.min.apply(null,eq)-6,mx=Math.max.apply(null,eq)+6;
+  var X=function(i){return L+(W-L-R)*i/(eq.length-1);},Y=function(v){return T+(Hq-T-14)*(1-(v-mn)/(mx-mn));};
+  var line=eq.map(function(v,i){return X(i).toFixed(1)+','+Y(v).toFixed(1);}).join(' ');
+  var dots=TRADES.map(function(t){return'<circle cx="'+X(t.d).toFixed(1)+'" cy="'+Y(EC.eq[t.d]).toFixed(1)+'" r="3.5" fill="'+(t.r>0?'#4ade80':'#f87171')+'"><title>zi '+t.d+': '+sg(t.r,1)+'R</title></circle>';}).join('');
+  var ddMin=Math.min(EC.maxdd,-0.5),yB=Hq+6,depth=Hd-12;
+  var ddPts=EC.dd.map(function(v,i){return X(i).toFixed(1)+','+(yB+(v/ddMin)*depth).toFixed(1);});
+  var area='M'+X(0).toFixed(1)+','+yB+' L'+ddPts.join(' L')+' L'+X(EC.dd.length-1).toFixed(1)+','+yB+' Z';
+  var base=Y(EQUITY0());
+  $('equity').innerHTML='<svg viewBox="0 0 '+W+' '+(Hq+Hd)+'" width="100%" role="img" aria-label="Curba de equity și drawdown">'+
+   '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+base.toFixed(1)+'" y2="'+base.toFixed(1)+'" stroke="#52525b" stroke-dasharray="3 3"/><text x="'+(L-4)+'" y="'+(base+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">$'+n2(EQUITY0(),0)+'</text>'+
+   '<text x="'+(L-4)+'" y="'+(Y(mx-6)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">$'+n2(mx-6,0)+'</text><text x="'+(L-4)+'" y="'+(Y(mn+6)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">$'+n2(mn+6,0)+'</text>'+
+   '<polyline points="'+line+'" fill="none" stroke="#38bdf8" stroke-width="2"/>'+dots+
+   '<path d="'+area+'" fill="#f87171" opacity=".35"/><line x1="'+L+'" x2="'+(W-R)+'" y1="'+yB+'" y2="'+yB+'" stroke="#52525b"/>'+
+   '<text x="'+(L-4)+'" y="'+(yB+depth+3)+'" text-anchor="end" font-size="9" fill="#f87171">'+n2(EC.maxdd,1)+'%</text>'+
+   '<text x="'+(W-R)+'" y="'+(Hq+Hd-2)+'" text-anchor="end" font-size="9" fill="#71717a">zile 0–29 · puncte = trade-uri închise</text></svg>';
+}
+/* ---------- Panou: Calitatea semnalelor (shadow) — separat de jurnalul botului ---------- */
+var SQS={strat:'all',pol:'X1_fixed_v1',per:'all',grp:'all'};
+function f2(x){return isFinite(x)?n2(x):'—';}
+function Rr(x,d){return isFinite(x)?sg(x,d==null?2:d)+'R':'—';}
+function CIs(s){return isFinite(s.lo)?'['+sg(s.lo)+' ; '+sg(s.hi)+']':'—';}
+function pc(x){return isFinite(x)?n2(x*100,0)+'%':'—';}
+function sqList(o){
+  return SIGS.filter(function(s){
+    if(o.strat!=='all'&&s.strat!==o.strat)return false;
+    if(o.per==='cal'&&s.c>=HOLD0)return false;
+    if(o.per==='ver'&&s.c<HOLD0)return false;
+    if(o.grp==='taken'&&!s.taken)return false;
+    if(o.grp==='skip'&&s.taken)return false;
+    return true;
+  });
+}
+function sampleChip(s){return s.nEff<30?' <span class="chip a" title="n_eff = zile distincte de semnal; sub 30 cifrele sunt orientative">n_eff '+s.nEff+' &lt; 30</span>':'';}
+function statRow(label,s,tail){
+  return'<tr><td>'+label+'</td><td class="num">'+s.n+'</td><td class="num">'+s.nEff+'</td><td class="num '+(s.mean>=0?'pos':'neg')+'">'+Rr(s.mean)+'</td><td class="num">'+CIs(s)+'</td><td class="num">'+pc(s.win)+'</td><td class="num">'+(s.pf==null?'—':n2(s.pf))+'</td>'+(tail||'')+'</tr>';
+}
+function svgWrap(W,H,inner,label){return'<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="'+label+'">'+inner+'</svg>';}
+function chartCum(L,P){
+  var W=560,H=190,Lm=40,Rm=8,T=14,B=20,by={},d,mn=0,mx=0,c=0,cum=[];
+  closedOf(L,P).forEach(function(s){by[s.c]=(by[s.c]||0)+s.out[P].rNet;});
+  for(d=0;d<NS;d++){c+=by[d]||0;cum.push(c);mn=Math.min(mn,c);mx=Math.max(mx,c);}
+  var pad=Math.max(1,(mx-mn)*0.08);mn-=pad;mx+=pad;
+  var X=function(i){return Lm+(W-Lm-Rm)*i/(NS-1);},Y=function(v){return T+(H-T-B)*(1-(v-mn)/(mx-mn));};
+  var pts=cum.map(function(v,i){return X(i).toFixed(1)+','+Y(v).toFixed(1);}).join(' ');
+  var hx=X(HOLD0),ix=X(NS-15),ph=H-T-B;
+  return svgWrap(W,H,
+   '<rect x="'+hx.toFixed(1)+'" y="'+T+'" width="'+(W-Rm-hx).toFixed(1)+'" height="'+ph+'" fill="#38bdf8" opacity=".08"/>'+
+   '<rect x="'+ix.toFixed(1)+'" y="'+T+'" width="'+(W-Rm-ix).toFixed(1)+'" height="'+ph+'" fill="#fbbf24" opacity=".12"/>'+
+   '<line x1="'+Lm+'" x2="'+(W-Rm)+'" y1="'+Y(0).toFixed(1)+'" y2="'+Y(0).toFixed(1)+'" stroke="#52525b" stroke-dasharray="3 3"/>'+
+   '<polyline points="'+pts+'" fill="none" stroke="#4ade80" stroke-width="2"/>'+
+   '<text x="'+(Lm-4)+'" y="'+(Y(0)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">0</text>'+
+   '<text x="'+(Lm-4)+'" y="'+(T+8)+'" text-anchor="end" font-size="9" fill="#71717a">'+n2(mx,0)+'R</text><text x="'+(Lm-4)+'" y="'+(H-B)+'" text-anchor="end" font-size="9" fill="#71717a">'+n2(mn,0)+'R</text>'+
+   '<text x="'+(Lm+4)+'" y="'+(T+10)+'" font-size="9" fill="#a1a1aa">calibrare (70%)</text><text x="'+(hx+4).toFixed(1)+'" y="'+(T+10)+'" font-size="9" fill="#38bdf8">verificare (30%)</text>'+
+   '<text x="'+(W-Rm-2)+'" y="'+(H-B-4)+'" text-anchor="end" font-size="9" fill="#fbbf24">nematurat</text>'+
+   '<text x="'+Lm+'" y="'+(H-5)+'" font-size="9" fill="#71717a">'+DATES[0].slice(5)+'</text><text x="'+(W-Rm)+'" y="'+(H-5)+'" text-anchor="end" font-size="9" fill="#71717a">'+DATES[NS-1].slice(5)+'</text>',
+   'R cumulat pe data confirmării semnalului');
+}
+function rollPoints(L,P){
+  var cl=closedOf(L,P),seen={},days=[],j,pts=[];
+  cl.forEach(function(s){if(!seen[s.c]){seen[s.c]=1;days.push(s.c);}});days.sort(function(a,b){return a-b;});
+  for(j=29;j<days.length;j++){
+    var from=days[Math.max(0,j-59)],to=days[j],w=cl.filter(function(s){return s.c>=from&&s.c<=to;});
+    var cs=E.clusterStats(w.map(function(s){return s.out[P].rNet;}),w.map(function(s){return s.c;}));
+    pts.push({c:to,mean:cs.mean,lo:cs.lo,hi:cs.hi,nEff:cs.nEff});
+  }
+  return pts;
+}
+function chartRoll(pts){
+  if(pts.length<2)return'<div class="mut small" style="padding:30px 0">Prea puține zile cu semnale închise (&lt; 30) pentru fereastra rulantă.</div>';
+  var W=560,H=190,Lm=40,Rm=8,T=14,B=20,i,mn=0,mx=0;
+  pts.forEach(function(p){if(isFinite(p.lo))mn=Math.min(mn,p.lo);if(isFinite(p.hi))mx=Math.max(mx,p.hi);mn=Math.min(mn,p.mean);mx=Math.max(mx,p.mean);});
+  var pad=(mx-mn)*0.1||0.2;mn-=pad;mx+=pad;
+  var X=function(c){return Lm+(W-Lm-Rm)*(c-pts[0].c)/Math.max(1,pts[pts.length-1].c-pts[0].c);},Y=function(v){return T+(H-T-B)*(1-(v-mn)/(mx-mn));};
+  var up=[],lo=[];pts.forEach(function(p){if(isFinite(p.hi)){up.push(X(p.c).toFixed(1)+','+Y(p.hi).toFixed(1));lo.unshift(X(p.c).toFixed(1)+','+Y(p.lo).toFixed(1));}});
+  var line=pts.map(function(p){return X(p.c).toFixed(1)+','+Y(p.mean).toFixed(1);}).join(' ');
+  return svgWrap(W,H,
+   '<polygon points="'+up.concat(lo).join(' ')+'" fill="#38bdf8" opacity=".18"/>'+
+   '<line x1="'+Lm+'" x2="'+(W-Rm)+'" y1="'+Y(0).toFixed(1)+'" y2="'+Y(0).toFixed(1)+'" stroke="#52525b" stroke-dasharray="3 3"/>'+
+   '<polyline points="'+line+'" fill="none" stroke="#38bdf8" stroke-width="2"/>'+
+   '<text x="'+(Lm-4)+'" y="'+(Y(0)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">0</text>'+
+   '<text x="'+(Lm-4)+'" y="'+(T+8)+'" text-anchor="end" font-size="9" fill="#71717a">'+sg(mx,1)+'R</text><text x="'+(Lm-4)+'" y="'+(H-B)+'" text-anchor="end" font-size="9" fill="#71717a">'+sg(mn,1)+'R</text>'+
+   '<text x="'+Lm+'" y="'+(H-5)+'" font-size="9" fill="#71717a">'+DATES[pts[0].c].slice(5)+'</text><text x="'+(W-Rm)+'" y="'+(H-5)+'" text-anchor="end" font-size="9" fill="#71717a">'+DATES[pts[pts.length-1].c].slice(5)+'</text>',
+   'Fereastră rulantă de 60 de zile cu semnale: R net mediu și CI90');
+}
+function degraded(pts){
+  if(pts.length<2)return null;
+  var a=pts[pts.length-1],b=null,i;for(i=pts.length-2;i>=0;i--){if(pts[i].c<=a.c-5){b=pts[i];break;}}
+  if(!b||!isFinite(a.hi)||!isFinite(b.hi))return null;
+  return a.hi<0&&b.hi<0;
+}
+function edgeRows(L){
+  return E.HORIZONS.map(function(h){
+    var xs=[],ds=[];L.forEach(function(s){if(usable(s)&&s.path&&s.path.status==='ok'&&s.path.fwdR[h]!=null){xs.push(s.path.fwdR[h]);ds.push(s.c);}});
+    var cs=E.clusterStats(xs,ds);return{h:h,n:cs.n,nEff:cs.nEff,mean:cs.mean,lo:cs.lo,hi:cs.hi};
+  });
+}
+function chartEdge(rows){
+  var W=330,H=190,Lm=34,Rm=8,T=14,B=34,mn=0,mx=0;
+  rows.forEach(function(r){if(isFinite(r.mean)){mn=Math.min(mn,r.mean);mx=Math.max(mx,r.mean);}if(isFinite(r.lo)){mn=Math.min(mn,r.lo);mx=Math.max(mx,r.hi);}});
+  var pad=(mx-mn)*0.12||0.2;mn-=pad;mx+=pad;
+  var Y=function(v){return T+(H-T-B)*(1-(v-mn)/(mx-mn));},bw=(W-Lm-Rm)/rows.length,s='';
+  rows.forEach(function(r,i){
+    var x=Lm+bw*i+bw*0.5;
+    if(isFinite(r.mean)){
+      s+='<rect x="'+(x-bw*0.28).toFixed(1)+'" y="'+Math.min(Y(0),Y(r.mean)).toFixed(1)+'" width="'+(bw*0.56).toFixed(1)+'" height="'+Math.max(1,Math.abs(Y(r.mean)-Y(0))).toFixed(1)+'" fill="'+(r.mean>=0?'#4ade80':'#f87171')+'" opacity=".75"/>';
+      if(isFinite(r.lo))s+='<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+Y(r.lo).toFixed(1)+'" y2="'+Y(r.hi).toFixed(1)+'" stroke="#e4e4e7" stroke-width="1.5"/><line x1="'+(x-5).toFixed(1)+'" x2="'+(x+5).toFixed(1)+'" y1="'+Y(r.lo).toFixed(1)+'" y2="'+Y(r.lo).toFixed(1)+'" stroke="#e4e4e7"/><line x1="'+(x-5).toFixed(1)+'" x2="'+(x+5).toFixed(1)+'" y1="'+Y(r.hi).toFixed(1)+'" y2="'+Y(r.hi).toFixed(1)+'" stroke="#e4e4e7"/>';
+    }
+    s+='<text x="'+x.toFixed(1)+'" y="'+(H-20)+'" text-anchor="middle" font-size="10" fill="#e4e4e7">'+r.h+' bare</text><text x="'+x.toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle" font-size="9" fill="#71717a">n='+r.n+'</text>';
+  });
+  s+='<line x1="'+Lm+'" x2="'+(W-Rm)+'" y1="'+Y(0).toFixed(1)+'" y2="'+Y(0).toFixed(1)+'" stroke="#52525b"/><text x="'+(Lm-4)+'" y="'+(Y(0)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="#71717a">0</text>';
+  return svgWrap(W,H,s,'Curba edge-ului: R brut la 1, 3, 5, 10 și 20 de bare, fără ieșire');
+}
+function renderSQ(){
+  var P=SQS.pol,L=sqList(SQS),s=stat(L,P),dupN=L.filter(function(x){return x.dup;}).length,estN=L.filter(function(x){return x.est&&!x.dup;}).length;
+  var inc0=isFinite(s.lo)&&s.lo<=0&&s.hi>=0,pts=rollPoints(L,P),dg=degraded(pts),edge=edgeRows(L);
+  var kp=[
+   ['Semnale închise',String(s.n),'n_eff '+s.nEff+' zile · deschise '+s.nOpen+' · void '+s.nVoid+' · duplicate excluse '+dupN+' · date estimate excluse '+estN],
+   ['R net mediu','<span class="'+(s.mean>=0?'pos':'neg')+'">'+Rr(s.mean)+'</span>','CI90 '+CIs(s)+(inc0?' — include 0':'')],
+   ['Win rate',pc(s.win),'mediană '+Rr(s.median)],
+   ['Profit factor',s.pf==null?'—':n2(s.pf),s.pf==null?'ascuns: n='+s.n+' &lt; 10':'R câștigat / R pierdut'],
+   ['P&amp;L ipotetic','$'+sg(s.sum*RISK_USD(),0),'ΣR net × $'+n2(RISK_USD(),0)+' fix ('+RISK_PCT()+'% din $'+n2(EQUITY0(),0)+' — editabil); fără regula de lot'],
+   ['Capture ieșire',s.capture==null?'—':pc(s.capture),'give-back mediu '+Rr(s.giveback)+' · MDE '+f2(s.mde)+'R']];
+  var notes=[];
+  if(s.nEff<30)notes.push('n_eff = '+s.nEff+' &lt; 30: sub pragul de eșantion, cifrele sunt orientative.');
+  if(inc0)notes.push('CI90 include 0: nu se poate afirma că semnalul are edge net de costuri.');
+  if(s.amb>0.05)notes.push(pc(s.amb)+' din ieșiri au SL și TP în aceeași bară (SL primul): peste 5% merită rezolvate cu bare intraday.');
+  if(isFinite(s.lo)&&s.lo>0&&s.nEff<100)notes.push('Interval pozitiv, dar boost-ul cere n_eff ≥ 100 și verificare pe perioada de hold-out.');
+  var html='<div class="kpis">'+kp.map(function(x){return'<div class="kpi"><div class="l">'+x[0]+'</div><div class="v">'+x[1]+'</div><div class="s">'+x[2]+'</div></div>';}).join('')+'</div>'+
+   (notes.length?'<ul class="plain small warn">'+notes.map(function(n){return'<li>'+n+'</li>';}).join('')+'</ul>':'');
+  html+='<div class="grid3" style="margin-top:12px">'+
+   '<div><div class="small mut">R cumulat, pe data confirmării <span class="tag">risc fix 1R / semnal, NU un cont</span></div>'+chartCum(L,P)+'</div>'+
+   '<div><div class="small mut">Fereastră rulantă (60 de zile cu semnale), R net ± CI90 '+(dg==null?'':dg?'<span class="chip r">degradare</span>':'<span class="chip g">fără degradare</span>')+'</div>'+chartRoll(pts)+'</div>'+
+   '<div><div class="small mut">Q1 · Edge-ul semnalului, fără ieșire: R brut la h bare ± CI90</div>'+chartEdge(edge)+'</div></div>';
+  /* strategii */
+  var sr=SDEF.map(function(sd){var st=stat(sqList({strat:sd.code,per:SQS.per,grp:SQS.grp}),P);var stare=P==='X1_fixed_v1'?'<td><span class="chip '+STRAT[sd.code].cls+'">'+STRAT[sd.code].txt+'</span></td>':'<td class="mut small">starea se decide doar pe politica primară X1</td>';
+    return statRow(sd.name+sampleChip(st),st,'<td class="num">'+f2(st.mde)+'R</td>'+stare);}).join('');
+  html+='<h3>Pe strategie — '+POLNAME[P]+'</h3><div class="scroll"><table><thead><tr><th>Strategie</th><th class="num">n</th><th class="num" title="zile distincte de semnal">n_eff</th><th class="num">R net</th><th class="num">CI90 (pe zile)</th><th class="num">Win</th><th class="num">PF</th><th class="num" title="efect minim detectabil, putere 80%">MDE</th><th>Stare (n total, nu doar filtrul)</th></tr></thead><tbody>'+sr+'</tbody></table></div>';
+  /* politici */
+  var pr=POLS.map(function(Q){var st=stat(L,Q),e=st.ex;
+    return'<tr'+(Q===P?' class="sel"':'')+'><td>'+POLNAME[Q]+'</td><td class="num">'+st.n+'</td><td class="num '+(st.mean>=0?'pos':'neg')+'">'+Rr(st.mean)+'</td><td class="num">'+CIs(st)+'</td><td class="num">'+pc(st.win)+'</td><td class="num">'+f2(st.bars)+'</td><td class="num">'+(st.capture==null?'—':pc(st.capture))+'</td><td class="num">'+Rr(st.giveback)+'</td>'+
+    '<td class="num">'+pc(e.tp/(st.n||NaN))+'</td><td class="num">'+pc(e.sl/(st.n||NaN))+'</td><td class="num">'+pc(e.time/(st.n||NaN))+'</td><td class="num">'+pc(e.trail/(st.n||NaN))+'</td><td class="num">'+pc((e.structure+e.invalidation)/(st.n||NaN))+'</td><td class="num">'+pc(st.amb)+'</td><td class="num">'+pc(st.gap)+'</td></tr>';}).join('');
+  html+='<h3>Q3 · Ieșirea e bună? Aceleași semnale, trei politici de ieșire</h3><div class="scroll"><table><thead><tr><th>Politică</th><th class="num">n</th><th class="num">R net</th><th class="num">CI90</th><th class="num">Win</th><th class="num">Bare</th><th class="num" title="Σ R realizat / Σ MFE">Capture</th><th class="num" title="MFE − R realizat">Give-back</th><th class="num">TP</th><th class="num">SL</th><th class="num">Time</th><th class="num">Trail</th><th class="num">Struct.</th><th class="num" title="SL și TP în aceeași bară">Ambig.</th><th class="num" title="gap peste stop">Gap SL</th></tr></thead><tbody>'+pr+'</tbody></table></div>'+
+   '<div class="small mut">Sunt aceleași semnale (corelate): diferențele dintre politici sunt zgomot până la n_eff ≥ 100. Politica se alege pe „calibrare", se verifică pe „verificare", apoi se îngheață — schimbarea e o politică nouă (X1_v2).</div>';
+  /* luat vs sarit */
+  var base=sqList({strat:SQS.strat,per:SQS.per,grp:'all'}),ep=base.filter(function(x){return x.c>=EPOCH0;}),rows=[];
+  rows.push(['Luate de bot',ep.filter(function(x){return x.taken;})]);
+  ['regime','guard','size','not_selected'].forEach(function(k){rows.push(['Sărite: '+({regime:'filtru de regim',guard:'gate / niveluri invalide',size:'lot minim (infezabil pe cont)',not_selected:'neselectate (rang, plafon, prag scor)'}[k]),ep.filter(function(x){return x.skip===k;})]);});
+  rows.push(['Înainte de epoca botului (necunoscut)',base.filter(function(x){return x.c<EPOCH0;})]);
+  html+='<h3>Luat vs. sărit — valoarea filtrelor (epoca: ultimele 30 de sesiuni)</h3><div class="scroll"><table><thead><tr><th>Felie</th><th class="num">n</th><th class="num">n_eff</th><th class="num">R net</th><th class="num">CI90</th><th class="num">Win</th><th class="num">PF</th></tr></thead><tbody>'+
+   rows.map(function(r){return statRow(r[0],stat(r[1],P));}).join('')+'</tbody></table></div>'+
+   '<div class="small mut">Dacă semnalele sărite de filtrul de regim au R mai mare decât cele luate, filtrul costă bani. „Lot minim" înseamnă infezabil pe cont, nu semnal prost.</div>';
+  /* felii + alpha */
+  var sl=['risk_off','neutral','risk_on','extended'].map(function(k){return statRow('Regim la semnal: '+RNAME[k],stat(L.filter(function(x){return x.band===k;}),P));}).join('');
+  var earnIn=closedOf(L,P).filter(function(x){return x.out[P].earningsInWindow;}),earnOut=closedOf(L,P).filter(function(x){return !x.out[P].earningsInWindow;});
+  sl+=statRow('Ținut peste earnings',stat(earnIn,P),'')+statRow('Fără earnings în fereastră',stat(earnOut,P),'');
+  var pairs=closedOf(L,P).filter(function(x){return x.cout[P].status==='closed';}),al=E.clusterStats(pairs.map(function(x){return x.out[P].rNet-x.cout[P].rNet;}),pairs.map(function(x){return x.c;}));
+  var sm=pairs.length?pairs.reduce(function(a,x){return a+x.out[P].rNet;},0)/pairs.length:NaN,cm=pairs.length?pairs.reduce(function(a,x){return a+x.cout[P].rNet;},0)/pairs.length:NaN;
+  html+='<div class="grid3" style="margin-top:12px"><div><h3>Felii</h3><div class="scroll"><table><thead><tr><th>Felie</th><th class="num">n</th><th class="num">n_eff</th><th class="num">R net</th><th class="num">CI90</th><th class="num">Win</th><th class="num">PF</th></tr></thead><tbody>'+sl+'</tbody></table></div></div>'+
+   '<div><h3>Q4 · Mai bun decât întâmplarea?</h3><dl class="kvs"><dt>Perechi semnal–control</dt><dd>'+al.n+' (n_eff '+al.nEff+')</dd><dt>R net semnal</dt><dd>'+Rr(sm)+'</dd><dt>R net control (intrare aleatoare, același simbol și aceeași geometrie)</dt><dd>'+Rr(cm)+'</dd><dt>Alpha = semnal − control</dt><dd class="'+(al.mean>=0?'pos':'neg')+'"><b>'+Rr(al.mean)+'</b> '+CIs(al)+'</dd></dl>'+
+   '<div class="small mut">Într-o piață cu drift pozitiv aproape orice long câștigă: alpha separă edge-ul de drift.</div></div></div>';
+  $('sq-body').innerHTML=html;
+}
+function initSQ(){
+  var o='<option value="all">Toate strategiile</option>'+SDEF.map(function(x){return'<option value="'+x.code+'">'+x.name+'</option>';}).join('');
+  $('sq-strat').innerHTML=o;
+  $('sq-pol').innerHTML=POLS.map(function(x){return'<option value="'+x+'">'+POLNAME[x]+'</option>';}).join('');
+  ['strat','pol','per','grp'].forEach(function(k){$('sq-'+k).addEventListener('change',function(e){SQS[k]=e.target.value;renderSQ();});});
+}
+
+function render(){renderStatus();renderSim();renderRegime();renderAuto();renderWatch();renderDetail();}
+
+/* ---------- Evenimente ---------- */
+document.addEventListener('click',function(e){
+  var t=e.target.closest('button,tr[data-sym]');if(!t)return;
+  if(t.dataset.dq){S.dq=t.dataset.dq;render();}
+  else if(t.dataset.bot){S.bot=t.dataset.bot;render();}
+  else if(t.dataset.uni){S.uni=t.dataset.uni;render();}
+  else if(t.id==='sim-regime-reset'){S.regime=null;render();}
+  else if(t.dataset.sym){S.sel=t.dataset.sym;renderWatch();renderDetail();}
+});
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter'&&e.key!==' ')return;
+  var t=e.target;if(t&&t.matches&&t.matches('tr[data-sym]')){e.preventDefault();S.sel=t.dataset.sym;renderWatch();renderDetail();}
+});
+$('sim-session').addEventListener('change',function(e){S.session=e.target.value;render();});
+$('sim-regime').addEventListener('input',function(e){S.regime=+e.target.value;render();});
+$('f-status').addEventListener('change',function(e){S.status=e.target.value;renderWatch();});
+$('sim-capital').addEventListener('change',onCapitalRiskChange);
+$('sim-risk').addEventListener('change',onCapitalRiskChange);
+
+renderSector();renderKpis();renderEquity();initSQ();renderSQ();render();
+setInterval(function(){renderStatus();renderAuto();renderWatch();renderDetail();},30000);
+})();
+</script>
+</body>
+</html>

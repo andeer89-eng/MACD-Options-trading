@@ -1652,13 +1652,13 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             </div>
 
             <div className="space-y-3">
-              {activeMemory.episodes.map((ep) => {
+              {activeMemory.episodes.map((ep, epIdx) => {
                 const isWin = ep.outcome === 'WIN';
                 const isLoss = ep.outcome === 'LOSS';
 
                 return (
                   <div
-                    key={ep.id}
+                    key={`${ep.id || 'ep'}-${epIdx}`}
                     className={`bg-zinc-900 border rounded-2xl p-4 sm:p-5 space-y-3 transition shadow-sm ${
                       isWin ? 'border-emerald-500/30' : isLoss ? 'border-rose-500/30' : 'border-zinc-800'
                     }`}

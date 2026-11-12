@@ -266,6 +266,124 @@ plot(auto_avwap - std_dev, "AVWAP -1σ Band", color=color.aqua, linewidth=1)`,
   },
 ];
 
+export const DEFAULT_CUSTOM_INDICATORS: CustomPineIndicator[] = [
+  {
+    id: 'buying-checklist-pro',
+    name: 'BUYING CHECKLIST PRO',
+    author: 'Community Trader',
+    description: 'Algorithmic 5-point confluence checklist scoring candle strength, volume surge, neckline closure, and momentum.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 200000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("BUYING CHECKLIST PRO", overlay=false)
+// 5-Point Confluence Scoring Engine
+c1 = close > open ? 20 : 0
+c2 = volume > volume[1] ? 20 : 0
+c3 = close > (high + low)/2 ? 20 : 0
+c4 = low > low[1] ? 20 : 0
+c5 = close > ta.ema(close, 20) ? 20 : 0
+score = c1 + c2 + c3 + c4 + c5
+plot(score, "Checklist Score", color=score >= 80 ? color.green : score >= 60 ? color.blue : color.red)`,
+  },
+  {
+    id: 'matrix-ai-pro',
+    name: 'Matrix AI Pro',
+    author: 'Community Trader',
+    description: 'Neural multi-momentum normalized oscillator (-100 to +100) identifying overextended liquidity sweeps.',
+    category: 'Oscillator',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 190000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Matrix AI Pro", overlay=false)
+stoch_norm = ((close - ta.lowest(low, 14)) / (ta.highest(high, 14) - ta.lowest(low, 14))) * 200 - 100
+plot(stoch_norm, "Matrix AI Momentum", color=stoch_norm > 50 ? color.teal : stoch_norm < -50 ? color.maroon : color.blue)`,
+  },
+  {
+    id: 'apex-core',
+    name: 'APEX CORE — Adaptive Confluence Trading Framework',
+    author: 'Community Trader',
+    description: 'Adaptive volatility and volume-weighted trend scoring engine projecting high-probability reversal deltas.',
+    category: 'Reversal',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 180000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("APEX CORE — Adaptive Confluence", overlay=false)
+delta = (close - open) / (high - low) * 50
+plot(delta, "APEX Confluence Delta", color=delta > 0 ? color.green : color.red, style=plot.style_columns)`,
+  },
+  {
+    id: 'trendcloud-pro',
+    name: 'TrendCloud Pro',
+    author: 'Community Trader',
+    description: 'Dynamic multi-period EMA cloud (12 & 34) displaying bullish trend expansion and squeeze compression zones.',
+    category: 'Reversal',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 170000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("TrendCloud Pro", overlay=true)
+fast = ta.ema(close, 12)
+slow = ta.ema(close, 34)
+p1 = plot(fast, "Fast Cloud Base", color=color.green)
+p2 = plot(slow, "Slow Cloud Base", color=color.blue)
+fill(p1, p2, color=fast > slow ? color.new(color.green, 85) : color.new(color.red, 85))`,
+  },
+  {
+    id: 'agaig-avwap',
+    name: 'AGAIG + Institutional AVWAP',
+    author: 'Community Trader',
+    description: 'Peak-volume anchored VWAP with +/- 1.5 standard deviation institutional golden zones.',
+    category: 'Reversal',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 160000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("AGAIG + Institutional AVWAP", overlay=true)
+avwap = ta.vwap(close)
+std = ta.stdev(close, 20) * 1.5
+plot(avwap, "Institutional AVWAP", color=color.yellow, linewidth=2)
+plot(avwap + std, "AGAIG Upper Zone (+1.5σ)", color=color.teal)
+plot(avwap - std, "AGAIG Lower Zone (-1.5σ)", color=color.green)`,
+  },
+  {
+    id: 'supertrend-v9-pro',
+    name: 'SuperTrend v9 PRO',
+    author: 'Community Trader',
+    description: 'Advanced ATR trailing volatility bands with adaptive sensitivity for swing trading and trend persistence.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: false,
+    importedAt: Date.now() - 150000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("SuperTrend v9 PRO", overlay=true)
+atr = ta.atr(10) * 3.0
+// Adaptive trailing band calculation
+plot(close > ta.ema(close, 20) ? low - atr : high + atr, "SuperTrend Band", color=color.green)`,
+  },
+];
+
 const STORAGE_KEY = 'trullas_custom_pine_indicators_v1';
 
 /**
@@ -313,30 +431,30 @@ export function validatePineScriptHeader(code: string): {
 }
 
 /**
- * Load indicators from localStorage with built-in fallbacks.
+ * Load indicators from localStorage with built-in and default custom fallbacks.
  */
 export function loadAllIndicators(): CustomPineIndicator[] {
-  if (typeof window === 'undefined') return BUILT_IN_INDICATORS;
+  const allDefaults = [...BUILT_IN_INDICATORS, ...DEFAULT_CUSTOM_INDICATORS];
+  if (typeof window === 'undefined') return allDefaults;
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(BUILT_IN_INDICATORS));
-      return BUILT_IN_INDICATORS;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(allDefaults));
+      return allDefaults;
     }
     const parsed = JSON.parse(raw) as CustomPineIndicator[];
-    // Ensure all built-in indicators exist
-    const builtInIds = new Set(parsed.map((p) => p.id));
-    const missingBuiltIns = BUILT_IN_INDICATORS.filter((b) => !builtInIds.has(b.id));
-    if (missingBuiltIns.length > 0) {
-      const merged = [...parsed, ...missingBuiltIns];
+    const existingIds = new Set(parsed.map((p) => p.id));
+    const missingDefaults = allDefaults.filter((d) => !existingIds.has(d.id));
+    if (missingDefaults.length > 0) {
+      const merged = [...parsed, ...missingDefaults];
       localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       return merged;
     }
     return parsed;
   } catch (e) {
     console.error('Failed to parse stored indicators:', e);
-    return BUILT_IN_INDICATORS;
+    return allDefaults;
   }
 }
 
