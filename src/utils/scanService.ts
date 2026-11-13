@@ -1,7 +1,7 @@
 /* =====================================================================
    TRULLAS Master Plan v3 — Unified Scan Service (§8 Roadmap Item 5)
    Single scan engine + timeframe TTL cache.
-   Contract: Same symbol & timeframe has identical stage/divergence across all views.
+   Strictly real upstream data — never fabricates $150 synthetic fallback prices.
    ===================================================================== */
 
 import { Levels, calculateLevels, DataQuality, loadSettings } from './masterPlanCore';
@@ -42,9 +42,9 @@ interface CacheEntry {
 }
 
 const TIMEFRAME_TTL_MS: Record<'1w' | '1d' | '1h', number> = {
-  '1w': 15 * 60 * 1000, // 15 mins for weekly
-  '1d': 5 * 60 * 1000,  // 5 mins for daily
-  '1h': 60 * 1000,       // 1 min for hourly
+  '1w': 15 * 60 * 1000,
+  '1d': 5 * 60 * 1000,
+  '1h': 60 * 1000,
 };
 
 class ScanService {
@@ -73,37 +73,55 @@ class ScanService {
   }
 
   /**
-   * Builds normalized UnifiedScanResult with deterministic Levels.
+   * Builds normalized UnifiedScanResult with deterministic Levels from real quote/candle fields.
    */
   public createNormalizedResult(raw: any, timeframe: '1w' | '1d' | '1h' = '1d'): UnifiedScanResult {
-    const symbol = (raw.symbol || 'AAPL').toUpperCase().trim();
+    const symbol = String(raw.symbol || '').toUpperCase().trim();
     const spItem = SP500_UNIVERSE.find((c) => c.symbol === symbol);
     const companyName = raw.companyName || spItem?.name || getCompanyName(symbol);
-    const sector = raw.sector || spItem?.sector || 'Information Technology';
-    const currentPrice = Number(raw.currentPrice || raw.price || 150);
-    const atr = Number(raw.atr || (currentPrice * 0.02).toFixed(2));
-    const atrPercent = Number(raw.atrPercent || 2.0);
-    const rsi = Number(raw.rsi || 50);
-    const volume = Number(raw.volume || 1000000);
-    const changePercent = Number(raw.changePercent || 0);
+    const sector = raw.sector || spItem?.sector || 'Equities';
+    const currentPrice = Number(raw.currentPrice ?? raw.price ?? 0);
+    const atr = Number(raw.atr ?? 0);
+    const atrPercent = Number(raw.atrPercent ?? (currentPrice > 0 && atr > 0 ? Number(((atr / currentPrice) * 100).toFixed(2)) : 0));
+    const rsi = Number(raw.rsi ?? 50);
+    const volume = Number(raw.volume ?? 0);
+    const changePercent = Number(raw.changePercent ?? 0);
     const setups: DivergenceSetup[] = Array.isArray(raw.setups) ? raw.setups : [];
 
-    const ma30 = currentPrice * 0.98;
-    const ma150 = currentPrice * 0.95;
+    // Compute real SMAs from provided candles if available, else use explicit raw ma30/ma150
+    let ma30 = typeof raw.ma30 === 'number' && raw.ma30 > 0 ? raw.ma30 : currentPrice;
+    let ma150 = typeof raw.ma150 === 'number' && raw.ma150 > 0 ? raw.ma150 : currentPrice;
+
+    if (Array.isArray(raw.candles) && raw.candles.length > 0) {
+      const closes: number[] = raw.candles.map((c: any) => Number(c.close ?? c.c ?? 0)).filter((v: number) => v > 0);
+      if (closes.length >= 20) {
+        const w30 = closes.slice(-Math.min(30, closes.length));
+        ma30 = w30.reduce((a, b) => a + b, 0) / w30.length;
+        const w150 = closes.slice(-Math.min(150, closes.length));
+        ma150 = w150.reduce((a, b) => a + b, 0) / w150.length;
+      }
+    }
+
     const { stage, stageName } = this.computeStage(currentPrice, ma30, ma150);
 
     const direction = setups.some((s) => s.type.includes('BEAR')) ? 'short' : 'long';
-    const recentBars = raw.candles || [
-      { o: currentPrice * 0.99, h: currentPrice * 1.01, l: currentPrice * 0.98, c: currentPrice },
-    ];
+    const recentBars = Array.isArray(raw.candles) && raw.candles.length > 0
+      ? raw.candles.map((c: any) => ({
+          o: Number(c.open ?? c.o ?? currentPrice),
+          h: Number(c.high ?? c.h ?? currentPrice),
+          l: Number(c.low ?? c.l ?? currentPrice),
+          c: Number(c.close ?? c.c ?? currentPrice),
+        }))
+      : [{ o: currentPrice, h: currentPrice, l: currentPrice, c: currentPrice }];
 
     const settings = loadSettings();
+    const effectiveAtr = atr > 0 ? atr : currentPrice * 0.015;
     const levels = calculateLevels({
       symbol,
       timeframe,
       direction,
       currentPrice,
-      atr14: atr,
+      atr14: effectiveAtr,
       recentBars,
       dataQuality: settings.dataQuality,
       ma30,
@@ -129,12 +147,13 @@ class ScanService {
       levels,
       asOf: new Date().toISOString(),
       dataQuality: settings.dataQuality,
-      candleCount: raw.candleCount || 60,
+      candleCount: Number(raw.candleCount ?? (Array.isArray(raw.candles) ? raw.candles.length : 0)),
     };
   }
 
   /**
    * Scans a list of symbols with in-memory TTL caching and request deduplication.
+   * Never fabricates synthetic entries if /api/scan fails.
    */
   public async scan(options: ScanOptions = {}): Promise<UnifiedScanResult[]> {
     const tf = options.timeframe || '1d';
@@ -145,7 +164,6 @@ class ScanService {
     const now = Date.now();
     const ttl = TIMEFRAME_TTL_MS[tf];
 
-    // Check what is already cached
     const missingSymbols: string[] = [];
     const resultsMap = new Map<string, UnifiedScanResult>();
 
@@ -164,12 +182,10 @@ class ScanService {
     }
 
     if (missingSymbols.length === 0) {
-      const results = symbols.map((s) => resultsMap.get(s)!).filter(Boolean);
-      return results;
+      return symbols.map((s) => resultsMap.get(s)!).filter(Boolean);
     }
 
-    // Deduplicate in-flight fetch
-    const flightKey = `${missingSymbols.sort().join(',')}_${tf}`;
+    const flightKey = `${missingSymbols.slice().sort().join(',')}_${tf}`;
     if (!this.inFlightScans.has(flightKey)) {
       const promise = (async () => {
         try {
@@ -187,6 +203,7 @@ class ScanService {
           const items: UnifiedScanResult[] = [];
 
           for (const raw of json.results || []) {
+            if (!raw || typeof raw.currentPrice !== 'number' || raw.currentPrice <= 0) continue;
             const normalized = this.createNormalizedResult(raw, tf);
             this.cache.set(`${normalized.symbol}_${tf}`, {
               timestamp: now,
@@ -206,16 +223,17 @@ class ScanService {
     }
 
     try {
-      await this.inFlightScans.get(flightKey);
-    } catch (err) {
-      console.warn('[ScanService] Network scan error, fallback to synthetic data:', err);
-      // For any still missing symbols, create deterministic normalized entry
-      for (const sym of missingSymbols) {
-        if (!resultsMap.has(sym)) {
-          const fallback = this.createNormalizedResult({ symbol: sym }, tf);
-          this.cache.set(`${sym}_${tf}`, { timestamp: now, data: fallback });
-          resultsMap.set(sym, fallback);
+      const scanned = await this.inFlightScans.get(flightKey);
+      if (scanned) {
+        for (const item of scanned) {
+          resultsMap.set(item.symbol, item);
         }
+      }
+    } catch (err) {
+      console.error('[ScanService] Live market scan failed:', err);
+      // Do NOT synthesize fake $150 data; propagate or return any genuinely cached entries
+      if (resultsMap.size === 0) {
+        throw err;
       }
     }
 

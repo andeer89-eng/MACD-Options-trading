@@ -106,6 +106,7 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
   const [symbol, setSymbol] = useState(initialSymbol);
   const [timeframe, setTimeframe] = useState('1d');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'confluence' | 'nwe' | 'smc' | 'pinets'>('confluence');
 
   // Indicators Data from Server
@@ -133,16 +134,21 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
   // Fetch LuxAlgo Indicators
   const fetchLuxAlgoData = async (sym: string, tf: string, bw: number, mult: number) => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(
-        `/api/luxalgo/indicators?symbol=${sym}&timeframe=${tf}&bandwidth=${bw}&multiplier=${mult}`
+        `/api/luxalgo/indicators?symbol=${encodeURIComponent(sym)}&timeframe=${encodeURIComponent(tf)}&bandwidth=${bw}&multiplier=${mult}`
       );
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      if (!res.ok) {
+        const errPayload = await res.json().catch(() => null);
+        throw new Error(errPayload?.error || `HTTP ${res.status} fetching indicators`);
       }
-    } catch (e) {
+      const json = await res.json();
+      setData(json);
+    } catch (e: any) {
       console.error('Failed to fetch LuxAlgo indicators:', e);
+      setError(e?.message || 'Unable to load quantitative indicators.');
+      setData(null);
     } finally {
       setLoading(false);
     }
@@ -256,6 +262,18 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
         </div>
       </div>
 
+      {error && (
+        <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-4 text-xs text-rose-300 flex items-center justify-between gap-4">
+          <span>Unable to compute LuxAlgo indicators for {symbol}: {error}</span>
+          <button
+            onClick={() => fetchLuxAlgoData(symbol, timeframe, bandwidth, multiplier)}
+            className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 rounded-lg font-medium text-rose-200 transition shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* TAB 1: TRULLAS + LUXALGO CONFLUENCE MATRIX */}
       {activeTab === 'confluence' && (
         <div className="space-y-6">
@@ -273,10 +291,20 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
 
               <div className="flex items-baseline space-x-3">
                 <span className="text-4xl font-extrabold text-white tracking-tight">
-                  {data?.confluence?.confluenceScore ?? 80}%
+                  {data?.confluence?.confluenceScore !== undefined
+                    ? `${data.confluence.confluenceScore}%`
+                    : '—'}
                 </span>
                 <span className="text-xs font-semibold text-emerald-400">
-                  High Probability Exhaustion
+                  {!data
+                    ? loading
+                      ? 'Calculating...'
+                      : 'No data'
+                    : data.confluence.confluenceScore >= 75
+                    ? 'High Probability Exhaustion'
+                    : data.confluence.confluenceScore >= 50
+                    ? 'Moderate Confluence'
+                    : 'Neutral / Fair Value'}
                 </span>
               </div>
 
@@ -284,7 +312,7 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
               <div className="w-full bg-zinc-950 h-2 rounded-full overflow-hidden border border-zinc-800">
                 <div
                   className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${data?.confluence?.confluenceScore ?? 80}%` }}
+                  style={{ width: `${data?.confluence?.confluenceScore ?? 0}%` }}
                 />
               </div>
 
@@ -304,29 +332,49 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
 
               <div>
                 <span className="text-lg font-bold text-white">
-                  {data?.confluence?.nwePosition === 'AT_LOWER_BAND'
+                  {!data
+                    ? loading
+                      ? 'Calculating NWE...'
+                      : 'Unavailable'
+                    : data.confluence?.nwePosition === 'AT_LOWER_BAND'
                     ? 'At Lower Regression Band'
-                    : data?.confluence?.nwePosition === 'AT_UPPER_BAND'
+                    : data.confluence?.nwePosition === 'AT_UPPER_BAND'
                     ? 'At Upper Regression Band'
                     : 'Inside Kernel Channel'}
                 </span>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Proximity: {data?.confluence?.nweDistancePct ?? 0.8}% from envelope boundary
+                  Proximity:{' '}
+                  {data?.confluence?.nweDistancePct !== undefined
+                    ? `${data.confluence.nweDistancePct}%`
+                    : '—'}{' '}
+                  from envelope boundary
                 </p>
               </div>
 
               <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs space-y-1 font-mono">
                 <div className="flex justify-between text-rose-400">
                   <span>Upper Band (Rejection):</span>
-                  <span>${data?.nwe?.upper[data.nwe.upper.length - 1] ?? '0.00'}</span>
+                  <span>
+                    {data?.nwe?.upper?.length
+                      ? `$${data.nwe.upper[data.nwe.upper.length - 1]}`
+                      : '—'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-blue-400">
                   <span>Central yHat Curve:</span>
-                  <span>${data?.nwe?.yhat[data.nwe.yhat.length - 1] ?? '0.00'}</span>
+                  <span>
+                    {data?.nwe?.yhat?.length
+                      ? `$${data.nwe.yhat[data.nwe.yhat.length - 1]}`
+                      : '—'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-emerald-400">
                   <span>Lower Band (Demand):</span>
-                  <span>${data?.nwe?.lower[data.nwe.lower.length - 1] ?? '0.00'}</span>
+                  <span>
+                    {data?.nwe?.lower?.length
+                      ? `$${data.nwe.lower[data.nwe.lower.length - 1]}`
+                      : '—'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -338,20 +386,27 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
                   SMC Pricing Structure
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                  Zone: {data?.smc?.premiumDiscountZone?.currentZone ?? 'DISCOUNT'}
+                  Zone: {data?.smc?.premiumDiscountZone?.currentZone ?? '—'}
                 </span>
               </div>
 
               <div>
                 <span className="text-lg font-bold text-white">
-                  {data?.smc?.premiumDiscountZone?.currentZone === 'DISCOUNT'
+                  {!data
+                    ? loading
+                      ? 'Analyzing structure...'
+                      : 'Unavailable'
+                    : data.smc?.premiumDiscountZone?.currentZone === 'DISCOUNT'
                     ? 'Institutional Discount (Buy Zone)'
-                    : data?.smc?.premiumDiscountZone?.currentZone === 'PREMIUM'
+                    : data.smc?.premiumDiscountZone?.currentZone === 'PREMIUM'
                     ? 'Institutional Premium (Sell Zone)'
                     : 'Equilibrium Consolidation'}
                 </span>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Equilibrium: ${data?.smc?.premiumDiscountZone?.equilibrium ?? '0.00'}
+                  Equilibrium:{' '}
+                  {data?.smc?.premiumDiscountZone?.equilibrium !== undefined
+                    ? `$${data.smc.premiumDiscountZone.equilibrium}`
+                    : '—'}
                 </p>
               </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   PieChart,
   TrendingUp,
@@ -18,11 +18,10 @@ import {
   Award,
   ShieldCheck,
   ShieldAlert,
+  RefreshCw,
 } from 'lucide-react';
 import {
   GicsSectorPerformance,
-  GICS_SECTORS_METADATA,
-  generateFallbackSectorMetrics,
   calculateSectorBreadth,
   getSectorPresets,
 } from '../utils/sectorMetrics';
@@ -39,12 +38,39 @@ export const SectorPerformanceView: React.FC<SectorPerformanceViewProps> = ({
   onSetScanWatchlist,
   scannerResults = [],
 }) => {
-  const [sectors, setSectors] = useState<GicsSectorPerformance[]>(() => generateFallbackSectorMetrics());
+  const [sectors, setSectors] = useState<GicsSectorPerformance[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'changePercent' | 'weekChangePercent' | 'sp500WeightPct'>('changePercent');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [selectedSectorName, setSelectedSectorName] = useState<string | null>('Information Technology');
   const [constituentSearch, setConstituentSearch] = useState<string>('');
   const [notification, setNotification] = useState<string | null>(null);
+
+  const fetchLiveSectors = useCallback(async (force = false) => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(force ? '/api/sectors?refresh=true' : '/api/sectors');
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.sectors) || data.sectors.length === 0) {
+        throw new Error(data.error || 'Live sector ETF feed unavailable.');
+      }
+      setSectors(data.sectors);
+    } catch (err: any) {
+      setSectors([]);
+      setErrorMsg(err?.message || 'Unable to load live SPDR sector ETF quotes.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveSectors(false);
+    const onRefresh = () => fetchLiveSectors(true);
+    window.addEventListener('market-data-refreshed', onRefresh);
+    return () => window.removeEventListener('market-data-refreshed', onRefresh);
+  }, [fetchLiveSectors]);
 
   // Compute active divergences per sector from scanner results if available
   const sectorDivergenceCounts = useMemo(() => {
@@ -241,6 +267,29 @@ export const SectorPerformanceView: React.FC<SectorPerformanceViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* LOADING & ERROR STATES */}
+      {loading && sectors.length === 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center text-xs font-mono text-zinc-400 flex items-center justify-center gap-2">
+          <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+          <span>Fetching live SPDR sector ETF performance from Yahoo Finance...</span>
+        </div>
+      )}
+
+      {!loading && errorMsg && (
+        <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 text-xs text-rose-300">
+            <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            onClick={() => fetchLiveSectors(true)}
+            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shrink-0"
+          >
+            Retry Feed
+          </button>
+        </div>
+      )}
 
       {/* SECTOR CARDS GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

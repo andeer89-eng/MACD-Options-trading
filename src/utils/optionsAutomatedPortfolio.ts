@@ -1,22 +1,18 @@
 /**
  * Pure Logic Engine for the Automated Options Portfolio & Premium Harvesting Bot
  * 
- * Modeled after Rich's S&P 500 Options Harvesting system (192 trades, $115,008.44 realized income)
+ * Uses strictly real market OHLCV feeds and real executed/closed user & bot trades.
  * Integrated with TradingWarz Price Action & Fibonacci Golden Zone Confluence Architecture
  * Includes Continual Learning / Active Memory for Autonomous Strike Calibration and Theta Management
  */
 
-import {
-  OptionsTradeRecord,
-  getEnrichedRichTradesArchive,
-  RICH_OPTIONS_SUMMARY,
-} from '../data/richOptionsTradesArchive.ts';
+import type { OptionsTradeRecord } from '../data/richOptionsTradesArchive.ts';
 import {
   TradingWarzAnalysis,
   analyzeTradingWarzSetup,
   CandleOHLC,
 } from './tradingWarzEngine.ts';
-import { generateTickerOptionsSummary } from './cboeOptionsEngine.ts';
+import { calculateBlackScholesGreeks } from './cboeOptionsEngine.ts';
 import { getTradeExecutionRegime, MarketRegimeType } from './marketSession.ts';
 
 export interface OptionsPosition {
@@ -196,16 +192,12 @@ export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeR
 }
 
 /**
- * Initializes default options portfolio with a fresh starting capital of $2,000 USD today,
- * while strictly preserving all 192 historical audit trades and all 192+ FinRL epistemic memories and rules.
+ * Initializes clean default options portfolio with requested starting capital and zero synthetic trades.
  */
 export function initDefaultOptionsPortfolio(startingCapital: number = 2000): OptionsPortfolioAccount {
-  const historicalArchive = getEnrichedRichTradesArchive();
-  const allHistoricalEpisodes = synthesizeOptionsEpisodesFromHistory(historicalArchive);
-
   const defaultMemory: OptionsActiveMemoryState = {
     version: '2.0.0-finrl-options',
-    episodes: allHistoricalEpisodes,
+    episodes: [],
     learnedRules: [
       'Maintain Put Delta strictly between 0.08 and 0.14 for 86-94% theoretical probability of profit.',
       'Place short strikes strictly below the TradingWarz 61.8% Fibonacci Golden Zone and beneath the Mother Bar swing low.',
@@ -216,8 +208,8 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
     calibratedMaxDelta: 0.12,
     calibratedProfitTakePct: 75.0,
     minGoldenZoneDistancePct: 3.2,
-    totalThetaHarvested: 115008.44,
-    learningIterations: allHistoricalEpisodes.length,
+    totalThetaHarvested: 0,
+    learningIterations: 0,
     lastUpdated: new Date().toISOString(),
   };
 
@@ -225,30 +217,18 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
     startingBalance: startingCapital,
     cash: Number(startingCapital.toFixed(2)),
     equity: Number(startingCapital.toFixed(2)),
-    totalRealizedIncome: 0, // Fresh active start today for $2k era
+    totalRealizedIncome: 0,
     unrealizedPnL: 0,
     dailyThetaIncome: 0,
-    positions: [], // Fresh start today, zero open positions ready for autonomous scanning
-    tradeHistory: [], // Active $2k era trade history starts clean (0 trades)
-    legacyHistory: historicalArchive, // Read-only 192 historical trades from 50k era preserved in Legacy Archive tab
-    sessionLogs: [
-      {
-        id: `log-opt-fresh-${Date.now()}`,
-        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        positionId: 'system',
-        contract: 'ACCOUNT_RESET',
-        action: 'ROLL_POSITION',
-        contracts: 0,
-        premium: 0,
-        reason: 'Options Portfolio initialized fresh today with $2,000.00 USD baseline. All 192 historical 50k era trades moved to read-only Legacy Archive; FinRL epistemic memory bank & rules 100% preserved.',
-        session: 'REGULAR',
-      },
-    ],
+    positions: [],
+    tradeHistory: [],
+    legacyHistory: [],
+    sessionLogs: [],
     isAutoPilotActive: true,
     targetDelta: 0.12,
     profitTakePercent: 75.0,
     minDte: 5,
-    maxOpenPositions: 2, // Sized conservatively for $2,000 margin buffer
+    maxOpenPositions: 2,
     tradingWarzStrictFilter: true,
     lastUpdated: new Date().toISOString(),
     activeMemory: defaultMemory,
@@ -256,19 +236,18 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
 }
 
 /**
- * Re-runs FinRL / TradeMemory continual learning synthesis over all historical trade records
- * Re-ingests all 192+ trades, recalculates episodic critiques, updates policy rules and calibrations.
+ * Re-runs continual learning synthesis strictly over genuine executed trade records in the portfolio.
  */
 export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount): OptionsPortfolioAccount {
-  const historyToUse = (account.legacyHistory && account.legacyHistory.length > 0)
-    ? account.legacyHistory
-    : (account.tradeHistory && account.tradeHistory.length > 0 ? account.tradeHistory : getEnrichedRichTradesArchive());
+  const historyToUse = [
+    ...(account.tradeHistory || []),
+    ...(account.legacyHistory || []),
+  ];
   const allEpisodes = synthesizeOptionsEpisodesFromHistory(historyToUse);
 
   const wins = allEpisodes.filter((e) => e.outcome === 'WIN').length;
   const winRate = allEpisodes.length > 0 ? (wins / allEpisodes.length) * 100 : 100;
 
-  // Calibrate optimal Delta based on historical win stability
   let calibratedMaxDelta = 0.12;
   if (winRate >= 98.0) {
     calibratedMaxDelta = 0.12;
@@ -278,7 +257,7 @@ export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount
     calibratedMaxDelta = 0.08;
   }
 
-  const totalThetaHarvested = historyToUse.reduce((sum, t) => sum + t.profitDollars, 0);
+  const totalThetaHarvested = historyToUse.reduce((sum, t) => sum + (t.profitDollars || 0), 0);
 
   const updatedMemory: OptionsActiveMemoryState = {
     ...account.activeMemory,
@@ -429,11 +408,19 @@ export function processOptionsAutonomousCycle(
     const market = marketItems.find((m) => m.symbol === pos.ticker);
     const underlyingPrice = market ? market.currentPrice : pos.underlyingCurrentPrice;
 
-    // Simulate natural theta decay per cycle
+    const nextDte = Math.max(0, pos.dteDaysRemaining - 1);
     const multiplier = pos.ticker === 'ES' ? 50 : 5;
-    const decayedPremium = Math.max(0.10, Number((pos.currentPremiumPerContract * 0.88).toFixed(2)));
+    const ivDec = Math.max(0.12, (pos.ivRankPercent || 20) / 100);
+    const bsReprice = nextDte === 0
+      ? {
+          price: pos.optionType === 'PUT'
+            ? Math.max(0, pos.strike - underlyingPrice)
+            : Math.max(0, underlyingPrice - pos.strike),
+        }
+      : calculateBlackScholesGreeks(underlyingPrice, pos.strike, nextDte / 365, 0.045, ivDec, pos.optionType);
+    const decayedPremium = Math.max(0.05, Number(bsReprice.price.toFixed(2)));
     const unrealizedPnL = (pos.entryPremiumPerContract - decayedPremium) * pos.contractsCount * multiplier;
-    const profitPct = ((pos.entryPremiumPerContract - decayedPremium) / pos.entryPremiumPerContract) * 100;
+    const profitPct = ((pos.entryPremiumPerContract - decayedPremium) / Math.max(0.01, pos.entryPremiumPerContract)) * 100;
 
     let posCopy: OptionsPosition = {
       ...pos,
@@ -441,7 +428,7 @@ export function processOptionsAutonomousCycle(
       currentPremiumPerContract: decayedPremium,
       unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
       unrealizedPnLPercent: Number(profitPct.toFixed(2)),
-      dteDaysRemaining: Math.max(0, pos.dteDaysRemaining - 1),
+      dteDaysRemaining: nextDte,
     };
 
     // Check Take-Profit Condition (e.g. >= 70% or 75% profit captured)
@@ -546,15 +533,11 @@ export function processOptionsAutonomousCycle(
         continue; // Market closed for this asset, wait for next scheduled session
       }
 
-      // Use provided candles or generate representative sample
-      const candles: CandleOHLC[] = item.candles && item.candles.length >= 5
-        ? item.candles
-        : [
-            { open: item.currentPrice * 0.98, high: item.currentPrice * 0.99, low: item.currentPrice * 0.975, close: item.currentPrice * 0.985 },
-            { open: item.currentPrice * 0.985, high: item.currentPrice * 1.01, low: item.currentPrice * 0.97, close: item.currentPrice * 0.995 }, // Outside Bar
-            { open: item.currentPrice * 0.995, high: item.currentPrice * 1.002, low: item.currentPrice * 0.988, close: item.currentPrice }, // Inside Bar (Holy Grail!)
-          ];
+      if (!item.candles || item.candles.length < 5 || !item.currentPrice || item.currentPrice <= 0) {
+        continue; // Require real upstream OHLC candles before opening any option position
+      }
 
+      const candles: CandleOHLC[] = item.candles;
       const twAnalysis = analyzeTradingWarzSetup(candles, item.currentPrice);
 
       // Check if setup qualifies under TradingWarz filter (A+ or A grade preferred)
@@ -563,8 +546,29 @@ export function processOptionsAutonomousCycle(
         const multiplier = item.symbol === 'ES' ? 50 : 5;
         // Conservative 1 contract for $2,000 micro account
         const contracts = isMicroAccount ? 1 : item.symbol === 'ES' ? 1 : 5;
-        const entryPrem = Number((strike * 0.0038).toFixed(2)); // ~0.38% weekly premium
+
+        // Derive annualized volatility from real candle closes (log returns); fallback to ATR-scaled vol if short window
+        const validCloses = candles.map((c) => c.close).filter((c) => Number.isFinite(c) && c > 0);
+        let sigma = 0.18;
+        if (validCloses.length >= 3) {
+          const logRets: number[] = [];
+          for (let k = 1; k < validCloses.length; k++) {
+            logRets.push(Math.log(validCloses[k] / validCloses[k - 1]));
+          }
+          const mean = logRets.reduce((a, b) => a + b, 0) / logRets.length;
+          const variance =
+            logRets.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / Math.max(1, logRets.length - 1);
+          const annVol = Math.sqrt(variance) * Math.sqrt(252);
+          if (Number.isFinite(annVol) && annVol > 0.05) {
+            sigma = Math.min(1.2, Math.max(0.08, annVol));
+          }
+        }
+
+        const bsEntry = calculateBlackScholesGreeks(item.currentPrice, strike, 7 / 365, 0.045, sigma, 'PUT');
+        const entryPrem = Number(Math.max(0.25, bsEntry.price).toFixed(2));
         const totalCredit = Number((entryPrem * contracts * multiplier).toFixed(2));
+        const dailyThetaEarned = Number(Math.abs(bsEntry.greeks.theta * contracts * multiplier).toFixed(2));
+        const computedIvPct = Number((sigma * 100).toFixed(1));
 
         const expDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         const expDateStr = expDate.toISOString().slice(0, 10);
@@ -591,11 +595,11 @@ export function processOptionsAutonomousCycle(
           underlyingPriceAtEntry: item.currentPrice,
           underlyingCurrentPrice: item.currentPrice,
           strikeDistancePercent: twAnalysis.strikeDistancePercent,
-          delta: -twAnalysis.estimatedDelta,
-          gamma: 0.0019,
-          dailyTheta: Number((totalCredit / 6).toFixed(2)),
-          vega: -35.0,
-          ivRankPercent: 26.0,
+          delta: Number(bsEntry.greeks.delta.toFixed(4)),
+          gamma: Number(bsEntry.greeks.gamma.toFixed(5)),
+          dailyTheta: dailyThetaEarned,
+          vega: Number((-bsEntry.greeks.vega * contracts * multiplier).toFixed(2)),
+          ivRankPercent: computedIvPct,
           unrealizedPnL: 0,
           unrealizedPnLPercent: 0,
           profitTargetPercent: account.profitTakePercent,
@@ -604,7 +608,7 @@ export function processOptionsAutonomousCycle(
           goldenZoneSupportLevel: twAnalysis.fibLevels.fib618,
           setupGrade: twAnalysis.setupGrade,
           executionSession: regimeInfo.regime,
-          whyOpenedThesis: `Sold cash-secured Put ${contractCode} [${regimeInfo.regime}] @ -${twAnalysis.estimatedDelta.toFixed(2)} Delta (${twAnalysis.probabilityOfProfitPercent}% POP). TradingWarz Setup: ${twAnalysis.patternLabel}. S&P 500 Golden Zone 61.8% floor sits at $${twAnalysis.fibLevels.fib618.toFixed(2)}. Strike $${strike.toFixed(2)} placed safely $${(item.currentPrice - strike).toFixed(2)} (${twAnalysis.strikeDistancePercent}%) below underlying. Daily theta burn: +$${(totalCredit / 6).toFixed(2)}/day.`,
+          whyOpenedThesis: `Sold cash-secured Put ${contractCode} [${regimeInfo.regime}] @ ${bsEntry.greeks.delta.toFixed(2)} Delta (${twAnalysis.probabilityOfProfitPercent}% POP). TradingWarz Setup: ${twAnalysis.patternLabel}. S&P 500 Golden Zone 61.8% floor sits at $${twAnalysis.fibLevels.fib618.toFixed(2)}. Strike $${strike.toFixed(2)} placed safely $${(item.currentPrice - strike).toFixed(2)} (${twAnalysis.strikeDistancePercent}%) below underlying. Daily theta burn: +$${dailyThetaEarned.toFixed(2)}/day.`,
         };
 
         updatedPositions.push(newPos);
@@ -731,91 +735,43 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.cash === 'number') {
-          // If stored activeMemory only has seed episodes (< 10), hydrate all 192+ episodes
-          if (!parsed.activeMemory || !parsed.activeMemory.episodes || parsed.activeMemory.episodes.length < 10) {
-            const history = (parsed.tradeHistory && parsed.tradeHistory.length > 0)
-              ? parsed.tradeHistory
-              : getEnrichedRichTradesArchive();
-            const episodes = synthesizeOptionsEpisodesFromHistory(history);
-            parsed.activeMemory = {
-              version: '2.0.0-finrl-options',
-              episodes,
-              learningIterations: episodes.length,
-              calibratedMaxDelta: 0.12,
-              calibratedProfitTakePct: 75.0,
-              totalThetaHarvested: 115008.44,
-              lastUpdated: new Date().toISOString(),
-              learnedRules: [
-                'Maintain Put Delta strictly between 0.08 and 0.14 for 86-94% theoretical probability of profit.',
-                'Place short strikes strictly below the TradingWarz 61.8% Fibonacci Golden Zone and beneath the Mother Bar swing low.',
-                'Auto-close options when 65% - 85% of total premium is captured early rather than taking tail gamma risk into expiry.',
-                'If market conditions trigger VIX expansion (>22), widen strike distance to at least 4.5% OTM.',
-                'On rapid market sell-offs testing strike within 1.0%, execute defensive break-even exit per Rule 4 to protect 100% of collateral.',
-              ],
-            };
-            saveOptionsPortfolio(parsed);
-          }
+          let dirty = false;
 
-          // Ensure legacyHistory is populated with the 192 historical trades archive
-          if (!parsed.legacyHistory || parsed.legacyHistory.length === 0) {
-            parsed.legacyHistory = getEnrichedRichTradesArchive();
-          }
-
-          // Migrate any legacy 50k archive trades out of active tradeHistory
-          if (parsed.tradeHistory && parsed.tradeHistory.length > 0) {
-            const legacyTrades = parsed.tradeHistory.filter(
-              (t: any) => t.id && (t.id.startsWith('rich-opt-log-') || t.id.startsWith('rich-opt-'))
+          // Purge any pre-seeded static archive records from earlier sessions
+          if (Array.isArray(parsed.legacyHistory) && parsed.legacyHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
+            parsed.legacyHistory = parsed.legacyHistory.filter(
+              (t: any) => !String(t?.id || '').startsWith('rich-opt-log-')
             );
-            if (legacyTrades.length > 0) {
-              // Ensure legacyHistory has all legacy trades
-              const existingIds = new Set((parsed.legacyHistory || []).map((t: any) => t.id));
-              legacyTrades.forEach((lt: any) => {
-                if (!existingIds.has(lt.id)) {
-                  parsed.legacyHistory.push(lt);
-                }
-              });
-              // Keep only active $2k era trades in tradeHistory
-              parsed.tradeHistory = parsed.tradeHistory.filter(
-                (t: any) => t.id && !t.id.startsWith('rich-opt-log-') && !t.id.startsWith('rich-opt-')
-              );
-            }
+            dirty = true;
+          } else if (!Array.isArray(parsed.legacyHistory)) {
+            parsed.legacyHistory = [];
+            dirty = true;
           }
 
-          // Enforce fresh $2k era starting balance and active metrics
-          if (parsed.startingBalance !== 2000) {
-            parsed.startingBalance = 2000;
-            parsed.cash = 2000;
-            parsed.equity = 2000;
-            parsed.totalRealizedIncome = (parsed.tradeHistory || []).reduce((sum: number, t: any) => sum + (t.profitDollars || 0), 0);
-            parsed.unrealizedPnL = 0;
-            parsed.dailyThetaIncome = 0;
-            parsed.positions = [];
-            parsed.maxOpenPositions = 2;
-            parsed.sessionLogs = [
-              {
-                id: `log-opt-fresh-${Date.now()}`,
-                timestamp: new Date().toISOString().replace('T', ' ').slice(0, 16),
-                positionId: 'system',
-                contract: 'ACCOUNT_RESET',
-                action: 'ROLL_POSITION',
-                contracts: 0,
-                premium: 0,
-                reason: 'Options Portfolio migrated to fresh $2,000.00 USD era. All 192 historical trades archived in read-only Legacy Archive tab; FinRL epistemic memory bank & rules 100% preserved.',
-                session: 'REGULAR',
-              },
-              ...(parsed.sessionLogs || []),
-            ];
-            parsed.lastUpdated = new Date().toISOString();
-            saveOptionsPortfolio(parsed);
+          if (Array.isArray(parsed.tradeHistory) && parsed.tradeHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
+            parsed.tradeHistory = parsed.tradeHistory.filter(
+              (t: any) => !String(t?.id || '').startsWith('rich-opt-log-')
+            );
+            dirty = true;
           }
 
-          // Clear legacy seed positions if starting fresh on 2k portfolio
-          if (parsed.startingBalance === 2000 && (parsed.tradeHistory || []).length === 0 && (parsed.positions || []).some((p: any) => p.id && (p.id.includes('nov12') || p.id.includes('opt-pos-es-')))) {
-            parsed.positions = [];
-            parsed.dailyThetaIncome = 0;
-            parsed.unrealizedPnL = 0;
-            parsed.cash = 2000;
-            parsed.equity = 2000;
+          if (parsed.activeMemory?.episodes && parsed.activeMemory.episodes.some((ep: any) => String(ep?.id || '').startsWith('opt-ep-hist-'))) {
+            parsed.activeMemory.episodes = parsed.activeMemory.episodes.filter(
+              (ep: any) => !String(ep?.id || '').startsWith('opt-ep-hist-')
+            );
+            parsed.activeMemory.learningIterations = parsed.activeMemory.episodes.length;
+            parsed.activeMemory.totalThetaHarvested = Number(
+              (parsed.tradeHistory || []).reduce((s: number, t: any) => s + (t.profitDollars || 0), 0).toFixed(2)
+            );
+            dirty = true;
+          }
+
+          if (!parsed.activeMemory) {
+            parsed.activeMemory = initDefaultOptionsPortfolio(parsed.startingBalance || 2000).activeMemory;
+            dirty = true;
+          }
+
+          if (dirty) {
             saveOptionsPortfolio(parsed);
           }
 
@@ -841,19 +797,19 @@ export function saveOptionsPortfolio(account: OptionsPortfolioAccount): void {
 
 export function resetOptionsPortfolio(capital: number = 2000): OptionsPortfolioAccount {
   const current = loadOptionsPortfolio();
-  const memoryToPreserve = current.activeMemory?.episodes?.length > 10
-    ? current.activeMemory
-    : undefined;
-  const legacyToPreserve = (current.legacyHistory && current.legacyHistory.length > 0)
-    ? current.legacyHistory
-    : getEnrichedRichTradesArchive();
+  const realEpisodes = (current.activeMemory?.episodes || []).filter(
+    (ep) => !String(ep.id).startsWith('opt-ep-hist-')
+  );
 
   const fresh = initDefaultOptionsPortfolio(capital);
-  if (memoryToPreserve) {
-    fresh.activeMemory = memoryToPreserve;
+  if (realEpisodes.length > 0) {
+    fresh.activeMemory = {
+      ...fresh.activeMemory,
+      episodes: realEpisodes,
+      learningIterations: realEpisodes.length,
+      totalThetaHarvested: Number(realEpisodes.reduce((s, e) => s + e.pnl, 0).toFixed(2)),
+    };
   }
-  fresh.legacyHistory = legacyToPreserve;
-  fresh.tradeHistory = []; // Clean active journal starting empty for $2k era
   saveOptionsPortfolio(fresh);
   return fresh;
 }

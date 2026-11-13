@@ -5,39 +5,67 @@
       "description": "User specific bot and capital configuration",
       "type": "object",
       "properties": {
+        "ownerId": { "type": "string", "maxLength": 128 },
         "simCapitalUsd": { "type": "number" },
         "maxRiskPerTradePct": { "type": "number" },
         "dailyLossLimitPct": { "type": "number" },
-        "botStatus": { "type": "string", "enum": ["armed", "paused", "killed"] }
+        "maxSectorExposurePct": { "type": "number" },
+        "botStatus": { "type": "string", "enum": ["armed", "paused", "killed"] },
+        "activeEpochId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["simCapitalUsd", "maxRiskPerTradePct"]
+      "required": ["ownerId", "simCapitalUsd", "maxRiskPerTradePct", "dailyLossLimitPct", "botStatus", "updatedAt"]
     },
     "JournalEntry": {
       "title": "JournalEntry",
       "description": "A single trade journal entry",
       "type": "object",
       "properties": {
-        "symbol": { "type": "string", "pattern": "^[A-Z0-9.-]+$" },
-        "setupType": { "type": "string" },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 20, "pattern": "^[A-Z0-9.=\\-]+$" },
+        "companyName": { "type": "string", "maxLength": 120 },
+        "setupType": { "type": "string", "maxLength": 50 },
+        "timeframe": { "type": "string", "maxLength": 10 },
         "status": { "type": "string", "enum": ["OPEN", "CLOSED_WIN", "CLOSED_LOSS", "BREAKEVEN"] },
-        "entryDate": { "type": "string", "format": "date" },
+        "entryDate": { "type": "string", "maxLength": 10, "format": "date" },
+        "exitDate": { "type": "string", "maxLength": 10, "format": "date" },
         "entryPrice": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "targetPrice": { "type": "number" },
+        "quantity": { "type": "number" },
         "realizedPnL": { "type": "number" },
-        "epochId": { "type": "string" }
+        "pnlPercent": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 4000 },
+        "tags": { "type": "array" },
+        "executionRating": { "type": "number" },
+        "epochId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["symbol", "setupType", "status", "entryDate", "entryPrice"]
+      "required": ["ownerId", "symbol", "setupType", "timeframe", "status", "entryDate", "entryPrice", "stopLoss", "targetPrice", "quantity", "createdAt", "updatedAt"]
     },
     "WatchlistItem": {
       "title": "WatchlistItem",
       "description": "An item in the daily watchlist",
       "type": "object",
       "properties": {
-        "symbol": { "type": "string", "pattern": "^[A-Z0-9.-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "symbol": { "type": "string", "maxLength": 20, "pattern": "^[A-Z0-9.=\\-]+$" },
+        "sector": { "type": "string", "maxLength": 80 },
+        "setup": { "type": "string", "maxLength": 120 },
+        "strategyId": { "type": "string", "maxLength": 64 },
+        "direction": { "type": "string", "enum": ["long", "short"] },
+        "currentPrice": { "type": "number" },
+        "atr": { "type": "number" },
         "status": { "type": "string", "enum": ["NEW", "WATCHING", "TRIGGERED", "EXPIRED", "INVALIDATED"] },
         "totalScore": { "type": "number" },
+        "isPinned": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["symbol", "status", "updatedAt"]
+      "required": ["ownerId", "symbol", "status", "totalScore", "createdAt", "updatedAt"]
     }
   },
   "firestore": {

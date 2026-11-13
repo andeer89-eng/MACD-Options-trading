@@ -6,17 +6,16 @@ import {
   queryMemoryForSetup,
   exportActiveMemoryJSON,
   generateTradeReflection,
-  ActiveMemoryState,
 } from './activeLearningEngine.ts';
 
-test('initDefaultActiveMemory creates structured active memory baseline', () => {
+test('initDefaultActiveMemory creates clean neutral baseline with zero fake seed episodes', () => {
   const memory = initDefaultActiveMemory();
 
   assert.equal(typeof memory.version, 'string');
-  assert.ok(memory.episodes.length >= 3, 'Should have baseline seed episodes');
-  assert.ok(memory.learnedRules.length >= 4, 'Should contain learned heuristic rules');
-  assert.ok(memory.setupWeights['BULLISH TRIPLE'].currentWeightMultiplier > 1.0);
-  assert.ok(memory.setupWeights['BEARISH TRIPLE'].currentWeightMultiplier < 1.0);
+  assert.equal(memory.episodes.length, 0);
+  assert.equal(memory.learnedRules.length, 0);
+  assert.equal(memory.setupWeights['BULLISH TRIPLE'].currentWeightMultiplier, 1.0);
+  assert.equal(memory.setupWeights['BEARISH TRIPLE'].currentWeightMultiplier, 1.0);
   assert.equal(memory.calibratedMinQualityScore, 70);
   assert.equal(memory.calibratedAtrStopMultiple, 1.25);
 });
@@ -32,7 +31,7 @@ test('generateTradeReflection creates constructive critique for wins and losses'
     2.5,
     'Target 2 reached'
   );
-  assert.ok(winReflect.deltaWeight > 0, 'Win should yield positive delta weight');
+  assert.ok(winReflect.deltaWeight > 0);
   assert.ok(winReflect.critique.includes('positive expectancy'));
   assert.ok(winReflect.rule.includes('BULLISH TRIPLE'));
 
@@ -46,14 +45,13 @@ test('generateTradeReflection creates constructive critique for wins and losses'
     4.2,
     'STOP LOSS TRIGGERED'
   );
-  assert.ok(lossReflect.deltaWeight < 0, 'Loss should yield negative delta weight');
+  assert.ok(lossReflect.deltaWeight < 0);
   assert.ok(lossReflect.critique.includes('loss'));
   assert.ok(lossReflect.rule.includes('Throttle'));
 });
 
 test('ingesting a winning trade adapts setup multiplier upward and stores episode', () => {
   const initial = initDefaultActiveMemory();
-  const prevCount = initial.episodes.length;
   const prevMultiplier = initial.setupWeights['BULLISH TRIPLE'].currentWeightMultiplier;
 
   const { updatedState, newEpisode } = ingestTradeEpisode(initial, {
@@ -69,12 +67,9 @@ test('ingesting a winning trade adapts setup multiplier upward and stores episod
     exitReason: 'Target 2 reached',
   });
 
-  assert.equal(updatedState.episodes.length, prevCount + 1);
+  assert.equal(updatedState.episodes.length, 1);
   assert.equal(newEpisode.outcome, 'WIN');
-  assert.ok(
-    updatedState.setupWeights['BULLISH TRIPLE'].currentWeightMultiplier >= prevMultiplier,
-    'Multiplier should increase or stay high after win'
-  );
+  assert.ok(updatedState.setupWeights['BULLISH TRIPLE'].currentWeightMultiplier > prevMultiplier);
   assert.equal(updatedState.episodes[0].symbol, 'AMD');
 });
 
@@ -97,25 +92,29 @@ test('ingesting a losing trade throttles multiplier and elevates quality thresho
   });
 
   assert.equal(newEpisode.outcome, 'LOSS');
-  assert.ok(
-    updatedState.calibratedMinQualityScore >= prevMinQuality,
-    'Losing trade should tighten quality filter threshold'
-  );
-  assert.ok(
-    updatedState.calibratedAtrStopMultiple >= prevAtrStop,
-    'Losing trade should widen stop multiple to avoid noise'
-  );
+  assert.ok(updatedState.calibratedMinQualityScore >= prevMinQuality);
+  assert.ok(updatedState.calibratedAtrStopMultiple >= prevAtrStop);
 });
 
-test('queryMemoryForSetup gates low-quality candidates and boosts high-affinity setups', () => {
-  const memory = initDefaultActiveMemory();
+test('queryMemoryForSetup gates low-quality candidates and boosts winning history setups', () => {
+  let memory = initDefaultActiveMemory();
+  memory = ingestTradeEpisode(memory, {
+    symbol: 'NVDA',
+    setupType: 'BULLISH TRIPLE',
+    direction: 'BULLISH',
+    entryPrice: 120,
+    exitPrice: 132,
+    pnl: 200,
+    pnlPercent: 10,
+    qualityScore: 85,
+    atrPercent: 2.4,
+    exitReason: 'TP2',
+  }).updatedState;
 
-  // Test setup that fails calibrated threshold (e.g. quality 60 vs calibrated 70)
   const lowQualityQuery = queryMemoryForSetup(memory, 'XYZ', 'BULLISH TRIPLE', 60);
   assert.equal(lowQualityQuery.isApproved, false);
   assert.ok(lowQualityQuery.auditRationale.includes('below adaptive threshold'));
 
-  // Test setup that passes with high score
   const highQualityQuery = queryMemoryForSetup(memory, 'NVDA', 'BULLISH TRIPLE', 85);
   assert.equal(highQualityQuery.isApproved, true);
   assert.ok(highQualityQuery.sizingMultiplier > 1.0);
@@ -126,7 +125,6 @@ test('exportActiveMemoryJSON outputs valid parseable JSON', () => {
   const memory = initDefaultActiveMemory();
   const jsonStr = exportActiveMemoryJSON(memory);
   const parsed = JSON.parse(jsonStr);
-
-  assert.equal(parsed.version, '1.0.0');
+  assert.equal(parsed.version, '2.0.0');
   assert.ok(Array.isArray(parsed.episodes));
 });

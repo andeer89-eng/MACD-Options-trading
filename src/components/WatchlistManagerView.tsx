@@ -147,16 +147,23 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
     showToast(`Created custom watchlist "${newWatchlist.name}"`);
   };
 
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
   // Delete watchlist handler
   const handleDeleteWatchlist = (id: string, name: string) => {
-    if (confirm(`Are you sure you want to delete custom watchlist "${name}"?`)) {
-      const updated = deleteWatchlist(watchlists, id, true);
-      setWatchlists(updated);
-      if (activeId === id) {
-        setActiveId(updated[0]?.id || 'wl-sp500-top');
-      }
-      showToast(`Deleted watchlist "${name}"`);
+    setPendingDelete({ id, name });
+  };
+
+  const confirmDeleteWatchlist = () => {
+    if (!pendingDelete) return;
+    const updated = deleteWatchlist(watchlists, pendingDelete.id, true);
+    setWatchlists(updated);
+    if (activeId === pendingDelete.id) {
+      setActiveId(updated[0]?.id || 'wl-sp500-top');
     }
+    showToast(`Deleted watchlist "${pendingDelete.name}"`);
+    setPendingDelete(null);
   };
 
   // Export CSV handler
@@ -184,6 +191,7 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
   // Import JSON handler
   const handleImportJSONSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setImportError(null);
     try {
       const merged = importWatchlistsFromJSON(watchlists, importJsonText);
       setWatchlists(merged);
@@ -191,7 +199,7 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
       setImportJsonText('');
       showToast(`Imported watchlists successfully`);
     } catch (err: any) {
-      alert(err.message);
+      setImportError(err?.message || 'Invalid JSON watchlist format.');
     }
   };
 
@@ -601,13 +609,21 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
             </div>
 
             <form onSubmit={handleImportJSONSubmit} className="space-y-4 text-xs font-mono">
+              {importError && (
+                <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-xs font-sans">
+                  {importError}
+                </div>
+              )}
               <div>
                 <label className="block text-zinc-400 mb-1 font-sans">Paste JSON Backup Content</label>
                 <textarea
                   rows={6}
                   required
                   value={importJsonText}
-                  onChange={(e) => setImportJsonText(e.target.value)}
+                  onChange={(e) => {
+                    setImportJsonText(e.target.value);
+                    if (importError) setImportError(null);
+                  }}
                   placeholder='{"watchlists": [{"name": "My Tech List", "symbols": ["NVDA", "AAPL"]}]}'
                   className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl p-3 text-white placeholder-zinc-600 font-mono text-[11px] focus:outline-none"
                 />
@@ -616,7 +632,10 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
               <div className="flex items-center justify-end space-x-2 pt-3 border-t border-zinc-800">
                 <button
                   type="button"
-                  onClick={() => setShowImportModal(false)}
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportError(null);
+                  }}
                   className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-xl hover:bg-zinc-700 transition"
                 >
                   Cancel
@@ -629,6 +648,34 @@ export const WatchlistManagerView: React.FC<WatchlistManagerViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* INLINE DELETE WATCHLIST CONFIRMATION MODAL */}
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Delete Watchlist?</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Are you sure you want to delete custom watchlist <strong className="text-white">&quot;{pendingDelete.name}&quot;</strong>? This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-xl hover:bg-zinc-700 transition text-xs font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteWatchlist}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition text-xs"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

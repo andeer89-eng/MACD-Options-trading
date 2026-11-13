@@ -167,7 +167,7 @@ export const ALL_TABS: TabDefinition[] = [
     badge: 'Auto-Pilot',
     badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
     color: 'text-emerald-400',
-    description: 'Automated Stock Bot ($10k), Options Harvesting Bot ($115k), and Manual Diary',
+    description: 'Automated Stock Bot, Options Harvesting Bot, and Manual Diary',
   },
   {
     id: 'backtester',
@@ -259,12 +259,12 @@ export const ALL_TABS: TabDefinition[] = [
 ];
 
 export const CATEGORIES = [
-  { id: 'all', label: `All Modules (${ALL_TABS.length})` },
-  { id: 'scanner', label: 'Scanner & Setups' },
+  { id: 'all', label: 'All' },
+  { id: 'scanner', label: 'Scanner' },
   { id: 'markets', label: 'Markets & Options' },
   { id: 'bots', label: 'Bots & Journal' },
   { id: 'quant', label: 'Quant Suite' },
-  { id: 'system', label: 'System & Feeds' },
+  { id: 'system', label: 'System' },
 ] as const;
 
 interface HeaderProps {
@@ -384,47 +384,47 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md sticky top-0 z-40 shadow-xl">
       {/* TIER 1: BRAND IDENTITY + CATEGORY SWITCHER + SYSTEM CONTROLS */}
-      <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-15 gap-4">
+      <div className="w-full max-w-[1920px] mx-auto px-3 sm:px-4 lg:px-6">
+        <div className="flex items-center justify-between min-h-14 py-1.5 gap-2">
           {/* Brand & Strategy Identity */}
-          <div className="flex items-center space-x-3 shrink-0">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 via-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/10">
-              <Activity className="w-5 h-5 text-white" />
+          <div className="flex items-center space-x-2.5 shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 via-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/10">
+              <Activity className="w-4 h-4 text-white" />
             </div>
             <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-white text-base tracking-tight font-sans">
+              <div className="flex items-center space-x-1.5">
+                <span className="font-extrabold text-white text-sm sm:text-base tracking-tight font-sans whitespace-nowrap">
                   TRULLÀS 24/7
                 </span>
-                <span className="hidden sm:inline-flex text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <span className="hidden sm:inline-flex text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
                   MACD &amp; Options
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-400 hidden sm:block">
+              <p className="text-[10px] text-zinc-400 hidden 2xl:block">
                 4-Pillars Divergence &amp; Options Harvesting
               </p>
             </div>
           </div>
 
           {/* Center Category Selector & Mega-Menu Button (Desktop & Tablet) */}
-          <div className="hidden lg:flex items-center space-x-2">
+          <div className="hidden lg:flex items-center space-x-1.5 min-w-0">
             {/* Mega Menu Button */}
             <button
               onClick={() => setShowMegaMenu(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition-colors shadow-sm"
-              title="Browse all 17 trading modules in categorized grid"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 transition-colors shadow-sm whitespace-nowrap shrink-0"
+              title={`Browse all ${ALL_TABS.length} trading modules in categorized grid`}
             >
-              <Grid className="w-3.5 h-3.5 text-indigo-400" />
-              <span>All Modules ({ALL_TABS.length})</span>
+              <Grid className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span>Modules ({ALL_TABS.length})</span>
             </button>
 
             {/* Category Filter Pills */}
-            <div className="flex items-center space-x-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80">
+            <div className="flex items-center space-x-0.5 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80 overflow-x-auto no-scrollbar">
               {CATEGORIES.map((cat) => (
                 <button
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                  className={`px-2 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${
                     selectedCategory === cat.id
                       ? 'bg-zinc-800 text-white shadow-sm font-semibold border border-zinc-700/80'
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
@@ -438,11 +438,11 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Quick Search Trigger */}
             <button
               onClick={() => setShowQuickSearch(true)}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition-colors"
+              className="flex items-center space-x-1.5 px-2 py-1.5 rounded-lg text-[11px] text-zinc-400 hover:text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition-colors whitespace-nowrap shrink-0"
               title="Quick Jump (Ctrl+K)"
             >
-              <Search className="w-3.5 h-3.5 text-zinc-500" />
-              <span className="hidden xl:inline text-zinc-400">Search Views</span>
+              <Search className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+              <span className="hidden 2xl:inline text-zinc-400">Search Views</span>
               <kbd className="hidden xl:inline px-1.5 py-0.2 bg-zinc-800 border border-zinc-700 rounded text-[9px] text-zinc-400 font-mono">
                 Ctrl+K
               </kbd>
@@ -450,15 +450,15 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Right Controls: Market Feed Time, 24/7 Loop, Sound, Telegram, Mobile Menu */}
-          <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex items-center space-x-1.5 shrink-0">
             {/* Market Data Time & Refresh */}
-            <div className="hidden sm:flex items-center space-x-2 bg-zinc-900/90 px-2.5 py-1 rounded-lg border border-zinc-800 text-xs font-mono text-zinc-300">
+            <div className="hidden sm:flex items-center space-x-1.5 bg-zinc-900/90 px-2 py-1 rounded-lg border border-zinc-800 text-xs font-mono text-zinc-300">
               <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
               <div className="flex flex-col text-[10px] leading-tight">
                 <span className="text-zinc-500 uppercase font-sans text-[8px] font-bold tracking-wider">
                   Data Feed
                 </span>
-                <span className="font-bold text-emerald-400 font-mono">
+                <span className="font-bold text-emerald-400 font-mono whitespace-nowrap">
                   {lastRefreshedAt
                     ? lastRefreshedAt.toLocaleTimeString([], {
                         hour: '2-digit',
@@ -472,7 +472,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   onClick={onRefreshMarketData}
                   disabled={isRefreshingData}
-                  className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition disabled:opacity-50 ml-1 border border-zinc-700/60"
+                  className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition disabled:opacity-50 ml-0.5 border border-zinc-700/60"
                   title="Manually refresh live market feeds"
                 >
                   <RefreshCw
@@ -485,7 +485,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* 24/7 Loop Toggle */}
             <button
               onClick={() => setIsAutoScanning(!isAutoScanning)}
-              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all whitespace-nowrap ${
                 isAutoScanning
                   ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/60 shadow-sm shadow-emerald-900/20'
                   : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:bg-zinc-800'
@@ -503,7 +503,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ></span>
               </span>
               <span className="hidden md:inline">
-                {isAutoScanning ? '24/7 Loop: ON' : '24/7: PAUSED'}
+                {isAutoScanning ? '24/7: ON' : '24/7: PAUSED'}
               </span>
               {isAutoScanning ? <Pause className="w-3 h-3 ml-0.5" /> : <Play className="w-3 h-3 ml-0.5" />}
             </button>
@@ -640,7 +640,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white tracking-tight">
-                    Complete Trading System Modules (17)
+                    Complete Trading System Modules ({ALL_TABS.length})
                   </h3>
                   <p className="text-xs text-zinc-400">
                     Direct institutional access to all technical scanners, market analytics, quant tools, and autotrading bots

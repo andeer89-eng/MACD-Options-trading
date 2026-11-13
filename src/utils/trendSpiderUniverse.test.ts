@@ -1,43 +1,53 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
-  getUniverseCandles,
-  getUniverseStageSummary,
-  getAllSp500StageSummaries,
-  runStanWeinsteinBacktest,
+  computeStageSummaryFromCandles,
+  runStanWeinsteinBacktestFromCandles,
 } from './trendSpiderUniverse';
+import { CandleData } from './trendSpiderEngine';
 
-test('getUniverseCandles returns 52 weekly candles for both presets and arbitrary tickers', () => {
-  // Preset
-  const nbisCandles = getUniverseCandles('NBIS');
-  assert.ok(nbisCandles.length >= 50, 'NBIS should have 52 candles');
+function makeWeeklyCandles(direction: 'UP' | 'DOWN', weeks: number = 52): CandleData[] {
+  const start = 1700000000;
+  let price = direction === 'UP' ? 100 : 180;
+  const out: CandleData[] = [];
+  for (let i = 0; i < weeks; i++) {
+    const delta = direction === 'UP' ? 1.4 : -2.1;
+    const open = price;
+    price = Math.max(10, price + delta + Math.sin(i * 0.4) * 0.5);
+    out.push({
+      time: new Date((start + i * 7 * 86400) * 1000).toISOString().split('T')[0],
+      open: Number(open.toFixed(2)),
+      high: Number((Math.max(open, price) + 1.5).toFixed(2)),
+      low: Number((Math.min(open, price) - 1.5).toFixed(2)),
+      close: Number(price.toFixed(2)),
+      volume: 12_000_000 + (i % 4) * 1_000_000,
+    });
+  }
+  return out;
+}
 
-  // Arbitrary custom ticker
-  const pltrCandles = getUniverseCandles('PLTR');
-  assert.strictEqual(pltrCandles.length, 52, 'PLTR should have 52 candles');
-
-  const randomCandles = getUniverseCandles('RANDOM_CUSTOM_TICKER_XYZ');
-  assert.strictEqual(randomCandles.length, 52, 'Custom ticker should have 52 candles');
+test('computeStageSummaryFromCandles returns null if candles insufficient', () => {
+  assert.strictEqual(computeStageSummaryFromCandles('INTC', []), null);
 });
 
-test('getUniverseStageSummary accurately computes stage for known breakdown ticker INTC', () => {
-  const intcSummary = getUniverseStageSummary('INTC');
+test('computeStageSummaryFromCandles accurately detects Stage 2 and Stage 4 from weekly candles', () => {
+  const bull = makeWeeklyCandles('UP', 52);
+  const nvdaSummary = computeStageSummaryFromCandles('NVDA', bull);
+  assert.ok(nvdaSummary);
+  assert.strictEqual(nvdaSummary.symbol, 'NVDA');
+  assert.strictEqual(nvdaSummary.stage.currentStage, 'STAGE_2_ADVANCING');
+
+  const bear = makeWeeklyCandles('DOWN', 52);
+  const intcSummary = computeStageSummaryFromCandles('INTC', bear, bull);
+  assert.ok(intcSummary);
   assert.strictEqual(intcSummary.symbol, 'INTC');
   assert.strictEqual(intcSummary.stage.currentStage, 'STAGE_4_DECLINING');
-  assert.ok(intcSummary.stage.maSlope < 0, 'INTC slope should be negative');
+  assert.ok(intcSummary.stage.maSlope < 0);
 });
 
-test('getAllSp500StageSummaries scans all 503 S&P 500 constituents', () => {
-  const allSummaries = getAllSp500StageSummaries();
-  assert.strictEqual(allSummaries.length, 503, 'Should scan all 503 S&P 500 stocks');
-  const stage2Count = allSummaries.filter((s) => s.stage.currentStage === 'STAGE_2_ADVANCING').length;
-  const stage4Count = allSummaries.filter((s) => s.stage.currentStage === 'STAGE_4_DECLINING').length;
-  assert.ok(stage2Count > 0, 'Universe should contain Stage 2 stocks');
-  assert.ok(stage4Count > 0, 'Universe should contain Stage 4 stocks');
-});
-
-test('runStanWeinsteinBacktest simulates trading performance and calculates capital preserved', () => {
-  const result = runStanWeinsteinBacktest('NVDA', 10000);
+test('runStanWeinsteinBacktestFromCandles simulates performance from real weekly series', () => {
+  const bull = makeWeeklyCandles('UP', 60);
+  const result = runStanWeinsteinBacktestFromCandles('NVDA', bull, 10000);
   assert.strictEqual(result.startingCapital, 10000);
   assert.ok(result.finalCapital > 0);
   assert.ok(result.equityCurve.length > 0);

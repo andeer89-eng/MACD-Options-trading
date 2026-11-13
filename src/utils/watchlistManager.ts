@@ -303,12 +303,12 @@ export function importWatchlistsFromJSON(
     existingWatchlists.forEach((wl) => currentMap.set(wl.id, wl));
 
     const now = new Date().toISOString();
-    importedLists.forEach((imp) => {
+    importedLists.forEach((imp, impIdx) => {
       if (imp.name && Array.isArray(imp.symbols)) {
         const cleanSymbols = Array.from(
           new Set(imp.symbols.map((s: string) => String(s).trim().toUpperCase()).filter(Boolean))
         );
-        const id = imp.id && !imp.id.startsWith('wl-sp500-') ? imp.id : `wl-imported-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const id = imp.id && !imp.id.startsWith('wl-sp500-') ? imp.id : `wl-imported-${Date.now()}-${impIdx + 1}`;
 
         currentMap.set(id, {
           id,

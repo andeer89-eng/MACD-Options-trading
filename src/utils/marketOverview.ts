@@ -86,6 +86,7 @@ export function calculateMarketOverview(
 
   let bullishSignalsCount = 0;
   let bearishSignalsCount = 0;
+  let signalTickersCount = 0;
   let totalVolatilitySum = 0;
   let validVolatilityCount = 0;
   let stagnantAssetsCount = 0;
@@ -95,32 +96,33 @@ export function calculateMarketOverview(
 
   for (const item of items) {
     const setups = item.setups || [];
-    let hasBull = false;
-    let hasBear = false;
+    let hasSignal = false;
     let primarySetupType: string | undefined = undefined;
 
     for (const s of setups) {
       if (s.type.includes('BULL')) {
         bullishSignalsCount++;
-        hasBull = true;
+        hasSignal = true;
         if (!primarySetupType) primarySetupType = s.type;
       } else if (s.type.includes('BEAR')) {
         bearishSignalsCount++;
-        hasBear = true;
+        hasSignal = true;
         if (!primarySetupType) primarySetupType = s.type;
       }
     }
+    if (hasSignal) signalTickersCount++;
 
-    // Volatility
-    const atrPct = item.atrPercent ?? 1.5;
-    totalVolatilitySum += atrPct;
-    validVolatilityCount++;
-
-    if (item.isStagnant || atrPct < 1.0) {
+    // Only average genuinely computed ATR volatility
+    if (typeof item.atrPercent === 'number' && Number.isFinite(item.atrPercent) && item.atrPercent >= 0) {
+      totalVolatilitySum += item.atrPercent;
+      validVolatilityCount++;
+      if (item.isStagnant || item.atrPercent < 1.0) {
+        stagnantAssetsCount++;
+      }
+    } else if (item.isStagnant) {
       stagnantAssetsCount++;
     }
 
-    // Sector mapping
     const sec = item.sector || 'ETFs & Index';
     if (!sectorMap[sec]) {
       sectorMap[sec] = { count: 0, totalChange: 0 };
@@ -128,30 +130,23 @@ export function calculateMarketOverview(
     sectorMap[sec].count += 1;
     sectorMap[sec].totalChange += item.changePercent || 0;
 
-    // RSI
-    let rsi = item.rsi;
-    if (typeof rsi !== 'number' || isNaN(rsi)) {
-      // Estimate fallback from change percent if missing
-      rsi = Number((50 + (item.changePercent || 0) * 3).toFixed(1));
-      if (hasBull) rsi = Math.min(38, rsi);
-      if (hasBear) rsi = Math.max(68, rsi);
-      rsi = Math.max(15, Math.min(88, rsi));
+    // Only include assets with real calculated RSI in RSI rankings
+    if (typeof item.rsi === 'number' && !Number.isNaN(item.rsi)) {
+      processedRanked.push({
+        symbol: item.symbol,
+        companyName: item.companyName || item.symbol,
+        sector: sec,
+        rsi: Number(item.rsi.toFixed(1)),
+        changePercent: item.changePercent || 0,
+        currentPrice: item.currentPrice || 0,
+        signalType: primarySetupType,
+        category: classifyRsiCategory(item.rsi),
+      });
     }
-
-    processedRanked.push({
-      symbol: item.symbol,
-      companyName: item.companyName || item.symbol,
-      sector: sec,
-      rsi: Number(rsi.toFixed(1)),
-      changePercent: item.changePercent || 0,
-      currentPrice: item.currentPrice || 0,
-      signalType: primarySetupType,
-      category: classifyRsiCategory(rsi),
-    });
   }
 
   const totalSignals = bullishSignalsCount + bearishSignalsCount;
-  const neutralCount = items.length - (bullishSignalsCount > 0 ? 1 : 0);
+  const neutralCount = Math.max(0, items.length - signalTickersCount);
 
   const bullishRatioPercent =
     totalSignals > 0
@@ -175,15 +170,12 @@ export function calculateMarketOverview(
   if (averageVolatilityAtrPct >= 2.5) volatilityRegime = 'High Volatility';
   else if (averageVolatilityAtrPct < 1.2) volatilityRegime = 'Low / Compressed';
 
-  // Sort by RSI descending for top strength
   const sortedByRsiDesc = [...processedRanked].sort((a, b) => b.rsi - a.rsi);
   const topByRsiStrength = sortedByRsiDesc.slice(0, 5);
 
-  // Sort by RSI ascending for oversold demand candidates
   const sortedByRsiAsc = [...processedRanked].sort((a, b) => a.rsi - b.rsi);
   const oversoldOpportunities = sortedByRsiAsc.filter((item) => item.rsi <= 40).slice(0, 5);
 
-  // Sector breakdown list
   const sectorDistribution: SectorBreakdownItem[] = Object.entries(sectorMap).map(
     ([sector, data]) => ({
       sector,

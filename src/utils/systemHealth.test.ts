@@ -7,7 +7,7 @@ import {
   calculateThroughput,
   calculateQuotaUsage,
   evaluateOverallSystemStatus,
-  getBaselineHealthData,
+  createEmptyHealthData,
 } from './systemHealth';
 
 test('calculateLatencyRating classifies performance tiers accurately', () => {
@@ -40,9 +40,7 @@ test('formatUptime correctly converts raw seconds to formatted string', () => {
 });
 
 test('calculateThroughput computes tickers per second accurately', () => {
-  // 500 tickers in 10,000 ms (10 seconds) = 50.0 tickers/sec
   assert.equal(calculateThroughput(500, 10000), 50.0);
-  // Edge cases
   assert.equal(calculateThroughput(0, 5000), 0);
   assert.equal(calculateThroughput(100, 0), 0);
 });
@@ -63,12 +61,12 @@ test('evaluateOverallSystemStatus determines system grade based on composite inp
   assert.equal(evaluateOverallSystemStatus('EXCELLENT', 'HEALTHY', 96), 'WARNING');
 });
 
-test('getBaselineHealthData provides valid initial health state', () => {
-  const data = getBaselineHealthData();
-  assert.ok(data.uptimeSeconds > 0);
-  assert.ok(data.scanLatencyMs > 0);
-  assert.ok(data.tickersPerSecond > 0);
-  assert.ok(data.memory.heapTotalMb > 0);
-  assert.ok(data.apiQuota.maxHourlyQuota === 2000);
+test('createEmptyHealthData initializes clean unpopulated telemetry without fake values', () => {
+  const data = createEmptyHealthData();
+  assert.equal(data.uptimeSeconds, 0);
+  assert.equal(data.scanLatencyMs, 0);
+  assert.equal(data.latencyHistory.length, 0);
+  assert.equal(data.apiQuota.maxHourlyQuota, 2000);
+  assert.equal(data.apiQuota.usedRequests, 0);
   assert.ok(data.secCompliance.isCompliant);
 });

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Compass,
   AlertTriangle,
@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   Activity,
   BookOpen,
+  RefreshCw,
 } from 'lucide-react';
 import {
   calculateStageAnalysis,
@@ -38,20 +39,41 @@ import {
   CandleData,
   MarketStage,
 } from '../utils/trendSpiderEngine';
+import { TRENDSPIDER_SPOTLIGHT_TICKERS } from '../data/trendSpiderPresets';
 import {
-  TRENDSPIDER_STOCKS_PRESET,
-  SPY_WEEKLY_PRESET,
-} from '../data/trendSpiderPresets';
-import {
-  getUniverseCandles,
-  getUniverseStageSummary,
-  getAllSp500StageSummaries,
-  runStanWeinsteinBacktest,
+  computeStageSummaryFromCandles,
+  runStanWeinsteinBacktestFromCandles,
   UniverseStageItem,
   StageBacktestResult,
 } from '../utils/trendSpiderUniverse';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
 import { BUILT_IN_INDICATORS } from '../utils/indicatorLibrary';
+
+function toWeeklyCandleData(raw: any[]): CandleData[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.close === 'number' && Number.isFinite(c.close) && c.close > 0)
+    .map((c) => ({
+      time: c.dateStr || (c.timestamp ? new Date(c.timestamp).toISOString().split('T')[0] : ''),
+      open: Number(c.open ?? c.close),
+      high: Number(c.high ?? c.close),
+      low: Number(c.low ?? c.close),
+      close: Number(c.close),
+      volume: Number(c.volume) || 0,
+    }));
+}
+
+function buildEquityPolylinePoints(values: number[], minVal: number, maxVal: number): string {
+  if (values.length < 2) return '';
+  const span = Math.max(0.01, maxVal - minVal);
+  return values
+    .map((v, idx) => {
+      const x = (idx / (values.length - 1)) * 100;
+      const y = 46 - ((v - minVal) / span) * 42;
+      return `${x.toFixed(1)},${Math.max(2, Math.min(48, y)).toFixed(1)}`;
+    })
+    .join(' ');
+}
 
 interface TrendSpiderSuiteProps {
   onSelectSymbolForChart?: (symbol: string) => void;
@@ -85,15 +107,138 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
   const [backtestCapital, setBacktestCapital] = useState<number>(10000);
   const [backtestYears, setBacktestYears] = useState<1 | 2 | 3 | 5>(3);
 
-  // Generate or retrieve candles for ANY selected symbol
-  const activeCandles: CandleData[] = useMemo(() => {
-    return getUniverseCandles(selectedSymbol);
-  }, [selectedSymbol]);
+  // Live Weekly OHLCV State
+  const [activeCandles, setActiveCandles] = useState<CandleData[]>([]);
+  const [spyBenchmarkCandles, setSpyBenchmarkCandles] = useState<CandleData[]>([]);
+  const [candlesLoading, setCandlesLoading] = useState<boolean>(true);
+  const [candlesError, setCandlesError] = useState<string | null>(null);
+
+  // Live S&P 500 Stage Scanner & Spotlight Summaries
+  const [allSp500Summaries, setAllSp500Summaries] = useState<UniverseStageItem[]>([]);
+  const [stageScanLoading, setStageScanLoading] = useState<boolean>(true);
+  const [spotlightSummaries, setSpotlightSummaries] = useState<UniverseStageItem[]>([]);
+
+  // Fetch real weekly OHLCV candles for selectedSymbol and SPY benchmark
+  useEffect(() => {
+    let cancelled = false;
+    const loadCandles = async () => {
+      setCandlesLoading(true);
+      setCandlesError(null);
+      try {
+        const rangeStr = `${backtestYears}y`;
+        const [symRes, spyRes] = await Promise.all([
+          fetch(`/api/candles?symbol=${encodeURIComponent(selectedSymbol)}&timeframe=1wk&range=${rangeStr}`),
+          fetch(`/api/candles?symbol=SPY&timeframe=1wk&range=${rangeStr}`),
+        ]);
+
+        if (!symRes.ok) {
+          throw new Error(`Unable to fetch live weekly candles for ${selectedSymbol}`);
+        }
+        const symJson = await symRes.json();
+        const mappedSym = toWeeklyCandleData(symJson.candles || []);
+
+        let mappedSpy: CandleData[] = [];
+        if (spyRes.ok) {
+          const spyJson = await spyRes.json();
+          mappedSpy = toWeeklyCandleData(spyJson.candles || []);
+        }
+
+        if (!cancelled) {
+          setActiveCandles(mappedSym);
+          setSpyBenchmarkCandles(mappedSpy);
+          if (mappedSym.length < 30) {
+            setCandlesError(
+              `Live feed returned ${mappedSym.length} weekly bars for ${selectedSymbol} (need >= 30 for 30w SMA calculation).`
+            );
+          }
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setActiveCandles([]);
+          setCandlesError(err?.message || `Failed to load live weekly OHLCV for ${selectedSymbol}.`);
+        }
+      } finally {
+        if (!cancelled) setCandlesLoading(false);
+      }
+    };
+
+    loadCandles();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSymbol, backtestYears]);
+
+  // Fetch live S&P 500 4-Stage Scan + Spotlight Tickers
+  const fetchStageUniverse = useCallback(async (forceRefresh = false) => {
+    setStageScanLoading(true);
+    try {
+      const scanRes = await fetch(`/api/stage-scan${forceRefresh ? '?refresh=true' : ''}`);
+      let stageList: UniverseStageItem[] = [];
+      if (scanRes.ok) {
+        const scanJson = await scanRes.json();
+        stageList = Array.isArray(scanJson.stages) ? scanJson.stages : [];
+        setAllSp500Summaries(stageList);
+      }
+
+      // Build spotlight summaries from live stage scan or direct weekly candle fetch
+      const bySym = new Map(stageList.map((item) => [item.symbol.toUpperCase(), item]));
+      const missingSpot = TRENDSPIDER_SPOTLIGHT_TICKERS.filter((t) => !bySym.has(t.symbol));
+      let spyRef: CandleData[] = [];
+      if (missingSpot.length > 0) {
+        try {
+          const spyRes = await fetch('/api/candles?symbol=SPY&timeframe=1wk&range=2y');
+          if (spyRes.ok) {
+            const spyJson = await spyRes.json();
+            spyRef = toWeeklyCandleData(spyJson.candles || []);
+          }
+        } catch {
+          // Optional benchmark
+        }
+      }
+
+      const fetchedMissing = await Promise.all(
+        missingSpot.map(async (meta) => {
+          try {
+            const res = await fetch(`/api/candles?symbol=${encodeURIComponent(meta.symbol)}&timeframe=1wk&range=2y`);
+            if (!res.ok) return null;
+            const json = await res.json();
+            return computeStageSummaryFromCandles(meta.symbol, toWeeklyCandleData(json.candles || []), spyRef);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const resolvedSpotlight: UniverseStageItem[] = [];
+      for (const meta of TRENDSPIDER_SPOTLIGHT_TICKERS) {
+        const fromScan = bySym.get(meta.symbol);
+        if (fromScan) {
+          resolvedSpotlight.push(fromScan);
+        } else {
+          const matched = fetchedMissing.find((m) => m && m.symbol === meta.symbol);
+          if (matched) resolvedSpotlight.push(matched);
+        }
+      }
+      setSpotlightSummaries(resolvedSpotlight);
+    } catch (err) {
+      console.error('[TrendSpiderSuite] Stage scan load error:', err);
+    } finally {
+      setStageScanLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStageUniverse(false);
+  }, [fetchStageUniverse]);
 
   // Unified TrendSpider Report for active symbol
   const activeReport = useMemo(() => {
-    return generateTrendSpiderReport(selectedSymbol, activeCandles, SPY_WEEKLY_PRESET);
-  }, [selectedSymbol, activeCandles]);
+    return generateTrendSpiderReport(
+      selectedSymbol,
+      activeCandles,
+      spyBenchmarkCandles.length > 0 ? spyBenchmarkCandles : undefined
+    );
+  }, [selectedSymbol, activeCandles, spyBenchmarkCandles]);
 
   // Auto-AVWAP for active symbol with selected anchor
   const activeAvwap = useMemo(() => {
@@ -102,13 +247,27 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
 
   // Backtest result for active symbol
   const activeBacktest: StageBacktestResult = useMemo(() => {
-    return runStanWeinsteinBacktest(selectedSymbol, backtestCapital, backtestYears);
-  }, [selectedSymbol, backtestCapital, backtestYears]);
+    return runStanWeinsteinBacktestFromCandles(
+      selectedSymbol,
+      activeCandles,
+      backtestCapital,
+      spyBenchmarkCandles.length > 0 ? spyBenchmarkCandles : undefined
+    );
+  }, [selectedSymbol, activeCandles, backtestCapital, spyBenchmarkCandles]);
 
-  // Pre-calculated S&P 500 Stage Summaries (all 503 constituents)
-  const allSp500Summaries: UniverseStageItem[] = useMemo(() => {
-    return getAllSp500StageSummaries();
-  }, []);
+  const equitySvg = useMemo(() => {
+    const curve = activeBacktest.equityCurve || [];
+    if (curve.length < 2) return null;
+    const stratVals = curve.map((p) => p.strategyEquity);
+    const benchVals = curve.map((p) => p.benchmarkEquity);
+    const allVals = [...stratVals, ...benchVals];
+    const minVal = Math.min(...allVals);
+    const maxVal = Math.max(...allVals);
+    return {
+      strategyPoints: buildEquityPolylinePoints(stratVals, minVal, maxVal),
+      benchmarkPoints: buildEquityPolylinePoints(benchVals, minVal, maxVal),
+    };
+  }, [activeBacktest.equityCurve]);
 
   // Filtered universe for the Full S&P 500 Stage Scanner tab
   const [sp500TableSearch, setSp500TableSearch] = useState<string>('');
@@ -138,11 +297,11 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
     ).slice(0, 8);
   }, [symbolSearchQuery]);
 
-  // Random Ticker Picker
+  // Deterministic S&P 500 Universe Cycler (zero Math.random())
   const handlePickRandomTicker = () => {
-    const randomIndex = Math.floor(Math.random() * SP500_UNIVERSE.length);
-    const randomPick = SP500_UNIVERSE[randomIndex].symbol;
-    setSelectedSymbol(randomPick);
+    const currentIdx = SP500_UNIVERSE.findIndex((c) => c.symbol === selectedSymbol);
+    const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % SP500_UNIVERSE.length : 0;
+    setSelectedSymbol(SP500_UNIVERSE[nextIdx].symbol);
     setSymbolSearchQuery('');
   };
 
@@ -161,11 +320,6 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
     setCopiedCodeId(id);
     setTimeout(() => setCopiedCodeId(null), 2200);
   };
-
-  // Breakdown alert stocks matching screenshot: NBIS, INTC, SNDK, GOOG
-  const officialAlertStocks = useMemo(() => {
-    return ['NBIS', 'INTC', 'SNDK', 'GOOG'].map((sym) => getUniverseStageSummary(sym));
-  }, []);
 
   // Python REA code string
   const pythonReaCode = useMemo(() => {
@@ -274,53 +428,74 @@ if __name__ == "__main__":
           </div>
         </div>
 
-        {/* Breakdown Alert Callout Matching User's Screenshot: Welcome to Stage 4 🩸 */}
+        {/* Live Spotlight Watchlist (#NBIS #INTC #SNDK #GOOG) */}
         <div className="mt-5 pt-4 border-t border-zinc-800/80 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
           <div className="md:col-span-4 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0">
-              <span className="text-xl">🩸</span>
+            <div className="h-10 w-10 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
+              <Activity className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wider font-bold text-rose-400">
-                TrendSpider Official Alert Match
+              <div className="text-xs uppercase tracking-wider font-bold text-zinc-400">
+                Live Weekly Stage Spotlight
               </div>
               <div className="text-sm font-semibold text-zinc-100">
-                "Welcome to Stage 4 🩸" (#NBIS #INTC #SNDK #GOOG)
+                Tracked Tickers (#NBIS #INTC #SNDK #GOOG)
               </div>
             </div>
           </div>
 
           <div className="md:col-span-8 flex items-center gap-2 overflow-x-auto pb-1">
-            {officialAlertStocks.map((item) => (
-              <button
-                key={item.symbol}
-                onClick={() => {
-                  setSelectedSymbol(item.symbol);
-                  setActiveSubTab('terminal');
-                }}
-                className={`px-3 py-1.5 rounded-lg border text-left transition-all shrink-0 ${
-                  selectedSymbol === item.symbol
-                    ? 'bg-rose-500/20 border-rose-500/60 shadow-lg shadow-rose-950/40'
-                    : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-xs text-zinc-100">{item.symbol}</span>
-                  <span className="text-[10px] font-mono font-semibold text-rose-400">
-                    Stage 4 🩸
-                  </span>
-                </div>
-                <div className="text-[11px] text-zinc-400 flex items-center gap-2 mt-0.5">
-                  <span>${item.currentPrice.toFixed(2)}</span>
-                  <span className="text-rose-400 font-mono text-[10px]">
-                    {item.stage.distanceFromMaPercent}% vs 30w SMA
-                  </span>
-                </div>
-              </button>
-            ))}
+            {spotlightSummaries.length === 0 ? (
+              <span className="text-xs font-mono text-zinc-500">
+                {stageScanLoading ? 'Loading live weekly stages...' : 'Select a ticker below to inspect live weekly stage.'}
+              </span>
+            ) : (
+              spotlightSummaries.map((item) => (
+                <button
+                  key={item.symbol}
+                  onClick={() => {
+                    setSelectedSymbol(item.symbol);
+                    setActiveSubTab('terminal');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg border text-left transition-all shrink-0 ${
+                    selectedSymbol === item.symbol
+                      ? 'bg-emerald-500/15 border-emerald-500/60 shadow-lg'
+                      : 'bg-zinc-900/80 border-zinc-800 hover:border-zinc-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-xs text-zinc-100">{item.symbol}</span>
+                    <span className={`text-[10px] font-mono font-semibold ${item.stage.stageBadgeColor}`}>
+                      {item.stage.stageNumber === 4 ? 'Stage 4 🩸' : item.stage.stageNumber === 2 ? 'Stage 2 🚀' : item.stage.stageNumber === 3 ? 'Stage 3 ⚠️' : 'Stage 1'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-zinc-400 flex items-center gap-2 mt-0.5">
+                    <span>${item.currentPrice.toFixed(2)}</span>
+                    <span className={`font-mono text-[10px] ${item.stage.distanceFromMaPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {item.stage.distanceFromMaPercent >= 0 ? '+' : ''}{item.stage.distanceFromMaPercent}% vs 30w SMA
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </div>
       </div>
+
+      {candlesError && (
+        <div role="alert" className="bg-amber-950/60 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-xl flex items-center justify-between text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{candlesError}</span>
+          </div>
+          <button
+            onClick={() => setCandlesError(null)}
+            className="text-amber-400 hover:text-white text-xs"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Universal Search & Quick-Select Control Bar */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-sm space-y-3">
@@ -330,24 +505,32 @@ if __name__ == "__main__":
             <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-700">
               <span className="text-xs text-zinc-500 font-mono">Active Ticker:</span>
               <span className="text-base font-black text-white font-mono">{selectedSymbol}</span>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activeReport.stageAnalysis.stageBadgeBg} ${activeReport.stageAnalysis.stageBadgeColor} ${activeReport.stageAnalysis.stageBadgeBorder}`}
-              >
-                {activeReport.stageAnalysis.stageName}
-              </span>
-              <span className="text-xs font-mono font-bold text-zinc-300">
-                ${activeReport.currentPrice.toFixed(2)}
-              </span>
+              {candlesLoading ? (
+                <span className="text-[11px] font-mono text-zinc-400 flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Loading live weekly OHLCV...
+                </span>
+              ) : (
+                <>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${activeReport.stageAnalysis.stageBadgeBg} ${activeReport.stageAnalysis.stageBadgeColor} ${activeReport.stageAnalysis.stageBadgeBorder}`}
+                  >
+                    {activeReport.stageAnalysis.stageName}
+                  </span>
+                  <span className="text-xs font-mono font-bold text-zinc-300">
+                    ${activeReport.currentPrice.toFixed(2)}
+                  </span>
+                </>
+              )}
             </div>
 
-            {/* Random Ticker Picker Button */}
+            {/* Next S&P 500 Ticker Cycler */}
             <button
               onClick={handlePickRandomTicker}
               className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
-              title="Pick a random S&P 500 company to analyze"
+              title="Cycle to next S&P 500 constituent"
             >
               <Shuffle className="w-3.5 h-3.5 text-cyan-400" />
-              Random Stock 🎲
+              Next S&amp;P 500 Stock
             </button>
           </div>
 
@@ -903,8 +1086,16 @@ if __name__ == "__main__":
                 </button>
               </div>
 
-              <div className="text-xs text-zinc-500 font-mono">
-                Showing {filteredSp500Summaries.length} of 503 constituents
+              <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono">
+                <button
+                  onClick={() => fetchStageUniverse(true)}
+                  disabled={stageScanLoading}
+                  className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${stageScanLoading ? 'animate-spin' : ''}`} />
+                  <span>{stageScanLoading ? 'Scanning...' : 'Refresh Live Scan'}</span>
+                </button>
+                <span>Showing {filteredSp500Summaries.length} of {allSp500Summaries.length} live constituents</span>
               </div>
             </div>
           </div>
@@ -927,6 +1118,20 @@ if __name__ == "__main__":
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60 font-mono">
+                  {stageScanLoading && filteredSp500Summaries.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-10 text-center text-zinc-400">
+                        Fetching 2-year weekly Yahoo Finance series for S&amp;P 500 constituents...
+                      </td>
+                    </tr>
+                  )}
+                  {!stageScanLoading && filteredSp500Summaries.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-10 text-center text-zinc-500">
+                        No S&amp;P 500 constituents matched filter (or live stage feed unavailable).
+                      </td>
+                    </tr>
+                  )}
                   {filteredSp500Summaries.map((item) => {
                     const st = item.stage;
                     const isSelected = selectedSymbol === item.symbol;
@@ -1120,39 +1325,43 @@ if __name__ == "__main__":
               </div>
             </div>
 
-            {/* Visual Equity Curve Simulation */}
+            {/* Visual Equity Curve Computed from Real Weekly Candles */}
             <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 space-y-2">
               <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-zinc-400 font-bold">Simulated Equity Curve Progression</span>
+                <span className="text-zinc-400 font-bold">Real Historical Equity Curve Progression ({selectedSymbol})</span>
                 <div className="flex items-center gap-3">
                   <span className="flex items-center gap-1 text-emerald-400 font-semibold">
                     <span className="w-2.5 h-0.5 bg-emerald-400 inline-block" /> Stage 2 Strategy
                   </span>
                   <span className="flex items-center gap-1 text-zinc-500">
-                    <span className="w-2.5 h-0.5 bg-zinc-500 inline-block" /> Benchmark Buy &amp; Hold
+                    <span className="w-2.5 h-0.5 bg-zinc-500 inline-block" /> Benchmark ({spyBenchmarkCandles.length > 0 ? 'SPY' : selectedSymbol}) Buy &amp; Hold
                   </span>
                 </div>
               </div>
 
-              {/* SVG Sparkline Curve */}
-              <div className="relative h-44 w-full rounded-lg bg-zinc-900/60 border border-zinc-800 p-2 overflow-hidden flex items-end">
-                <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 50">
-                  {/* Benchmark Line */}
-                  <polyline
-                    fill="none"
-                    stroke="#52525b"
-                    strokeWidth="1.2"
-                    strokeDasharray="2 2"
-                    points="0,35 25,32 50,28 75,38 100,42"
-                  />
-                  {/* Strategy Curve */}
-                  <polyline
-                    fill="none"
-                    stroke="#10b981"
-                    strokeWidth="2.2"
-                    points="0,35 20,30 40,24 60,18 80,14 100,8"
-                  />
-                </svg>
+              {/* Dynamic SVG Curve */}
+              <div className="relative h-44 w-full rounded-lg bg-zinc-900/60 border border-zinc-800 p-2 overflow-hidden flex items-center justify-center">
+                {equitySvg ? (
+                  <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 50">
+                    <polyline
+                      fill="none"
+                      stroke="#52525b"
+                      strokeWidth="1.2"
+                      strokeDasharray="2 2"
+                      points={equitySvg.benchmarkPoints}
+                    />
+                    <polyline
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="2.2"
+                      points={equitySvg.strategyPoints}
+                    />
+                  </svg>
+                ) : (
+                  <span className="text-xs font-mono text-zinc-500">
+                    {candlesLoading ? 'Computing equity curve from live weekly bars...' : 'Insufficient historical weekly bars (>35 required) for equity curve.'}
+                  </span>
+                )}
               </div>
             </div>
 

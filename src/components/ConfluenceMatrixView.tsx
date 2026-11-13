@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Sparkles,
   ShieldCheck,
@@ -28,13 +28,31 @@ import {
   Candidate360Confluence,
   AngleEvaluation,
 } from '../utils/confluenceScoringEngine';
+import { Candle } from '../utils/trullasStrategy';
 import { SP500_TOP_50 } from '../data/sp500Universe';
+import { TickerOptionsSummary } from '../utils/cboeOptionsEngine';
+import { GicsSectorPerformance } from '../utils/sectorMetrics';
 
 function getCurrencyPrefix(currency?: string, symbol?: string): string {
   if (currency === 'SEK' || symbol?.endsWith('.ST')) return 'SEK ';
   if (currency === 'EUR' || symbol?.endsWith('.DE') || symbol?.endsWith('.PA') || symbol?.endsWith('.AS') || symbol?.endsWith('.HE')) return '€';
   if (currency === 'GBP' || symbol?.endsWith('.L')) return '£';
   return '$';
+}
+
+function normalizeCandles(raw: any[]): Candle[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.close === 'number' && Number.isFinite(c.close) && c.close > 0)
+    .map((c) => ({
+      timestamp: Number(c.timestamp) || (c.dateStr ? Date.parse(c.dateStr) : Date.now()),
+      dateStr: c.dateStr || (c.timestamp ? new Date(c.timestamp).toISOString().split('T')[0] : undefined),
+      open: Number(c.open ?? c.close),
+      high: Number(c.high ?? c.close),
+      low: Number(c.low ?? c.close),
+      close: Number(c.close),
+      volume: Number(c.volume) || 0,
+    }));
 }
 
 interface ConfluenceMatrixViewProps {
@@ -46,17 +64,17 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   onSelectSymbolForChart,
   scannerResults = [],
 }) => {
-  // Universe symbols to analyze
+  // Universe symbols to analyze (prioritize live scanner detections first)
   const candidateSymbols = useMemo(() => {
     const scannerSymbols = scannerResults.map((r) => r.symbol || r.setup?.symbol).filter(Boolean);
-    const combined = Array.from(new Set([...scannerSymbols, ...SP500_TOP_50.slice(0, 24)]));
-    return combined.slice(0, 28);
+    const combined = Array.from(new Set([...scannerSymbols, ...SP500_TOP_50.slice(0, 12)]));
+    return combined.slice(0, 14);
   }, [scannerResults]);
 
-  // Evaluated candidates
-  const [candidates, setCandidates] = useState<Candidate360Confluence[]>(() =>
-    rankCandidatesByConfluence(candidateSymbols)
-  );
+  // Evaluated candidates (populated strictly from real OHLCV candles)
+  const [candidates, setCandidates] = useState<Candidate360Confluence[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [sectorsMap, setSectorsMap] = useState<Map<string, GicsSectorPerformance>>(new Map());
 
   // Search & Auditing State
   const [searchQuery, setSearchQuery] = useState('');
@@ -65,13 +83,112 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate360Confluence | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
 
+  const evaluateAllCandidates = useCallback(async (symbolsToEval: string[]) => {
+    if (symbolsToEval.length === 0) return;
+    setIsAuditing(true);
+    setErrorMessage(null);
+
+    try {
+      const scanBySymbol = new Map<string, any>();
+      for (const r of scannerResults) {
+        const sym = (r.symbol || r.setup?.symbol || '').toUpperCase();
+        if (sym) scanBySymbol.set(sym, r);
+      }
+
+      // Fetch sector performance once for real Sector Alpha weighting
+      let localSectorsMap = new Map<string, GicsSectorPerformance>();
+      try {
+        const secRes = await fetch('/api/sectors');
+        if (secRes.ok) {
+          const secData = await secRes.json();
+          if (Array.isArray(secData.sectors)) {
+            for (const s of secData.sectors) {
+              localSectorsMap.set(s.name, s);
+            }
+            setSectorsMap(localSectorsMap);
+          }
+        }
+      } catch {
+        // Optional macro benchmark
+      }
+
+      // Reuse scanner candles when available, otherwise fetch live 1d/6mo candles
+      const entries: Array<{
+        symbol: string;
+        candles: Candle[];
+        direction?: 'BULLISH' | 'BEARISH';
+        context?: { sectorAlphaPct?: number | null };
+      }> = [];
+
+      const toFetch = symbolsToEval.filter((sym) => {
+        const existing = scanBySymbol.get(sym.toUpperCase());
+        return !existing || !Array.isArray(existing.candles) || existing.candles.length < 30;
+      });
+
+      const fetchedCandleMap = new Map<string, Candle[]>();
+      if (toFetch.length > 0) {
+        const results = await Promise.allSettled(
+          toFetch.map(async (sym) => {
+            const cRes = await fetch(`/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=6mo`);
+            if (!cRes.ok) return { sym, candles: [] as Candle[] };
+            const cData = await cRes.json();
+            return { sym, candles: normalizeCandles(cData.candles || []) };
+          })
+        );
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value.candles.length >= 30) {
+            fetchedCandleMap.set(r.value.sym.toUpperCase(), r.value.candles);
+          }
+        }
+      }
+
+      for (const sym of symbolsToEval) {
+        const upper = sym.toUpperCase();
+        const scanItem = scanBySymbol.get(upper);
+        const candles =
+          scanItem && Array.isArray(scanItem.candles) && scanItem.candles.length >= 30
+            ? normalizeCandles(scanItem.candles)
+            : fetchedCandleMap.get(upper) || [];
+
+        if (candles.length < 30) continue;
+
+        const firstSetupType: string = scanItem?.setups?.[0]?.type || '';
+        const direction: 'BULLISH' | 'BEARISH' = firstSetupType.includes('BEAR') ? 'BEARISH' : 'BULLISH';
+        const secPerf = scanItem?.sector ? localSectorsMap.get(scanItem.sector) : undefined;
+        const sectorAlphaPct =
+          typeof secPerf?.rsVsSpy === 'number'
+            ? secPerf.rsVsSpy
+            : typeof secPerf?.changePercent === 'number'
+            ? secPerf.changePercent
+            : null;
+
+        entries.push({
+          symbol: upper,
+          candles,
+          direction,
+          context: { sectorAlphaPct },
+        });
+      }
+
+      const ranked = rankCandidatesByConfluence(entries);
+      setCandidates(ranked);
+      if (ranked.length === 0) {
+        setErrorMessage('Live market feeds did not return enough OHLCV history (>= 30 daily bars) for matrix evaluation.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to evaluate live 360° confluence matrix.');
+    } finally {
+      setIsAuditing(false);
+    }
+  }, [scannerResults]);
+
+  useEffect(() => {
+    evaluateAllCandidates(candidateSymbols);
+  }, [candidateSymbols, evaluateAllCandidates]);
+
   // Re-run evaluation
   const handleRefreshMatrix = () => {
-    setIsAuditing(true);
-    setTimeout(() => {
-      setCandidates(rankCandidatesByConfluence(candidateSymbols));
-      setIsAuditing(false);
-    }, 400);
+    evaluateAllCandidates(candidateSymbols);
   };
 
   // Direct symbol audit lookup
@@ -80,40 +197,82 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
     if (!clean) return;
 
     setIsAuditing(true);
-    let companyMetaOverride: any = null;
+    setErrorMessage(null);
+
     try {
-      const res = await fetch(`/api/lookup-ticker?query=${encodeURIComponent(clean)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.found) {
-          companyMetaOverride = data;
+      const [lookupRes, candleRes, cboeRes] = await Promise.allSettled([
+        fetch(`/api/lookup-ticker?query=${encodeURIComponent(clean)}`),
+        fetch(`/api/candles?symbol=${encodeURIComponent(clean)}&timeframe=1d&range=6mo`),
+        fetch(`/api/cboe-options?symbol=${encodeURIComponent(clean)}`),
+      ]);
+
+      let companyMetaOverride: any = null;
+      if (lookupRes.status === 'fulfilled' && lookupRes.value.ok) {
+        const data = await lookupRes.value.json();
+        if (data.found) companyMetaOverride = data;
+      }
+
+      let realCandles: Candle[] = [];
+      if (candleRes.status === 'fulfilled' && candleRes.value.ok) {
+        const cData = await candleRes.value.json();
+        realCandles = normalizeCandles(cData.candles || []);
+      }
+
+      if (realCandles.length < 30) {
+        setErrorMessage(`Insufficient live OHLCV history for ${clean} (${realCandles.length} bars fetched; minimum 30 required).`);
+        setIsAuditing(false);
+        return;
+      }
+
+      let cboeSummary: TickerOptionsSummary | null = null;
+      if (cboeRes.status === 'fulfilled' && cboeRes.value.ok) {
+        const cbData = await cboeRes.value.json();
+        cboeSummary = cbData.optionsSummary || null;
+      }
+
+      const secName = companyMetaOverride?.sector || '';
+      const secPerf = secName ? sectorsMap.get(secName) : undefined;
+      const sectorAlphaPct =
+        typeof secPerf?.rsVsSpy === 'number'
+          ? secPerf.rsVsSpy
+          : typeof secPerf?.changePercent === 'number'
+          ? secPerf.changePercent
+          : null;
+
+      const evaluated = evaluateCandidate360Confluence(clean, realCandles, 'BULLISH', {
+        cboeSummary,
+        sectorAlphaPct,
+      });
+
+      if (!evaluated) {
+        setErrorMessage(`Unable to score ${clean}: insufficient real market bars.`);
+        setIsAuditing(false);
+        return;
+      }
+
+      if (companyMetaOverride) {
+        if (companyMetaOverride.name) evaluated.companyName = companyMetaOverride.name;
+        if (companyMetaOverride.sector) evaluated.sector = companyMetaOverride.sector;
+        if (companyMetaOverride.subIndustry) evaluated.subIndustry = companyMetaOverride.subIndustry;
+        if (companyMetaOverride.exchange) evaluated.exchange = companyMetaOverride.exchange;
+        if (companyMetaOverride.currency) evaluated.currency = companyMetaOverride.currency;
+        if (companyMetaOverride.symbol) evaluated.symbol = companyMetaOverride.symbol;
+      }
+
+      setCandidates((prev) => {
+        const exists = prev.find((c) => c.symbol === evaluated.symbol || c.symbol === clean);
+        if (exists) {
+          return [evaluated, ...prev.filter((c) => c.symbol !== evaluated.symbol && c.symbol !== clean)];
         }
-      }
-    } catch (e) {
-      // Fallback gracefully
+        return [evaluated, ...prev];
+      });
+      setSelectedCandidate(evaluated);
+      setSearchQuery('');
+    } catch (err: any) {
+      setErrorMessage(err?.message || `Failed to audit ${clean}.`);
+    } finally {
+      setIsAuditing(false);
     }
-
-    const evaluated = evaluateCandidate360Confluence(clean);
-    if (companyMetaOverride) {
-      if (companyMetaOverride.name) evaluated.companyName = companyMetaOverride.name;
-      if (companyMetaOverride.sector) evaluated.sector = companyMetaOverride.sector;
-      if (companyMetaOverride.subIndustry) evaluated.subIndustry = companyMetaOverride.subIndustry;
-      if (companyMetaOverride.exchange) evaluated.exchange = companyMetaOverride.exchange;
-      if (companyMetaOverride.currency) evaluated.currency = companyMetaOverride.currency;
-      if (companyMetaOverride.typicalPrice) evaluated.price = companyMetaOverride.typicalPrice;
-      if (companyMetaOverride.symbol) evaluated.symbol = companyMetaOverride.symbol;
-    }
-
-    setCandidates((prev) => {
-      const exists = prev.find((c) => c.symbol === evaluated.symbol || c.symbol === clean);
-      if (exists) {
-        return [evaluated, ...prev.filter((c) => c.symbol !== evaluated.symbol && c.symbol !== clean)];
-      }
-      return [evaluated, ...prev];
-    });
-    setSelectedCandidate(evaluated);
-    setSearchQuery('');
-    setIsAuditing(false);
   };
 
   // Filtered candidate list
@@ -138,13 +297,13 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   }, [candidates, searchQuery, gradeFilter, directionFilter]);
 
   // Top summary metrics
-  const topPick = candidates[0];
+  const topPick = candidates[0] ?? null;
   const eliteCount = candidates.filter((c) => c.overallGrade === 'A+').length;
   const highConvictionCount = candidates.filter((c) => ['A+', 'A'].includes(c.overallGrade)).length;
-  const avgRR = (
-    candidates.reduce((acc, c) => acc + c.executionPlan.riskRewardRatio, 0) /
-    (candidates.length || 1)
-  ).toFixed(2);
+  const passingRatePct = candidates.length > 0 ? Math.round((highConvictionCount / candidates.length) * 100) : 0;
+  const avgRR = candidates.length > 0
+    ? (candidates.reduce((acc, c) => acc + c.executionPlan.riskRewardRatio, 0) / candidates.length).toFixed(2)
+    : '—';
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -192,17 +351,17 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
               <span>Top Confluence Pick</span>
             </span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
-              Grade {topPick?.overallGrade}
+              {topPick ? `Grade ${topPick.overallGrade}` : 'Pending'}
             </span>
           </div>
           <div className="flex items-baseline space-x-2 mt-2">
-            <span className="text-2xl font-bold text-white tracking-tight">{topPick?.symbol}</span>
+            <span className="text-2xl font-bold text-white tracking-tight">{topPick?.symbol ?? '—'}</span>
             <span className="text-sm font-semibold text-emerald-400 font-mono">
-              {topPick?.overallScore}% Score
+              {topPick ? `${topPick.overallScore}% Score` : '—'}
             </span>
           </div>
           <div className="text-[11px] text-zinc-400 mt-1 truncate">
-            {topPick?.companyName} • {topPick?.confidenceTier}
+            {topPick ? `${topPick.companyName} • ${topPick.confidenceTier}` : 'Fetching live OHLCV feeds...'}
           </div>
         </div>
 
@@ -220,7 +379,7 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
             <span className="text-xs text-zinc-400">of {candidates.length} candidates</span>
           </div>
           <div className="text-[11px] text-emerald-400/90 mt-1">
-            {eliteCount} A+ setups ({((highConvictionCount / candidates.length) * 100).toFixed(0)}% passing rate)
+            {eliteCount} A+ setups ({passingRatePct}% passing rate)
           </div>
         </div>
 
@@ -234,7 +393,7 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
             <span className="text-[10px] text-zinc-500">Target 1 Hurdle</span>
           </div>
           <div className="flex items-baseline space-x-2 mt-2">
-            <span className="text-2xl font-bold text-white tracking-tight">{avgRR} : 1</span>
+            <span className="text-2xl font-bold text-white tracking-tight">{avgRR === '—' ? '—' : `${avgRR} : 1`}</span>
             <span className="text-xs text-emerald-400 font-medium">Asymmetric</span>
           </div>
           <div className="text-[11px] text-zinc-400 mt-1">
@@ -362,6 +521,18 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         </div>
       </div>
 
+      {errorMessage && (
+        <div role="alert" className="bg-rose-950/60 border border-rose-500/40 text-rose-200 px-4 py-3 rounded-xl flex items-center justify-between text-xs">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button onClick={() => setErrorMessage(null)} className="text-rose-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Main Candidate Table */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
@@ -378,6 +549,21 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/60 font-sans">
+              {isAuditing && filteredCandidates.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-zinc-400 font-mono">
+                    <RefreshCw className="w-5 h-5 animate-spin text-indigo-400 mx-auto mb-2" />
+                    Fetching real OHLCV candles & computing 6-angle confluence scores...
+                  </td>
+                </tr>
+              )}
+              {!isAuditing && filteredCandidates.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-zinc-500 font-mono">
+                    No matching live confluence setups found. Try adjusting filters or auditing a specific symbol above.
+                  </td>
+                </tr>
+              )}
               {filteredCandidates.map((cand, idx) => {
                 const isAplus = cand.overallGrade === 'A+';
                 const isA = cand.overallGrade === 'A';

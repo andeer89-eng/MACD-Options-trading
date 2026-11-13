@@ -3,54 +3,122 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // --- Global Helpers ---
     function isSignedIn() { return request.auth != null; }
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function isVerifiedOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId && request.auth.token.email_verified == true;
+    }
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
-    // --- Validation Helpers ---
-    function isValidJournalEntry(data) {
-      return data.symbol is string && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.-]+$') &&
-             data.setupType is string && data.setupType.size() <= 50 &&
-             data.status is string && data.status in ['OPEN', 'CLOSED_WIN', 'CLOSED_LOSS', 'BREAKEVEN'] &&
-             data.entryDate is string && data.entryDate.size() == 10 &&
-             data.entryPrice is number && data.entryPrice >= 0;
-    }
-
-    function isValidWatchlistItem(data) {
-      return data.symbol is string && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.-]+$') &&
-             data.status is string && data.status in ['NEW', 'WATCHING', 'TRIGGERED', 'EXPIRED', 'INVALIDATED'] &&
+    // --- Validation Blueprints ---
+    function isValidUserBotState(data, userId) {
+      return data.keys().hasAll(['ownerId', 'simCapitalUsd', 'maxRiskPerTradePct', 'dailyLossLimitPct', 'botStatus', 'updatedAt']) &&
+             data.keys().hasOnly(['ownerId', 'simCapitalUsd', 'maxRiskPerTradePct', 'dailyLossLimitPct', 'maxSectorExposurePct', 'botStatus', 'activeEpochId', 'createdAt', 'updatedAt']) &&
+             data.ownerId is string && data.ownerId == userId &&
+             data.simCapitalUsd is number && data.simCapitalUsd >= 0 && data.simCapitalUsd <= 100000000 &&
+             data.maxRiskPerTradePct is number && data.maxRiskPerTradePct > 0 && data.maxRiskPerTradePct <= 100 &&
+             data.dailyLossLimitPct is number && data.dailyLossLimitPct > 0 && data.dailyLossLimitPct <= 100 &&
+             (!('maxSectorExposurePct' in data) || (data.maxSectorExposurePct is number && data.maxSectorExposurePct >= 0 && data.maxSectorExposurePct <= 100)) &&
+             data.botStatus is string && data.botStatus in ['armed', 'paused', 'killed'] &&
+             (!('activeEpochId' in data) || (data.activeEpochId is string && data.activeEpochId.size() <= 64)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
              data.updatedAt is timestamp;
     }
 
-    // --- Master Gate ---
+    function isValidJournalEntry(data, userId) {
+      return data.keys().hasAll(['ownerId', 'symbol', 'setupType', 'timeframe', 'status', 'entryDate', 'entryPrice', 'stopLoss', 'targetPrice', 'quantity', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['ownerId', 'symbol', 'companyName', 'setupType', 'timeframe', 'status', 'entryDate', 'exitDate', 'entryPrice', 'exitPrice', 'stopLoss', 'targetPrice', 'quantity', 'realizedPnL', 'pnlPercent', 'notes', 'tags', 'executionRating', 'epochId', 'createdAt', 'updatedAt']) &&
+             data.ownerId is string && data.ownerId == userId &&
+             data.symbol is string && data.symbol.size() >= 1 && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.=\\-]+$') &&
+             (!('companyName' in data) || (data.companyName is string && data.companyName.size() <= 120)) &&
+             data.setupType is string && data.setupType.size() >= 1 && data.setupType.size() <= 50 &&
+             data.timeframe is string && data.timeframe.size() >= 1 && data.timeframe.size() <= 10 &&
+             data.status is string && data.status in ['OPEN', 'CLOSED_WIN', 'CLOSED_LOSS', 'BREAKEVEN'] &&
+             data.entryDate is string && data.entryDate.size() == 10 &&
+             (!('exitDate' in data) || (data.exitDate is string && data.exitDate.size() == 10)) &&
+             data.entryPrice is number && data.entryPrice >= 0 &&
+             (!('exitPrice' in data) || (data.exitPrice is number && data.exitPrice >= 0)) &&
+             data.stopLoss is number && data.stopLoss >= 0 &&
+             data.targetPrice is number && data.targetPrice >= 0 &&
+             data.quantity is number && data.quantity > 0 &&
+             (!('realizedPnL' in data) || data.realizedPnL is number) &&
+             (!('pnlPercent' in data) || data.pnlPercent is number) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 4000)) &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20 && (data.tags.size() == 0 || data.tags[0] is string))) &&
+             (!('executionRating' in data) || (data.executionRating is number && data.executionRating >= 1 && data.executionRating <= 5)) &&
+             (!('epochId' in data) || (data.epochId is string && data.epochId.size() <= 64)) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidWatchlistItem(data, userId) {
+      return data.keys().hasAll(['ownerId', 'symbol', 'status', 'totalScore', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['ownerId', 'symbol', 'sector', 'setup', 'strategyId', 'direction', 'currentPrice', 'atr', 'status', 'totalScore', 'isPinned', 'createdAt', 'updatedAt']) &&
+             data.ownerId is string && data.ownerId == userId &&
+             data.symbol is string && data.symbol.size() >= 1 && data.symbol.size() <= 20 && data.symbol.matches('^[A-Z0-9.=\\-]+$') &&
+             (!('sector' in data) || (data.sector is string && data.sector.size() <= 80)) &&
+             (!('setup' in data) || (data.setup is string && data.setup.size() <= 120)) &&
+             (!('strategyId' in data) || (data.strategyId is string && data.strategyId.size() <= 64)) &&
+             (!('direction' in data) || (data.direction is string && data.direction in ['long', 'short'])) &&
+             (!('currentPrice' in data) || (data.currentPrice is number && data.currentPrice >= 0)) &&
+             (!('atr' in data) || (data.atr is number && data.atr >= 0)) &&
+             data.status is string && data.status in ['NEW', 'WATCHING', 'TRIGGERED', 'EXPIRED', 'INVALIDATED'] &&
+             data.totalScore is number && data.totalScore >= 0 && data.totalScore <= 100 &&
+             (!('isPinned' in data) || data.isPinned is bool) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    // --- Global Safety Net ---
     match /{document=**} {
       allow read, write: if false;
     }
 
     match /users/{userId} {
-      allow get, update: if isSignedIn() && request.auth.uid == userId;
-      
+      allow get: if isVerifiedOwner(userId) && isValidId(userId);
+      allow create: if isVerifiedOwner(userId) && isValidId(userId) &&
+                       isValidUserBotState(incoming(), userId) &&
+                       incoming().updatedAt == request.time &&
+                       (!('createdAt' in incoming()) || incoming().createdAt == request.time);
+      allow update: if isVerifiedOwner(userId) && isValidId(userId) &&
+                       isValidUserBotState(incoming(), userId) &&
+                       incoming().ownerId == existing().ownerId &&
+                       (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['simCapitalUsd', 'maxRiskPerTradePct', 'dailyLossLimitPct', 'maxSectorExposurePct', 'botStatus', 'activeEpochId', 'updatedAt']) &&
+                       incoming().updatedAt == request.time;
+
       match /journalEntries/{entryId} {
-        allow get: if isSignedIn() && request.auth.uid == userId;
-        allow list: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && 
-                         isValidJournalEntry(incoming()) && incoming().createdAt == request.time;
-        allow update: if isSignedIn() && request.auth.uid == userId && 
-                         isValidJournalEntry(incoming()) && 
-                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'exitPrice', 'exitDate', 'realizedPnL', 'pnlPercent', 'notes', 'updatedAt']) &&
+        allow get: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(entryId);
+        allow list: if isVerifiedOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(entryId) &&
+                         isValidJournalEntry(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
                          incoming().updatedAt == request.time;
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow update: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(entryId) &&
+                         isValidJournalEntry(incoming(), userId) &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'exitPrice', 'exitDate', 'realizedPnL', 'pnlPercent', 'notes', 'tags', 'executionRating', 'updatedAt']) &&
+                         incoming().updatedAt == request.time;
+        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(entryId);
       }
 
       match /watchlistItems/{itemId} {
-        allow get: if isSignedIn() && request.auth.uid == userId;
-        allow list: if isSignedIn() && request.auth.uid == userId;
-        allow create: if isSignedIn() && request.auth.uid == userId && 
-                         isValidWatchlistItem(incoming()) && incoming().createdAt == request.time;
-        allow update: if isSignedIn() && request.auth.uid == userId && 
-                         isValidWatchlistItem(incoming()) && 
-                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
-        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow get: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow list: if isVerifiedOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                         isValidWatchlistItem(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                         isValidWatchlistItem(incoming(), userId) &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isPinned', 'totalScore', 'currentPrice', 'atr', 'setup', 'updatedAt']) &&
+                         incoming().updatedAt == request.time;
+        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId);
       }
     }
   }

@@ -24,12 +24,13 @@ import {
   calculateLatencyRating,
   calculateMemoryHealth,
   formatUptime,
-  getBaselineHealthData,
+  createEmptyHealthData,
 } from '../utils/systemHealth';
 
 export const SystemHealthView: React.FC = () => {
-  const [healthData, setHealthData] = useState<SystemHealthData>(() => getBaselineHealthData());
-  const [isLoading, setIsLoading] = useState(false);
+  const [healthData, setHealthData] = useState<SystemHealthData>(() => createEmptyHealthData());
+  const [isLoading, setIsLoading] = useState(true);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [pingResult, setPingResult] = useState<{ pingMs: number; ok: boolean; timestamp: number } | null>(null);
   const [isPinging, setIsPinging] = useState(false);
@@ -39,33 +40,45 @@ export const SystemHealthView: React.FC = () => {
   const fetchHealthData = async () => {
     try {
       const res = await fetch('/api/system-health');
-      if (res.ok) {
-        const data = await res.json();
-        setHealthData((prev) => ({
-          ...prev,
-          ...data,
-          uptimeFormatted: formatUptime(data.uptimeSeconds || prev.uptimeSeconds),
-          latencyRating: calculateLatencyRating(data.scanLatencyMs || prev.scanLatencyMs),
-          memory: {
-            ...prev.memory,
-            ...data.memory,
-          },
-          apiQuota: {
-            ...prev.apiQuota,
-            ...data.apiQuota,
-          },
-          cache: {
-            ...prev.cache,
-            ...data.cache,
-          },
-          daemon: {
-            ...prev.daemon,
-            ...data.daemon,
-          },
-        }));
-      }
-    } catch {
-      // Fallback preserves baseline health data
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const recentLatencies: number[] = Array.isArray(data.recentLatencies) ? data.recentLatencies : [];
+      const historyMapped = recentLatencies.map((latencyMs, i) => ({
+        timestamp: `Cycle ${i + 1}`,
+        latencyMs,
+      }));
+      setHealthData((prev) => ({
+        ...prev,
+        ...data,
+        uptimeFormatted: formatUptime(data.uptimeSeconds ?? prev.uptimeSeconds),
+        latencyRating: calculateLatencyRating(data.scanLatencyMs ?? prev.scanLatencyMs),
+        latencyHistory: historyMapped.length > 0 ? historyMapped : prev.latencyHistory,
+        memory: {
+          ...prev.memory,
+          ...data.memory,
+        },
+        apiQuota: {
+          ...prev.apiQuota,
+          ...data.apiQuota,
+        },
+        cache: {
+          ...prev.cache,
+          ...data.cache,
+        },
+        daemon: {
+          ...prev.daemon,
+          ...data.daemon,
+        },
+        secCompliance: {
+          ...prev.secCompliance,
+          ...data.secCompliance,
+        },
+      }));
+      setHealthError(null);
+    } catch (err: any) {
+      setHealthError(err?.message || 'Unable to connect to /api/system-health telemetry endpoint.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -209,7 +222,13 @@ export const SystemHealthView: React.FC = () => {
           </div>
         </div>
 
-        {/* Notices */}
+          {/* Notices */}
+        {healthError && (
+          <div className="mt-4 p-3 bg-rose-950/40 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{healthError}</span>
+          </div>
+        )}
         {cacheClearNotice && (
           <div className="mt-4 p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-center space-x-2 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -265,7 +284,7 @@ export const SystemHealthView: React.FC = () => {
               {healthData.scanLatencyMs} <span className="text-sm font-normal text-zinc-400">ms</span>
             </div>
             <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
-              Avg roundtrip batch fetch &amp; indicator calculation
+              Avg batch fetch &amp; indicator calculation ({isLoading ? 'loading...' : 'live'})
             </div>
           </div>
 
@@ -273,20 +292,28 @@ export const SystemHealthView: React.FC = () => {
           <div className="pt-2 border-t border-zinc-800">
             <div className="text-[10px] text-zinc-400 mb-1.5 flex items-center justify-between">
               <span>Recent Scan History:</span>
-              <span className="font-mono text-zinc-500">p95: ~340ms</span>
+              <span className="font-mono text-zinc-500">
+                {healthData.latencyHistory.length > 0
+                  ? `max: ${Math.max(...healthData.latencyHistory.map((h) => h.latencyMs))}ms`
+                  : 'No scans yet'}
+              </span>
             </div>
             <div className="flex items-end gap-1 h-10 w-full bg-zinc-950/60 p-1.5 rounded-lg border border-zinc-800/80">
-              {healthData.latencyHistory.map((item, idx) => {
-                const heightPercent = Math.min(100, Math.max(15, (item.latencyMs / 500) * 100));
-                return (
-                  <div
-                    key={idx}
-                    title={`${item.timestamp}: ${item.latencyMs}ms`}
-                    className="flex-1 bg-emerald-500/70 hover:bg-emerald-400 rounded-t transition"
-                    style={{ height: `${heightPercent}%` }}
-                  ></div>
-                );
-              })}
+              {healthData.latencyHistory.length === 0 ? (
+                <div className="text-[10px] font-mono text-zinc-600 m-auto">Awaiting scan telemetry</div>
+              ) : (
+                healthData.latencyHistory.map((item, idx) => {
+                  const heightPercent = Math.min(100, Math.max(15, (item.latencyMs / 500) * 100));
+                  return (
+                    <div
+                      key={idx}
+                      title={`${item.timestamp}: ${item.latencyMs}ms`}
+                      className="flex-1 bg-emerald-500/70 hover:bg-emerald-400 rounded-t transition"
+                      style={{ height: `${heightPercent}%` }}
+                    ></div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -316,7 +343,9 @@ export const SystemHealthView: React.FC = () => {
           <div className="pt-2 border-t border-zinc-800 space-y-1.5">
             <div className="flex items-center justify-between text-[10px] text-zinc-400">
               <span>Consumption Envelope</span>
-              <span className="text-emerald-400 font-mono">0 Throttles (429: None)</span>
+              <span className={`font-mono ${healthData.apiQuota.rateLimitHits > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {healthData.apiQuota.rateLimitHits} Throttles (HTTP 429)
+              </span>
             </div>
             <div className="w-full h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
               <div
@@ -504,7 +533,9 @@ export const SystemHealthView: React.FC = () => {
           <div className="space-y-3 text-xs">
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">
               <span className="text-zinc-400">SEC EDGAR Rate Limit (10/s)</span>
-              <span className="text-emerald-400 font-mono font-bold">100% Compliant (1.2/s)</span>
+              <span className="text-emerald-400 font-mono font-bold">
+                100% Compliant ({healthData.secCompliance.currentReqsPerSec}/s)
+              </span>
             </div>
 
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">
@@ -516,7 +547,9 @@ export const SystemHealthView: React.FC = () => {
 
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">
               <span className="text-zinc-400">Yahoo Finance Rate Limits</span>
-              <span className="text-emerald-400 font-mono font-bold">Zero 429 Status Hits</span>
+              <span className={`font-mono font-bold ${healthData.apiQuota.rateLimitHits > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {healthData.apiQuota.rateLimitHits === 0 ? 'Zero 429 Status Hits' : `${healthData.apiQuota.rateLimitHits} 429 Hits`}
+              </span>
             </div>
 
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">

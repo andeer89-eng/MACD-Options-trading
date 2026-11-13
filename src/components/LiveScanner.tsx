@@ -26,7 +26,6 @@ import {
   Info,
 } from 'lucide-react';
 import { WatchlistManager } from './WatchlistManager';
-import { DivergenceSetup } from '../utils/trullasStrategy';
 import {
   SP500_UNIVERSE,
   SP500_SECTORS,
@@ -35,10 +34,25 @@ import {
 } from '../data/sp500Universe';
 import { SectorFiltering } from './SectorFiltering';
 import { MarketOverview } from './MarketOverview';
-import { WorkerPool } from '../utils/workerPool';
-import { deduplicateSymbols, generateStableScanKey, generateCompositeKey } from '../utils/dataFetcher';
+import { Candle, DivergenceSetup } from '../utils/trullasStrategy';
 import { evaluateCandidate360Confluence } from '../utils/confluenceScoringEngine';
-import { getUniverseStageSummary } from '../utils/trendSpiderUniverse';
+import { computeStageSummaryFromCandles } from '../utils/trendSpiderUniverse';
+import { CandleData } from '../utils/trendSpiderEngine';
+import { evaluateSignalWeighting } from '../utils/signalWeightingEngine';
+
+function toStageCandles(raw?: Candle[]): CandleData[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.close === 'number' && Number.isFinite(c.close) && c.close > 0)
+    .map((c) => ({
+      time: c.dateStr || new Date(c.timestamp).toISOString().split('T')[0],
+      open: Number(c.open ?? c.close),
+      high: Number(c.high ?? c.close),
+      low: Number(c.low ?? c.close),
+      close: Number(c.close),
+      volume: Number(c.volume) || 0,
+    }));
+}
 
 interface ScanResultItem {
   symbol: string;
@@ -57,6 +71,7 @@ interface ScanResultItem {
   hasDoubleDivergence: boolean;
   sec: any;
   candleCount: number;
+  candles?: Candle[];
 }
 
 interface LiveScannerProps {
@@ -207,103 +222,61 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     (item) => (item.atrPercent !== undefined ? item.atrPercent : 2.0) < minAtrPercent
   ).length;
 
-  // Web Worker Pool integration for parallel fetching and background processing
-  const [processedResults, setProcessedResults] = useState<ScanResultItem[]>([]);
-  const poolRef = React.useRef<WorkerPool | null>(null);
-
-  useEffect(() => {
-    // Initialize pool with 4 workers
-    poolRef.current = new WorkerPool(
-      new URL('../workers/scannerWorker.ts', import.meta.url).toString(),
-      4
-    );
-
-    return () => {
-      poolRef.current?.terminate();
-    };
-  }, []);
-
-  const runParallelScan = async (tickers: string[]) => {
-    if (!poolRef.current) return;
-    
-    // Deduplicate tickers to avoid redundant fetches and duplicate keys
-    const uniqueTickers = deduplicateSymbols(tickers);
-
-    // Chunk tickers into batches of 50
-    const chunkSize = 50;
-    const chunks = [];
-    for (let i = 0; i < uniqueTickers.length; i += chunkSize) {
-      chunks.push(uniqueTickers.slice(i, i + chunkSize));
-    }
-
-    try {
-      const resultsArray = await Promise.all(
-        chunks.map((chunk) => 
-          poolRef.current!.run({
-            tickers: chunk,
-            filters: { minScore: filterType === 'high-score' ? 75 : 0 },
-          })
-        )
-      );
-      
-      // Flatten results and ensure strictly unique symbols
-      const flattened = resultsArray.flat();
-      const seen = new Set<string>();
-      const dedupedResults: ScanResultItem[] = [];
-      for (const item of flattened) {
-        if (item && item.symbol && !seen.has(item.symbol)) {
-          seen.add(item.symbol);
-          dedupedResults.push(item);
-        }
+  // Filter live results directly without triggering duplicate backend scans on every filter click
+  const filteredResults = React.useMemo(() => {
+    const seen = new Set<string>();
+    const deduped: ScanResultItem[] = [];
+    for (const item of results) {
+      if (item && item.symbol && !seen.has(item.symbol)) {
+        seen.add(item.symbol);
+        deduped.push(item);
       }
-      setProcessedResults(dedupedResults);
-    } catch (error) {
-      console.error("Parallel scan failed", error);
-    }
-  };
-
-  // Replace old scan trigger with parallel one when watchlist changes
-  useEffect(() => {
-    if (watchlist.length > 0) {
-      runParallelScan(watchlist);
-    }
-  }, [watchlist, filterType]);
-
-  // Filter results (still need this for local filtering if needed)
-  const filteredResults = processedResults.filter((item) => {
-    const itemAtrPct = item.atrPercent !== undefined ? item.atrPercent : 2.0;
-    const isStagnant = itemAtrPct < minAtrPercent;
-
-    // Apply ATR Volatility filter
-    if (atrFilterActive && isStagnant && !showStagnantSymbols) {
-      return false;
     }
 
-    if (filterType === 'triple' && !item.hasTripleDivergence) return false;
-    if (filterType === 'bullish' && !item.setups.some((s) => s.type.includes('BULLISH')))
-      return false;
-    if (filterType === 'bearish' && !item.setups.some((s) => s.type.includes('BEARISH')))
-      return false;
+    return deduped.filter((item) => {
+      const itemAtrPct = item.atrPercent !== undefined ? item.atrPercent : 0;
+      const isStagnant = itemAtrPct < minAtrPercent;
 
-    if (selectedSectorFilter !== 'All') {
-      if (item.sector !== selectedSectorFilter) return false;
-    }
-
-    if (selectedStageFilter !== 'ALL') {
-      const summary = getUniverseStageSummary(item.symbol);
-      const stageMap: Record<string, string> = {
-        STAGE_1: 'STAGE_1_BASING',
-        STAGE_2: 'STAGE_2_ADVANCING',
-        STAGE_3: 'STAGE_3_TOPPING',
-        STAGE_4: 'STAGE_4_DECLINING',
-      };
-      if (summary.stage.currentStage !== stageMap[selectedStageFilter]) {
+      if (atrFilterActive && isStagnant && !showStagnantSymbols) {
         return false;
       }
-    }
 
-    return true;
-  });
+      if (filterType === 'triple' && !item.hasTripleDivergence) return false;
+      if (filterType === 'bullish' && !item.setups.some((s) => s.type.includes('BULLISH')))
+        return false;
+      if (filterType === 'bearish' && !item.setups.some((s) => s.type.includes('BEARISH')))
+        return false;
+      if (filterType === 'high-score' && !item.setups.some((s) => s.qualityScore >= 75))
+        return false;
+
+      if (selectedSectorFilter !== 'All' && item.sector !== selectedSectorFilter) {
+        return false;
+      }
+
+      if (selectedStageFilter !== 'ALL') {
+        const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
+        const stageMap: Record<string, string> = {
+          STAGE_1: 'STAGE_1_BASING',
+          STAGE_2: 'STAGE_2_ADVANCING',
+          STAGE_3: 'STAGE_3_TOPPING',
+          STAGE_4: 'STAGE_4_DECLINING',
+        };
+        if (!stageSummary || stageSummary.stage.currentStage !== stageMap[selectedStageFilter]) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    results,
+    minAtrPercent,
+    atrFilterActive,
+    showStagnantSymbols,
+    filterType,
+    selectedSectorFilter,
+    selectedStageFilter,
+  ]);
 
   const totalTripleCount = results.filter((r) => r.hasTripleDivergence).length;
   const totalBullish = results.filter((r) =>
@@ -365,10 +338,10 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                   <option value="All Sectors" className="bg-zinc-900 text-white">
                     All 11 GICS Sectors (503 Companies)
                   </option>
-                  {SP500_SECTORS.filter((s) => s !== 'All Sectors').map((sec, secIdx) => {
+                  {SP500_SECTORS.filter((s) => s !== 'All Sectors').map((sec) => {
                     const count = getTickersBySector(sec).length;
                     return (
-                      <option key={`${sec}-${secIdx}-${Date.now()}`} value={sec} className="bg-zinc-900 text-white">
+                      <option key={sec} value={sec} className="bg-zinc-900 text-white">
                         {sec} ({count} companies)
                       </option>
                     );
@@ -379,9 +352,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
             {/* Timeframe selector */}
             <div className="flex items-center space-x-1 bg-zinc-950 p-1.5 rounded-lg border border-zinc-800">
-              {['1m', '5m', '15m', '1h', '1d'].map((tf, tfIdx) => (
+              {['1m', '5m', '15m', '1h', '1d'].map((tf) => (
                 <button
-                  key={`${tf}-${tfIdx}-${Date.now()}`}
+                  key={tf}
                   onClick={() => setTimeframe(tf)}
                   className={`px-2.5 py-1 text-xs font-semibold rounded ${
                     timeframe === tf
@@ -427,9 +400,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             { label: 'Industrials', count: sectorCounts.industrial },
             { label: 'Full S&P 500 Universe (503)', count: 503 },
             { label: 'Crypto 24/7', count: 6 },
-          ].map((preset, prIdx) => (
+          ].map((preset) => (
             <button
-              key={`${preset.label}-${prIdx}-${Date.now()}`}
+              key={preset.label}
               onClick={() => handleLoadSP500Preset(preset.label)}
               className={`px-3 py-1 text-xs font-medium rounded-lg border transition ${
                 selectedSP500Preset === preset.label
@@ -464,9 +437,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               <div className="flex items-center space-x-2">
                 <span className="text-zinc-400">Min Volatility:</span>
                 <div className="flex items-center space-x-1 bg-zinc-900 p-0.5 rounded border border-zinc-800">
-                  {[0.5, 1.0, 1.5, 2.0].map((val, valIdx) => (
+                  {[0.5, 1.0, 1.5, 2.0].map((val) => (
                     <button
-                      key={`${val}-${valIdx}-${Date.now()}`}
+                      key={String(val)}
                       onClick={() => setMinAtrPercent(val)}
                       className={`px-2 py-0.5 text-[11px] rounded font-mono ${
                         minAtrPercent === val
@@ -585,7 +558,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                     const isAdded = watchlist.includes(company.symbol);
                     return (
                       <div
-                        key={`${company.symbol}-${cIdx}-${Date.now()}`}
+                        key={company.symbol}
                         onClick={() => handleAddTickerFromUniverse(company.symbol)}
                         className="p-2.5 hover:bg-zinc-800/70 cursor-pointer flex items-center justify-between transition text-xs"
                       >
@@ -634,9 +607,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                 )}
               </span>
 
-              {Array.from(new Set(watchlist)).slice(0, 32).map((sym, idx) => (
+              {Array.from(new Set(watchlist)).slice(0, 32).map((sym) => (
                 <span
-                  key={`${sym}-${idx}-${Date.now()}`}
+                  key={sym}
                   className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300"
                 >
                   <span>{sym}</span>
@@ -844,14 +817,26 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
       {/* Results List */}
       <div className="space-y-4">
-        {filteredResults.map((item, idx) => {
+        {filteredResults.length === 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-10 text-center text-xs font-mono text-zinc-400">
+            {scanning
+              ? 'Scanning live Yahoo Finance feeds across active universe...'
+              : 'No live setups matched current filters. Click Scan or broaden filters above.'}
+          </div>
+        )}
+        {filteredResults.map((item) => {
           const mainSetup = item.setups[0];
           const hasSetup = Boolean(mainSetup);
           const isBull = mainSetup?.type.includes('BULLISH');
-          const atrPct = item.atrPercent !== undefined ? item.atrPercent : 2.0;
+          const atrPct = item.atrPercent !== undefined ? item.atrPercent : 0;
           const isStagnant = atrPct < minAtrPercent;
-          // Stable unique composite identifier constructed as ${symbol}-${index}-${Date.now()}
-          const scanItemKey = `${item.symbol}-${idx}-${Date.now()}`;
+          const scanItemKey = `${item.symbol}-${item.timeframe || timeframe}`;
+          const conf = evaluateCandidate360Confluence(item.symbol, item.candles, isBull ? 'BULLISH' : 'BEARISH');
+          const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
+          const weighting =
+            mainSetup && Array.isArray(item.candles) && item.candles.length >= 20
+              ? evaluateSignalWeighting(mainSetup, item.candles)
+              : null;
 
           return (
             <div
@@ -901,34 +886,30 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                         </span>
                       )}
                       {/* 360° Confluence Grade Badge */}
-                      {(() => {
-                        const conf = evaluateCandidate360Confluence(item.symbol, undefined, isBull ? 'BULLISH' : 'BEARISH');
-                        return (
-                          <span
-                            className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 font-semibold ${
-                              conf.overallGrade === 'A+'
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                : conf.overallGrade === 'A'
-                                ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
-                                : conf.overallGrade === 'B'
-                                ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-500/30'
-                                : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
-                            }`}
-                            title={`360° Confluence Score: ${conf.overallScore}% (${conf.confidenceTier}) across 6 library engines`}
-                          >
-                            <Sparkles className="w-3 h-3 text-indigo-400" />
-                            <span>Grade {conf.overallGrade} ({conf.overallScore}%)</span>
-                          </span>
-                        );
-                      })()}
+                      {conf && (
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 font-semibold ${
+                            conf.overallGrade === 'A+'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : conf.overallGrade === 'A'
+                              ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                              : conf.overallGrade === 'B'
+                              ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-500/30'
+                              : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                          }`}
+                          title={`360° Confluence Score: ${conf.overallScore}% (${conf.confidenceTier}) across 6 library engines`}
+                        >
+                          <Sparkles className="w-3 h-3 text-indigo-400" />
+                          <span>Grade {conf.overallGrade} ({conf.overallScore}%)</span>
+                        </span>
+                      )}
                       {/* TrendSpider Stan Weinstein Stage Badge */}
-                      {(() => {
-                        const stageSummary = getUniverseStageSummary(item.symbol);
+                      {stageSummary && (() => {
                         const st = stageSummary.stage;
                         return (
                           <span
                             className={`text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1 font-semibold border ${st.stageBadgeBg} ${st.stageBadgeColor} ${st.stageBadgeBorder}`}
-                            title={`TrendSpider Weinstein 4-Stage Analysis: ${st.stageName} • 30w SMA: $${st.ma30Week.toFixed(2)} (${st.distanceFromMaPercent}%)`}
+                            title={`TrendSpider Weinstein Stage Analysis: ${st.stageName} • 30-Period SMA: $${st.ma30Week.toFixed(2)} (${st.distanceFromMaPercent}%)`}
                           >
                             <span>{st.stageNumber === 4 ? 'Stage 4 🩸' : st.stageNumber === 2 ? 'Stage 2 🚀' : st.stageNumber === 3 ? 'Stage 3 ⚠️' : 'Stage 1'}</span>
                             <span className="text-[9px] opacity-80">({st.distanceFromMaPercent >= 0 ? '+' : ''}{st.distanceFromMaPercent}%)</span>
@@ -1037,13 +1018,24 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs font-mono bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
                     <div>
                       <span className="text-zinc-500 block text-[10px]">Signal Weighting</span>
-                      <div className="flex items-center space-x-1.5 mt-0.5">
-                        <span className="font-bold text-indigo-300">Grade A+</span>
-                        <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-bold border border-indigo-500/30">
-                          {Math.round(mainSetup.qualityScore * 0.95)}% Conf
-                        </span>
-                      </div>
-                      <span className="text-[9px] text-zinc-500 block">r = +0.82 &bull; 84% Accuracy</span>
+                      {weighting ? (
+                        <>
+                          <div className="flex items-center space-x-1.5 mt-0.5">
+                            <span className="font-bold text-indigo-300">Grade {weighting.signalGrade}</span>
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-bold border border-indigo-500/30">
+                              {weighting.confidenceScore}% Conf
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-zinc-500 block">
+                            r = {weighting.rollingCorrelation >= 0 ? '+' : ''}{weighting.rollingCorrelation.toFixed(2)} &bull;{' '}
+                            {weighting.hasHistoricalSample
+                              ? `${weighting.historicalAccuracyPct}% (${weighting.totalHistoricalSignals})`
+                              : '0 prior hits'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-zinc-400 text-[11px] block mt-1">Need &ge;20 bars</span>
+                      )}
                     </div>
                     <div>
                       <span className="text-zinc-500 block text-[10px]">Quality Score</span>

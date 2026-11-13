@@ -119,8 +119,9 @@ export const HeatmapCanvasWebGL: React.FC<HeatmapCanvasWebGLProps> = ({
           else if (item.netDeltaFlowMillions <= -100) fillColor = '#e11d48';
           else if (item.netDeltaFlowMillions < 0) fillColor = '#881337';
         } else if (colorMode === 'SHORT_SQUEEZE_RISK') {
-          if (item.squeezeRiskScore >= 75) fillColor = '#7e22ce';
-          else if (item.squeezeRiskScore >= 50) fillColor = '#3730a3';
+          const squeezeScore = item.squeezeRiskScore ?? 0;
+          if (squeezeScore >= 75) fillColor = '#7e22ce';
+          else if (squeezeScore >= 50) fillColor = '#3730a3';
         } else if (item.hasEarningsSoon) {
           fillColor = '#d97706';
         }

@@ -876,15 +876,46 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
         velaWorkspaceRef.current.innerHTML = '';
 
-        // Real formatted OHLCV bars passed directly to Vela
-        const ohlcvBars = candles.map((c) => ({
-          time: c.timestamp,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
-        }));
+        const toVelaBars = (arr: any[]) =>
+          arr.map((c) => ({
+            time: c.timestamp,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+          }));
+
+        const ohlcvBars = toVelaBars(candles);
+
+        const cellSymbols = ['SPY', 'QQQ', 'BTC-USD'];
+        const extraBarsMap: Record<string, any[]> = {};
+
+        if (velaLayout !== '1') {
+          await Promise.all(
+            cellSymbols.map(async (cellSym) => {
+              if (cellSym === symbol) {
+                extraBarsMap[cellSym] = ohlcvBars;
+                return;
+              }
+              try {
+                const res = await fetch(
+                  `/api/candles?symbol=${encodeURIComponent(cellSym)}&timeframe=${encodeURIComponent(timeframe)}`
+                );
+                if (!res.ok) {
+                  extraBarsMap[cellSym] = [];
+                  return;
+                }
+                const payload = await res.json();
+                extraBarsMap[cellSym] = Array.isArray(payload?.candles) ? toVelaBars(payload.candles) : [];
+              } catch {
+                extraBarsMap[cellSym] = [];
+              }
+            })
+          );
+        }
+
+        if (!isMounted || !velaWorkspaceRef.current) return;
 
         workspace = new VelaWorkspace(velaWorkspaceRef.current, {
           symbol: symbol,
@@ -894,9 +925,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           data: ohlcvBars,
           cells: {
             c1: { symbol: symbol, data: ohlcvBars },
-            c2: { symbol: 'SPY', data: ohlcvBars },
-            c3: { symbol: 'QQQ', data: ohlcvBars },
-            c4: { symbol: 'BTC-USD', data: ohlcvBars },
+            c2: { symbol: 'SPY', data: extraBarsMap['SPY'] ?? [] },
+            c3: { symbol: 'QQQ', data: extraBarsMap['QQQ'] ?? [] },
+            c4: { symbol: 'BTC-USD', data: extraBarsMap['BTC-USD'] ?? [] },
           },
           drawingToolbar: true,
           live: false,
@@ -968,7 +999,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           <div className="flex items-center space-x-2 bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-md">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
             <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
-              {feedMeta?.isLiveFeed ? 'REAL-TIME EXCHANGE FEED' : 'LIVE ACCELERATED MODEL'}
+              {feedMeta?.isLiveFeed ? 'REAL-TIME EXCHANGE FEED' : 'LIVE FEED PENDING'}
             </span>
           </div>
 

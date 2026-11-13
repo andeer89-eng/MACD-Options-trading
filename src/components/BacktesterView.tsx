@@ -627,7 +627,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
             <div className="text-lg font-bold font-mono text-amber-400 mt-1">
               {result.metrics.avgRealizedR !== null
                 ? `${result.metrics.avgRealizedR > 0 ? '+' : ''}${result.metrics.avgRealizedR.toFixed(2)}R`
-                : '+2.14R'}
+                : '—'}
             </div>
             <span className="text-[10px] text-zinc-500">Reward-to-Risk ratio</span>
           </div>
@@ -1122,7 +1122,9 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                             <td className="py-2.5 px-3 uppercase text-emerald-400">{cand.params.targetMode}</td>
                             <td className="py-2.5 px-3 font-bold text-indigo-300">{cand.sharpeRatio.toFixed(2)}</td>
                             <td className="py-2.5 px-3 text-emerald-400">
-                              {cand.winRatePct ? (cand.winRatePct * 100).toFixed(1) : '78.5'}%
+                              {cand.winRatePct !== null && cand.winRatePct !== undefined
+                                ? (cand.winRatePct * 100).toFixed(1)
+                                : '0.0'}%
                             </td>
                             <td
                               className={`py-2.5 px-3 font-bold ${
@@ -1135,7 +1137,9 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                               -{(cand.maxDrawdownPct * 100).toFixed(1)}%
                             </td>
                             <td className="py-2.5 px-3 font-bold text-amber-400">
-                              {cand.luxAlgoEdgeScore || 85}/100
+                              {cand.luxAlgoEdgeScore !== undefined && cand.luxAlgoEdgeScore !== null
+                                ? `${cand.luxAlgoEdgeScore}/100`
+                                : '—'}
                             </td>
                           </tr>
                         ))}

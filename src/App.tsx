@@ -43,128 +43,7 @@ export default function App() {
   const [scanning, setScanning] = useState<boolean>(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('AAPL');
   const [calculatorSetup, setCalculatorSetup] = useState<DivergenceSetup | null>(null);
-  // Initial seed alerts for demonstration & immediate testing of filter controls
-  const [alerts, setAlerts] = useState<AlertLogItem[]>([
-    {
-      id: 'seed-nvda-1',
-      timestamp: Date.now() - 3 * 60 * 1000,
-      symbol: 'NVDA',
-      companyName: 'NVIDIA Corporation',
-      sector: 'Information Technology',
-      timeframe: '1d',
-      type: 'BULLISH_TRIPLE',
-      price: 128.5,
-      score: 92,
-      trigger: 130.0,
-      stopLoss: 124.0,
-      target2: 138.0,
-      atr: 4.8,
-      atrPercent: 3.73,
-      volatilityLevel: 'high',
-    },
-    {
-      id: 'seed-aapl-1',
-      timestamp: Date.now() - 8 * 60 * 1000,
-      symbol: 'AAPL',
-      companyName: 'Apple Inc.',
-      sector: 'Information Technology',
-      timeframe: '1d',
-      type: 'BULLISH_DOUBLE',
-      price: 224.2,
-      score: 76,
-      trigger: 226.0,
-      stopLoss: 220.0,
-      target2: 232.0,
-      atr: 3.2,
-      atrPercent: 1.43,
-      volatilityLevel: 'moderate',
-    },
-    {
-      id: 'seed-tsla-1',
-      timestamp: Date.now() - 14 * 60 * 1000,
-      symbol: 'TSLA',
-      companyName: 'Tesla, Inc.',
-      sector: 'Consumer Discretionary',
-      timeframe: '1d',
-      type: 'BEARISH_TRIPLE',
-      price: 248.0,
-      score: 88,
-      trigger: 244.0,
-      stopLoss: 254.0,
-      target2: 236.0,
-      atr: 8.5,
-      atrPercent: 3.43,
-      volatilityLevel: 'high',
-    },
-    {
-      id: 'seed-msft-1',
-      timestamp: Date.now() - 25 * 60 * 1000,
-      symbol: 'MSFT',
-      companyName: 'Microsoft Corporation',
-      sector: 'Information Technology',
-      timeframe: '1d',
-      type: 'BULLISH_TRIPLE',
-      price: 420.5,
-      score: 83,
-      trigger: 424.0,
-      stopLoss: 415.0,
-      target2: 435.0,
-      atr: 6.8,
-      atrPercent: 1.62,
-      volatilityLevel: 'moderate',
-    },
-    {
-      id: 'seed-jnj-1',
-      timestamp: Date.now() - 42 * 60 * 1000,
-      symbol: 'JNJ',
-      companyName: 'Johnson & Johnson',
-      sector: 'Health Care',
-      timeframe: '1d',
-      type: 'BEARISH_DOUBLE',
-      price: 162.0,
-      score: 64,
-      trigger: 160.5,
-      stopLoss: 164.0,
-      target2: 156.0,
-      atr: 1.1,
-      atrPercent: 0.68,
-      volatilityLevel: 'low',
-    },
-    {
-      id: 'seed-amd-1',
-      timestamp: Date.now() - 55 * 60 * 1000,
-      symbol: 'AMD',
-      companyName: 'Advanced Micro Devices',
-      sector: 'Information Technology',
-      timeframe: '1d',
-      type: 'BULLISH_TRIPLE',
-      price: 156.4,
-      score: 91,
-      trigger: 158.5,
-      stopLoss: 152.0,
-      target2: 167.0,
-      atr: 5.2,
-      atrPercent: 3.32,
-      volatilityLevel: 'high',
-    },
-    {
-      id: 'seed-ko-1',
-      timestamp: Date.now() - 70 * 60 * 1000,
-      symbol: 'KO',
-      companyName: 'The Coca-Cola Company',
-      sector: 'Consumer Staples',
-      timeframe: '1d',
-      type: 'BULLISH_DOUBLE',
-      price: 68.2,
-      score: 58,
-      trigger: 68.8,
-      stopLoss: 67.4,
-      target2: 70.1,
-      atr: 0.55,
-      atrPercent: 0.81,
-      volatilityLevel: 'low',
-    },
-  ]);
+  const [alerts, setAlerts] = useState<AlertLogItem[]>([]);
   const [isAutoScanning, setIsAutoScanning] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   useEffect(() => {
@@ -175,17 +54,7 @@ export default function App() {
   const [showTelegramModal, setShowTelegramModal] = useState<boolean>(false);
   const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
 
-  const prevSetupIds = useRef<Set<string>>(
-    new Set([
-      'seed-nvda-1',
-      'seed-aapl-1',
-      'seed-tsla-1',
-      'seed-msft-1',
-      'seed-jnj-1',
-      'seed-amd-1',
-      'seed-ko-1',
-    ])
-  );
+  const prevSetupIds = useRef<Set<string>>(new Set());
 
   // Web Audio Synth for Alert Chime (zero mp3 dependencies)
   const playAlertChime = () => {
@@ -361,7 +230,11 @@ export default function App() {
 
       <main className="max-w-[1720px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'today' && (
-          <TodayView onOpenChart={handleSelectSymbolForChart} />
+          <TodayView
+            onOpenChart={handleSelectSymbolForChart}
+            scannerResults={results}
+            onScanNow={() => runScan(watchlist, timeframe)}
+          />
         )}
 
         {activeTab === 'action-zones' && (

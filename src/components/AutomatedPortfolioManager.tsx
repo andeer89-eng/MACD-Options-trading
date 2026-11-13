@@ -139,6 +139,28 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     );
   };
 
+  const [spyBenchmarkReturnPct, setSpyBenchmarkReturnPct] = useState<number | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch('/api/candles?symbol=SPY&timeframe=1d&range=3mo')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!mounted || !data?.candles || data.candles.length < 2) return;
+        const first = Number(data.candles[0]?.close);
+        const last = Number(data.candles[data.candles.length - 1]?.close);
+        if (first > 0 && Number.isFinite(last)) {
+          setSpyBenchmarkReturnPct(Number((((last - first) / first) * 100).toFixed(2)));
+        }
+      })
+      .catch(() => {
+        // Leave benchmark as null when unavailable
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // Sync to localStorage whenever account updates
   useEffect(() => {
     saveAutomatedPortfolio(account);
@@ -149,8 +171,8 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   }, [account]);
 
   const analytics: AdvancedPerformanceAnalytics = useMemo(() => {
-    return calculateAdvancedAnalytics(account);
-  }, [account]);
+    return calculateAdvancedAnalytics(account, spyBenchmarkReturnPct);
+  }, [account, spyBenchmarkReturnPct]);
 
 
   // Auto-Pilot Cycle Trigger
@@ -211,7 +233,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         );
       }
     } catch (err) {
-      setLastCycleMessage('Cycle execution completed using cached portfolio telemetry.');
+      setLastCycleMessage('Cycle aborted: unable to reach live market scanner API.');
     } finally {
       setIsCycleRunning(false);
     }
@@ -833,10 +855,10 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                           <td className="py-3 px-3 text-center">
                             <div className="inline-flex flex-col items-center">
                               <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                                {cboe.overallScore}% Flow
+                                {cboe.overallScore !== null ? `${cboe.overallScore}% Flow` : 'No CBOE Chain'}
                               </span>
-                              <span className="text-[9px] text-zinc-400 mt-0.5 truncate max-w-[80px]">
-                                {cboe.gexRegime.split(' ')[0]}
+                              <span className="text-[9px] text-zinc-400 mt-0.5 truncate max-w-[90px]">
+                                {cboe.gexRegime}
                               </span>
                             </div>
                           </td>
@@ -994,16 +1016,20 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                                             CBOE Options Confluence
                                           </span>
                                           <span className="font-bold text-white font-mono text-sm">
-                                            {cboe.overallScore}% Score
+                                            {cboe.overallScore !== null ? `${cboe.overallScore}% Score` : 'Chain Unavailable'}
                                           </span>
                                           <span
                                             className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-semibold ${
-                                              cboe.isOptionsApproved
+                                              cboe.overallScore !== null && cboe.isOptionsApproved
                                                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                                : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
                                             }`}
                                           >
-                                            {cboe.isOptionsApproved ? 'Institutional Flow Verified' : 'Neutral Options Flow'}
+                                            {cboe.overallScore === null
+                                              ? 'Equity Rules Only'
+                                              : cboe.isOptionsApproved
+                                              ? 'Institutional Flow Verified'
+                                              : 'Neutral Options Flow'}
                                           </span>
                                         </div>
                                         <div className="text-[11px] font-mono font-bold text-purple-300">
@@ -1014,19 +1040,27 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
                                         <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800">
                                           <span className="text-[10px] text-zinc-400 block font-sans">ATM Gamma (&Gamma;)</span>
-                                          <span className="font-bold text-emerald-400">{cboe.gammaAtm.toFixed(4)}</span>
+                                          <span className="font-bold text-emerald-400">
+                                            {cboe.gammaAtm !== null ? cboe.gammaAtm.toFixed(4) : '—'}
+                                          </span>
                                         </div>
                                         <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800">
                                           <span className="text-[10px] text-zinc-400 block font-sans">Daily Theta (&Theta;)</span>
-                                          <span className="font-bold text-rose-400">${cboe.thetaDailyAtm.toFixed(3)}/day</span>
+                                          <span className="font-bold text-rose-400">
+                                            {cboe.thetaDailyAtm !== null ? `$${cboe.thetaDailyAtm.toFixed(3)}/day` : '—'}
+                                          </span>
                                         </div>
                                         <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800">
                                           <span className="text-[10px] text-zinc-400 block font-sans">Put / Call Ratio</span>
-                                          <span className="font-bold text-amber-300">{cboe.putCallRatio.toFixed(2)}</span>
+                                          <span className="font-bold text-amber-300">
+                                            {cboe.putCallRatio !== null ? cboe.putCallRatio.toFixed(2) : '—'}
+                                          </span>
                                         </div>
                                         <div className="bg-zinc-900/80 p-2 rounded-lg border border-zinc-800">
                                           <span className="text-[10px] text-zinc-400 block font-sans">Max Pain Target</span>
-                                          <span className="font-bold text-purple-300">${cboe.maxPainStrike.toFixed(2)}</span>
+                                          <span className="font-bold text-purple-300">
+                                            {cboe.maxPainStrike !== null ? `$${cboe.maxPainStrike.toFixed(2)}` : '—'}
+                                          </span>
                                         </div>
                                       </div>
                                     </div>
@@ -1268,10 +1302,22 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 relative overflow-hidden group hover:border-emerald-500/40 transition">
               <div className="text-[11px] text-zinc-400 uppercase tracking-wider font-medium font-sans">Alpha vs SPY</div>
-              <div className="text-2xl font-bold text-emerald-400 mt-1">
-                +{analytics.alphaVsBenchmarkPercent.toFixed(2)}%
+              <div className={`text-2xl font-bold mt-1 ${
+                analytics.alphaVsBenchmarkPercent === null
+                  ? 'text-zinc-400'
+                  : analytics.alphaVsBenchmarkPercent >= 0
+                  ? 'text-emerald-400'
+                  : 'text-rose-400'
+              }`}>
+                {analytics.alphaVsBenchmarkPercent !== null
+                  ? `${analytics.alphaVsBenchmarkPercent >= 0 ? '+' : ''}${analytics.alphaVsBenchmarkPercent.toFixed(2)}%`
+                  : 'N/A'}
               </div>
-              <div className="text-[10px] text-zinc-400 mt-1 font-sans">SPY Baseline: +{analytics.sp500BenchmarkReturnPercent.toFixed(2)}%</div>
+              <div className="text-[10px] text-zinc-400 mt-1 font-sans">
+                SPY Baseline: {analytics.sp500BenchmarkReturnPercent !== null
+                  ? `${analytics.sp500BenchmarkReturnPercent >= 0 ? '+' : ''}${analytics.sp500BenchmarkReturnPercent.toFixed(2)}%`
+                  : 'Unavailable'}
+              </div>
             </div>
           </div>
 
@@ -1403,12 +1449,26 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                   </span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-zinc-800/60">
-                  <span className="text-zinc-400">S&amp;P 500 (SPY) Period Return</span>
-                  <span className="font-bold text-zinc-300">+{analytics.sp500BenchmarkReturnPercent.toFixed(2)}%</span>
+                  <span className="text-zinc-400">S&amp;P 500 (SPY) 3M Return</span>
+                  <span className="font-bold text-zinc-300">
+                    {analytics.sp500BenchmarkReturnPercent !== null
+                      ? `${analytics.sp500BenchmarkReturnPercent >= 0 ? '+' : ''}${analytics.sp500BenchmarkReturnPercent.toFixed(2)}%`
+                      : 'Unavailable'}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-zinc-800/60">
                   <span className="text-zinc-400">Alpha Outperformance vs S&amp;P 500</span>
-                  <span className="font-bold text-emerald-400">+{analytics.alphaVsBenchmarkPercent.toFixed(2)}%</span>
+                  <span className={`font-bold ${
+                    analytics.alphaVsBenchmarkPercent === null
+                      ? 'text-zinc-400'
+                      : analytics.alphaVsBenchmarkPercent >= 0
+                      ? 'text-emerald-400'
+                      : 'text-rose-400'
+                  }`}>
+                    {analytics.alphaVsBenchmarkPercent !== null
+                      ? `${analytics.alphaVsBenchmarkPercent >= 0 ? '+' : ''}${analytics.alphaVsBenchmarkPercent.toFixed(2)}%`
+                      : 'N/A'}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center py-1.5">
                   <span className="text-zinc-400">Risk Limit Enforcement</span>

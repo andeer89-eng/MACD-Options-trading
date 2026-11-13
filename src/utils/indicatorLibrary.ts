@@ -473,6 +473,8 @@ export function saveAllIndicators(list: CustomPineIndicator[]): void {
 /**
  * Import a new custom Pine Script indicator.
  */
+let customPineSeq = 0;
+
 export function importCustomPineIndicator(
   pineCode: string,
   overrides?: {
@@ -487,8 +489,9 @@ export function importCustomPineIndicator(
     return { success: false, error: header.error };
   }
 
+  customPineSeq += 1;
   const newIndicator: CustomPineIndicator = {
-    id: `custom-pine-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: `custom-pine-${Date.now()}-${customPineSeq}`,
     name: overrides?.name || header.name,
     author: overrides?.author || 'Community Trader',
     description: overrides?.description || 'Imported TradingView Pine Script indicator.',

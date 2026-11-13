@@ -37,11 +37,16 @@ import {
   JournalStats,
   loadJournalEntries,
   saveJournalEntries,
+  loadJournalEntriesFromFirestore,
+  createJournalEntryInFirestore,
+  updateJournalEntryInFirestore,
+  deleteJournalEntryFromFirestore,
   calculateJournalStats,
   exportJournalToCSV,
   downloadCSV,
   enrichJournalEntryAnalytics,
 } from '../utils/tradeJournal';
+import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
 
@@ -54,6 +59,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   onSelectSymbolForChart,
   scannerResults = [],
 }) => {
+  const { user } = useAuth();
   const [journalTab, setJournalTab] = useState<'automated' | 'options' | 'manual'>('automated');
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS'>('ALL');
@@ -168,6 +174,16 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     });
 
     updateEntriesState(updated);
+    if (user) {
+      updateJournalEntryInFirestore(entryToClose.id, {
+        status: closeStatus,
+        exitDate: closeExitDate,
+        exitPrice: Number(closeExitPrice),
+        realizedPnL: Number(pnl.toFixed(2)),
+        pnlPercent: Number(pnlPct.toFixed(2)),
+        notes: closeNotes.trim(),
+      }).catch((err) => console.warn('Firestore update failed:', err));
+    }
     setEntryToClose(null);
     if (selectedEntryForView?.id === entryToClose.id) {
       setSelectedEntryForView(null);
@@ -175,11 +191,30 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   };
 
   useEffect(() => {
-    setEntries(loadJournalEntries());
-  }, []);
+    let active = true;
+    const localEntries = loadJournalEntries();
+    setEntries(localEntries);
 
-  // Capital Epoch Selection (§8 Item 6)
+    if (user) {
+      loadJournalEntriesFromFirestore()
+        .then((remote) => {
+          if (!active) return;
+          if (remote.length > 0) {
+            setEntries(remote);
+            saveJournalEntries(remote);
+          }
+        })
+        .catch((err) => console.warn('Failed to load Firestore journal entries:', err));
+    }
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
+  // Capital Epoch Selection (only shown if legacy entries exist)
   const [selectedEpoch, setSelectedEpoch] = useState<'epoch-2k-virtual' | 'legacy-50k'>('epoch-2k-virtual');
+
+  const hasLegacyEntries = useMemo(() => entries.some((e) => e.epochId === 'legacy-50k'), [entries]);
 
   const updateEntriesState = (updated: JournalEntry[]) => {
     setEntries(updated);
@@ -239,7 +274,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     }
 
     const newEntry: JournalEntry = {
-      id: `journal-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: `journal-${Date.now()}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`,
       symbol: formSymbol.toUpperCase().trim(),
       companyName: formCompanyName.trim() || undefined,
       setupType: formSetupType,
@@ -267,6 +302,11 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
 
     const updated = [newEntry, ...entries];
     updateEntriesState(updated);
+    if (user) {
+      createJournalEntryInFirestore(newEntry).catch((err) =>
+        console.warn('Firestore create failed:', err)
+      );
+    }
     setShowLogModal(false);
 
     // Reset Form
@@ -278,6 +318,11 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const handleDeleteEntry = (id: string) => {
     const updated = entries.filter((e) => e.id !== id);
     updateEntriesState(updated);
+    if (user) {
+      deleteJournalEntryFromFirestore(id).catch((err) =>
+        console.warn('Firestore delete failed:', err)
+      );
+    }
     if (selectedEntryForView?.id === id) setSelectedEntryForView(null);
   };
 
@@ -325,10 +370,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           >
             <Sparkles className="w-4 h-4 text-emerald-300" />
             <span className="flex items-center space-x-1.5">
-              <span>Options Harvesting & TradingWarz Bot ($2k Virtual)</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                $2k Era
-              </span>
+              <span>Options Harvesting &amp; TradingWarz Bot</span>
             </span>
           </button>
 
@@ -424,10 +466,10 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           </div>
         )}
 
-        {/* CAPITAL EPOCH SELECTOR (§8 Item 6) */}
+        {/* CAPITAL EPOCH SELECTOR */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-zinc-950/80 border border-zinc-800 p-2.5 rounded-xl">
           <div className="flex items-center space-x-2">
-            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Epocă Capital:</span>
+            <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Journal Ledger:</span>
             <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-xs">
               <button
                 onClick={() => setSelectedEpoch('epoch-2k-virtual')}
@@ -437,28 +479,27 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                     : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                2k Virtual (Epoca Activă)
+                Active Journal ({entries.filter((e) => !e.epochId || e.epochId === 'epoch-2k-virtual').length})
               </button>
-              <button
-                onClick={() => setSelectedEpoch('legacy-50k')}
-                className={`px-3 py-1 rounded-md font-semibold transition flex items-center space-x-1.5 ${
-                  selectedEpoch === 'legacy-50k'
-                    ? 'bg-zinc-800 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <span>Legacy 50k</span>
-                <span className="text-[9px] px-1 py-0.2 bg-zinc-700/80 text-zinc-300 rounded font-mono">
-                  Read-Only
-                </span>
-              </button>
+              {hasLegacyEntries && (
+                <button
+                  onClick={() => setSelectedEpoch('legacy-50k')}
+                  className={`px-3 py-1 rounded-md font-semibold transition flex items-center space-x-1.5 ${
+                    selectedEpoch === 'legacy-50k'
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  <span>Archived ({entries.filter((e) => e.epochId === 'legacy-50k').length})</span>
+                </button>
+              )}
             </div>
           </div>
 
           <div className="flex items-center space-x-3 text-[11px] text-zinc-400 font-mono">
             <span>as of {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>
             <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
-              CALITATE DATE: LIVE
+              {user ? 'CLOUD SYNC: FIRESTORE' : 'LOCAL LEDGER'}
             </span>
           </div>
         </div>

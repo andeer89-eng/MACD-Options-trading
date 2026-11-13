@@ -41,7 +41,6 @@ import {
   HeatmapSummaryHUD,
   DrillDownLevel,
   DrillDownState,
-  generateFullHeatmapData,
   calculateHeatmapSummary,
   computeSquarifiedTreemap,
   getSubIndustryGroups,
@@ -62,6 +61,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
   const [items, setItems] = useState<HeatmapItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   
   // Navigation & Control Settings
@@ -104,26 +104,26 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
     return items.find((i) => i.symbol === drillState.selectedSymbol) || inspectedItem;
   }, [items, drillState.selectedSymbol, inspectedItem]);
 
-  // Load Heatmap Data
+  // Load Live Heatmap Data (no synthetic fallback)
   const fetchHeatmapData = async (isManualRefresh: boolean = false) => {
     if (isManualRefresh) setRefreshing(true);
     else setLoading(true);
+    setFetchError(null);
 
     try {
-      const res = await fetch(`/api/heatmap?timeframe=${timeframe}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.items) && data.items.length > 0) {
-          setItems(data.items);
-          setLastUpdated(new Date());
-        } else {
-          setItems(generateFullHeatmapData());
-        }
+      const res = await fetch(
+        `/api/heatmap?timeframe=${timeframe}${isManualRefresh ? '&refresh=true' : ''}`
+      );
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.items) && data.items.length > 0) {
+        setItems(data.items);
+        setLastUpdated(new Date());
       } else {
-        setItems(generateFullHeatmapData());
+        throw new Error(data.error || 'Live heatmap data unavailable.');
       }
-    } catch (e) {
-      setItems(generateFullHeatmapData());
+    } catch (e: any) {
+      setItems([]);
+      setFetchError(e?.message || 'Unable to connect to live /api/heatmap endpoint.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -275,8 +275,9 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
     }
 
     if (colorMode === 'SHORT_SQUEEZE_RISK') {
-      if (item.squeezeRiskScore >= 75) return { bg: 'bg-purple-600 text-white border-purple-300 font-bold animate-pulse', text: 'text-purple-100' };
-      if (item.squeezeRiskScore >= 50) return { bg: 'bg-indigo-900/80 text-indigo-200 border-indigo-600/70', text: 'text-indigo-300' };
+      const sqScore = item.squeezeRiskScore ?? 0;
+      if (sqScore >= 75) return { bg: 'bg-purple-600 text-white border-purple-300 font-bold animate-pulse', text: 'text-purple-100' };
+      if (sqScore >= 50) return { bg: 'bg-indigo-900/80 text-indigo-200 border-indigo-600/70', text: 'text-indigo-300' };
       return { bg: 'bg-zinc-900 text-zinc-400 border-zinc-800', text: 'text-zinc-500' };
     }
 
@@ -303,7 +304,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
         : colorMode === 'INSTITUTIONAL_FLOW'
         ? `${item.netDeltaFlowMillions >= 0 ? '+' : ''}$${item.netDeltaFlowMillions.toFixed(0)}M`
         : colorMode === 'SHORT_SQUEEZE_RISK'
-        ? `${item.shortInterestPct}% Short`
+        ? `Risk ${item.squeezeRiskScore ?? 0}/100`
         : item.hasEarningsSoon
         ? `Earnings: ${item.earningsProximityDays === 0 ? 'Today' : item.earningsProximityDays + 'd'}`
         : `${(item.timeframeChanges[tf] || 0) >= 0 ? '+' : ''}${(item.timeframeChanges[tf] || 0).toFixed(1)}%`;
@@ -668,6 +669,29 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
         </div>
       </div>
 
+      {/* LOADING & ERROR STATES */}
+      {loading && items.length === 0 && (
+        <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-8 text-center text-xs font-mono text-zinc-400 flex items-center justify-center gap-2">
+          <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+          <span>Fetching live 503 S&amp;P 500 + Crypto market quotes from Yahoo Finance...</span>
+        </div>
+      )}
+
+      {!loading && fetchError && (
+        <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 text-xs text-rose-300">
+            <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{fetchError}</span>
+          </div>
+          <button
+            onClick={() => fetchHeatmapData(true)}
+            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shrink-0"
+          >
+            Retry Feed
+          </button>
+        </div>
+      )}
+
       {/* Main Renderer Canvas / Grid View */}
       {renderEngine === 'WEBGL' ? (
         /* WebGL 60 FPS Hardware Renderer */
@@ -936,22 +960,28 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   </svg>
                 </div>
 
-                {/* Volatility & Momentum Metrics Grid */}
+                {/* Volatility & Momentum Metrics Grid (Computed Strictly From Real Price Series) */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 font-mono text-xs pt-2">
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">30-Day ATR</span>
+                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">10-Day Price Range</span>
                     <span className="text-sm font-bold text-amber-300 block mt-1">
-                      ${(selectedAsset.price * 0.024).toFixed(2)} (2.4%)
+                      {(() => {
+                        const min = Math.min(...selectedAsset.sparkline);
+                        const max = Math.max(...selectedAsset.sparkline);
+                        const span = max - min;
+                        const spanPct = min > 0 ? (span / min) * 100 : 0;
+                        return `$${span.toFixed(2)} (${spanPct.toFixed(1)}%)`;
+                      })()}
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">Average True Range</span>
+                    <span className="text-[10px] text-zinc-500 block">Observed High-Low Span</span>
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Implied Volatility</span>
-                    <span className="text-sm font-bold text-cyan-400 block mt-1">
-                      {(30 + selectedAsset.rvol * 5).toFixed(1)}% IV
+                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">1W Performance</span>
+                    <span className={`text-sm font-bold block mt-1 ${selectedAsset.timeframeChanges['1W'] >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {selectedAsset.timeframeChanges['1W'] >= 0 ? '+' : ''}{selectedAsset.timeframeChanges['1W'].toFixed(2)}%
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">IV Rank: {Math.min(99, Math.round(selectedAsset.rvol * 22))}%</span>
+                    <span className="text-[10px] text-zinc-500 block">YTD/3M: {selectedAsset.timeframeChanges['YTD'].toFixed(1)}%</span>
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
@@ -967,13 +997,13 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                     <span className={`text-sm font-bold block mt-1 ${selectedAsset.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {selectedAsset.netDeltaFlowMillions >= 0 ? '+' : ''}${selectedAsset.netDeltaFlowMillions.toFixed(0)}M
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">Net Order Flow</span>
+                    <span className="text-[10px] text-zinc-500 block">Price-Cap Flow Proxy</span>
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">RSI Momentum</span>
+                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">RSI (14)</span>
                     <span className={`text-sm font-bold block mt-1 ${selectedAsset.rsi >= 70 ? 'text-rose-400' : selectedAsset.rsi <= 30 ? 'text-emerald-400' : 'text-zinc-200'}`}>
-                      {selectedAsset.rsi.toFixed(0)} RSI
+                      {selectedAsset.rsi.toFixed(1)} RSI
                     </span>
                     <span className="text-[10px] text-zinc-500 block">
                       {selectedAsset.rsi >= 70 ? 'Overbought' : selectedAsset.rsi <= 30 ? 'Oversold' : 'Neutral'}
@@ -981,22 +1011,25 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Short Interest</span>
+                    <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Momentum Risk</span>
                     <span className="text-sm font-bold text-purple-400 block mt-1">
-                      {selectedAsset.shortInterestPct}% ({selectedAsset.squeezeRiskScore}/100)
+                      {selectedAsset.squeezeRiskScore ?? 0}/100
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">Squeeze Risk</span>
+                    <span className="text-[10px] text-zinc-500 block">Computed Index</span>
                   </div>
                 </div>
 
                 {/* Actions Bar */}
                 <div className="pt-3 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
                   <button
-                    onClick={() => setInspectedItem(selectedAsset)}
+                    onClick={() => {
+                      setActiveTabModal('METRICS');
+                      setInspectedItem(selectedAsset);
+                    }}
                     className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs font-mono flex items-center gap-2 transition"
                   >
                     <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Inspect DOM Liquidity Walls</span>
+                    <span>Inspect Asset Snapshot</span>
                   </button>
 
                   <button
@@ -1013,7 +1046,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
         </div>
       )}
 
-      {/* Depth-of-Market (DOM) Orderbook Inspector Modal */}
+      {/* Asset Quantitative Snapshot Modal */}
       {inspectedItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-5 relative">
@@ -1043,90 +1076,87 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
               </div>
             </div>
 
-            {/* DOM Tab Header */}
             <div className="flex items-center space-x-2 border-b border-zinc-800 pb-3 text-xs font-mono">
-              <button
-                onClick={() => setActiveTabModal('DOM')}
-                className={`px-3 py-1.5 rounded-lg transition ${
-                  activeTabModal === 'DOM' ? 'bg-indigo-600 text-white font-bold' : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                DOM Liquidity Walls & Orderbook
-              </button>
               <button
                 onClick={() => setActiveTabModal('METRICS')}
                 className={`px-3 py-1.5 rounded-lg transition ${
                   activeTabModal === 'METRICS' ? 'bg-indigo-600 text-white font-bold' : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                Institutional Flow & Metrics
+                Live Flow &amp; Multi-Timeframe Metrics
+              </button>
+              <button
+                onClick={() => setActiveTabModal('DOM')}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTabModal === 'DOM' ? 'bg-indigo-600 text-white font-bold' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Level-2 Orderbook Status
               </button>
             </div>
 
-            {/* DOM Liquidity Inspector */}
-            {activeTabModal === 'DOM' && (
-              <div className="space-y-4 font-mono text-xs">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block">Bid/Ask Liquidity Ratio</span>
-                    <span className="text-base font-bold text-emerald-400 block mt-0.5">
-                      {inspectedItem.orderbookDepth.bidAskRatio.toFixed(2)} Ratio
-                    </span>
-                    <span className="text-[10px] text-zinc-400 block">
-                      {inspectedItem.orderbookDepth.bidAskRatio > 1.0 ? 'Bid Support Heavy' : 'Ask Wall Overhead'}
-                    </span>
-                  </div>
-
-                  <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block">Bid Depth ($M)</span>
-                    <span className="text-base font-bold text-emerald-400 block mt-0.5">
-                      ${inspectedItem.orderbookDepth.totalBidLiquidityMillions}M
-                    </span>
-                  </div>
-
-                  <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block">Ask Depth ($M)</span>
-                    <span className="text-base font-bold text-rose-400 block mt-0.5">
-                      ${inspectedItem.orderbookDepth.totalAskLiquidityMillions}M
-                    </span>
-                  </div>
-
-                  <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
-                    <span className="text-[10px] text-zinc-500 uppercase block">Bid/Ask Spread</span>
-                    <span className="text-base font-bold text-amber-300 block mt-0.5">
-                      ${inspectedItem.orderbookDepth.spread.toFixed(2)} ({inspectedItem.orderbookDepth.spreadPct}%)
-                    </span>
-                  </div>
+            {activeTabModal === 'METRICS' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 uppercase block">1D Change</span>
+                  <span className={`text-base font-bold mt-0.5 block ${inspectedItem.timeframeChanges['1D'] >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {inspectedItem.timeframeChanges['1D'] >= 0 ? '+' : ''}{inspectedItem.timeframeChanges['1D'].toFixed(2)}%
+                  </span>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-emerald-400 font-bold border-b border-zinc-800 pb-1 text-[11px]">
-                      <span>BID SIZE</span>
-                      <span>BID PRICE</span>
-                    </div>
-                    {inspectedItem.orderbookDepth.bids.map((b, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-emerald-950/40 p-2 rounded border border-emerald-800/40">
-                        <span className="text-emerald-300 font-bold">{b.size.toLocaleString()} shares</span>
-                        <span className="text-white font-bold">${b.price.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-rose-400 font-bold border-b border-zinc-800 pb-1 text-[11px]">
-                      <span>ASK PRICE</span>
-                      <span>ASK SIZE</span>
-                    </div>
-                    {inspectedItem.orderbookDepth.asks.map((a, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-rose-950/40 p-2 rounded border border-rose-800/40">
-                        <span className="text-white font-bold">${a.price.toFixed(2)}</span>
-                        <span className="text-rose-300 font-bold">{a.size.toLocaleString()} shares</span>
-                      </div>
-                    ))}
-                  </div>
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 uppercase block">1W Change</span>
+                  <span className={`text-base font-bold mt-0.5 block ${inspectedItem.timeframeChanges['1W'] >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {inspectedItem.timeframeChanges['1W'] >= 0 ? '+' : ''}{inspectedItem.timeframeChanges['1W'].toFixed(2)}%
+                  </span>
+                </div>
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 uppercase block">RSI (14)</span>
+                  <span className="text-base font-bold text-white mt-0.5 block">{inspectedItem.rsi.toFixed(1)}</span>
+                </div>
+                <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 uppercase block">Net Delta Proxy</span>
+                  <span className={`text-base font-bold mt-0.5 block ${inspectedItem.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {inspectedItem.netDeltaFlowMillions >= 0 ? '+' : ''}${inspectedItem.netDeltaFlowMillions.toFixed(1)}M
+                  </span>
                 </div>
               </div>
+            )}
+
+            {activeTabModal === 'DOM' && (
+              inspectedItem.orderbookDepth ? (
+                <div className="space-y-4 font-mono text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Bid/Ask Ratio</span>
+                      <span className="text-base font-bold text-emerald-400 block mt-0.5">
+                        {inspectedItem.orderbookDepth.bidAskRatio.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Bid Depth</span>
+                      <span className="text-base font-bold text-emerald-400 block mt-0.5">
+                        ${inspectedItem.orderbookDepth.totalBidLiquidityMillions}M
+                      </span>
+                    </div>
+                    <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Ask Depth</span>
+                      <span className="text-base font-bold text-rose-400 block mt-0.5">
+                        ${inspectedItem.orderbookDepth.totalAskLiquidityMillions}M
+                      </span>
+                    </div>
+                    <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Spread</span>
+                      <span className="text-base font-bold text-amber-300 block mt-0.5">
+                        ${inspectedItem.orderbookDepth.spread.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-5 rounded-xl bg-zinc-900/70 border border-zinc-800 text-xs text-zinc-400 font-mono">
+                  Exchange Level-2 (L2) order book depth feed requires an authenticated institutional FIX/WebSocket market-depth subscription. Simulated DOM liquidity walls have been disabled so only verified Yahoo Finance price and RSI telemetry are displayed.
+                </div>
+              )
             )}
 
             <div className="pt-4 border-t border-zinc-800 flex justify-end">

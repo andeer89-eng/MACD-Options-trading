@@ -57,9 +57,6 @@ export interface SystemHealthData {
   };
 }
 
-/**
- * Classifies latency into responsive performance tiers
- */
 export function calculateLatencyRating(latencyMs: number): 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' {
   if (latencyMs <= 600) return 'EXCELLENT';
   if (latencyMs <= 1800) return 'GOOD';
@@ -67,9 +64,6 @@ export function calculateLatencyRating(latencyMs: number): 'EXCELLENT' | 'GOOD' 
   return 'POOR';
 }
 
-/**
- * Computes memory utilization percentage and health status
- */
 export function calculateMemoryHealth(
   heapUsedMb: number,
   heapTotalMb: number
@@ -87,9 +81,6 @@ export function calculateMemoryHealth(
   return { percent, health };
 }
 
-/**
- * Formats uptime seconds into human-readable duration (e.g. "3d 4h 12m 45s")
- */
 export function formatUptime(seconds: number): string {
   const sec = Math.floor(seconds % 60);
   const min = Math.floor((seconds / 60) % 60);
@@ -105,18 +96,12 @@ export function formatUptime(seconds: number): string {
   return parts.join(' ');
 }
 
-/**
- * Calculates processing throughput in tickers per second
- */
 export function calculateThroughput(tickerCount: number, durationMs: number): number {
   if (durationMs <= 0 || tickerCount <= 0) return 0;
   const durationSec = durationMs / 1000;
   return Number((tickerCount / durationSec).toFixed(1));
 }
 
-/**
- * Calculates remaining API quota and usage percentage
- */
 export function calculateQuotaUsage(
   usedRequests: number,
   maxHourlyQuota: number = 2000
@@ -126,9 +111,6 @@ export function calculateQuotaUsage(
   return { remaining, percentUsed };
 }
 
-/**
- * Evaluates holistic system status across latency, memory, and rate-limits
- */
 export function evaluateOverallSystemStatus(
   latencyRating: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR',
   memoryHealth: 'HEALTHY' | 'ELEVATED' | 'CRITICAL',
@@ -144,70 +126,55 @@ export function evaluateOverallSystemStatus(
 }
 
 /**
- * Generates initial realistic telemetry state for fallback and demonstration
+ * Clean zeroed initial telemetry placeholder before /api/system-health responds.
+ * Contains zero fabricated latency, uptime, cache hit, or request counts.
  */
-export function getBaselineHealthData(): SystemHealthData {
-  const now = new Date();
-  const history: Array<{ timestamp: string; latencyMs: number }> = [];
-
-  // Generate 12 historical 5-minute ticks
-  for (let i = 11; i >= 0; i--) {
-    const t = new Date(now.getTime() - i * 5 * 60000);
-    const timeStr = t.toTimeString().slice(0, 5);
-    const latency = Math.floor(320 + Math.sin(i) * 90 + Math.random() * 40);
-    history.push({ timestamp: timeStr, latencyMs: latency });
-  }
-
-  const scanLatencyMs = history[history.length - 1].latencyMs;
-  const latencyRating = calculateLatencyRating(scanLatencyMs);
-  const memory = {
-    rssMb: 178.4,
-    heapUsedMb: 114.2,
-    heapTotalMb: 198.5,
-    externalMb: 14.8,
-    utilizationPercent: 57.5,
-    memoryHealth: 'HEALTHY' as const,
-  };
-  const { remaining, percentUsed } = calculateQuotaUsage(184, 2000);
-
+export function createEmptyHealthData(): SystemHealthData {
   return {
-    status: evaluateOverallSystemStatus(latencyRating, memory.memoryHealth, percentUsed),
-    uptimeSeconds: 86400 * 3 + 3600 * 7 + 1420,
-    uptimeFormatted: formatUptime(86400 * 3 + 3600 * 7 + 1420),
-    scanLatencyMs,
-    latencyRating,
-    latencyHistory: history,
-    tickersPerSecond: 36.2,
-    totalTickersScannedSession: 18450,
-    lastCycleDurationMs: 13890, // ~13.8 seconds to scan full basket
+    status: 'OPTIMAL',
+    uptimeSeconds: 0,
+    uptimeFormatted: '0s',
+    scanLatencyMs: 0,
+    latencyRating: 'EXCELLENT',
+    latencyHistory: [],
+    tickersPerSecond: 0,
+    totalTickersScannedSession: 0,
+    lastCycleDurationMs: 0,
     apiQuota: {
-      provider: 'Yahoo Finance Free Endpoint',
-      usedRequests: 184,
+      provider: 'Yahoo Finance Chart & Spark API',
+      usedRequests: 0,
       maxHourlyQuota: 2000,
-      remainingQuota: remaining,
-      percentUsed,
+      remainingQuota: 2000,
+      percentUsed: 0,
       rateLimitHits: 0,
-      resetTimeStr: 'Top of the hour (automatic rolling window)',
+      resetTimeStr: 'Top of the hour (rolling window)',
     },
     secCompliance: {
-      currentReqsPerSec: 1.2,
+      currentReqsPerSec: 0,
       maxAllowedReqsPerSec: 10.0,
       isCompliant: true,
       userAgent: 'TrullasTradingScanner/2.0 (trader@trullas-scanner.com)',
     },
-    memory,
+    memory: {
+      rssMb: 0,
+      heapUsedMb: 0,
+      heapTotalMb: 0,
+      externalMb: 0,
+      utilizationPercent: 0,
+      memoryHealth: 'HEALTHY',
+    },
     cache: {
-      cachedSymbolsCount: 503,
-      hitRatioPercent: 91.4,
-      estimatedMemoryKb: 1420,
+      cachedSymbolsCount: 0,
+      hitRatioPercent: 0,
+      estimatedMemoryKb: 0,
     },
     daemon: {
       is247Active: true,
       intervalSeconds: 45,
-      lastHeartbeat: now.toISOString(),
-      consecutiveSuccessfulScans: 412,
-      nodeVersion: typeof process !== 'undefined' ? process.version : 'v20.x',
-      platform: typeof process !== 'undefined' ? process.platform : 'linux',
+      lastHeartbeat: new Date().toISOString(),
+      consecutiveSuccessfulScans: 0,
+      nodeVersion: typeof process !== 'undefined' ? process.version : 'browser',
+      platform: typeof process !== 'undefined' ? process.platform : 'web',
     },
   };
 }

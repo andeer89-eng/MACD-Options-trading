@@ -33,7 +33,7 @@ import {
   isFilterActive,
   countActiveFilters,
 } from '../utils/alertFilter';
-import { generateStableAlertId, generateCompositeKey } from '../utils/dataFetcher';
+import { generateStableAlertId } from '../utils/dataFetcher';
 
 export type AlertLogItem = AlertItemData;
 export type { VolatilityLevel, AlertFilterCriteria };
@@ -54,16 +54,47 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
   const [telegramToken, setTelegramToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
   const [discordWebhook, setDiscordWebhook] = useState('');
-  const [testSent, setTestSent] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState<{
+    type: 'idle' | 'sending' | 'success' | 'error';
+    message?: string;
+  }>({ type: 'idle' });
 
   // Filter settings state
   const [showSettings, setShowSettings] = useState(true);
   const [filters, setFilters] = useState<AlertFilterCriteria>(DEFAULT_ALERT_FILTERS);
 
-  const handleSendTestWebhook = () => {
-    onPlayChime();
-    setTestSent(true);
-    setTimeout(() => setTestSent(false), 3000);
+  const handleSendTestWebhook = async () => {
+    const url = discordWebhook.trim();
+    if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) {
+      setWebhookStatus({
+        type: 'error',
+        message: 'Enter a valid http:// or https:// webhook URL first.',
+      });
+      return;
+    }
+
+    setWebhookStatus({ type: 'sending', message: 'Sending payload...' });
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'TEST_PING',
+          source: 'Trullas Divergence Scanner',
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      setWebhookStatus({ type: 'success', message: 'Test Webhook Sent!' });
+      setTimeout(() => setWebhookStatus({ type: 'idle' }), 4000);
+    } catch (err: any) {
+      setWebhookStatus({
+        type: 'error',
+        message: `Dispatch failed: ${err?.message || 'Network/CORS blocked by endpoint'}`,
+      });
+    }
   };
 
   // Toggle volatility level selection
@@ -203,11 +234,32 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
 
             <button
               onClick={handleSendTestWebhook}
-              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded text-xs transition flex items-center justify-center space-x-1.5"
+              disabled={webhookStatus.type === 'sending'}
+              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 text-white font-semibold rounded text-xs transition flex items-center justify-center space-x-1.5"
             >
               <Zap className="w-3.5 h-3.5" />
-              <span>{testSent ? 'Simulated Ping Dispatched!' : 'Send Test Webhook Ping'}</span>
+              <span>
+                {webhookStatus.type === 'sending'
+                  ? 'Dispatching Webhook...'
+                  : webhookStatus.type === 'success'
+                  ? 'Test Webhook Sent'
+                  : 'Send Test Webhook Ping'}
+              </span>
             </button>
+
+            {webhookStatus.message && (
+              <p
+                className={`text-[11px] font-mono ${
+                  webhookStatus.type === 'error'
+                    ? 'text-rose-400'
+                    : webhookStatus.type === 'success'
+                    ? 'text-emerald-400'
+                    : 'text-zinc-400'
+                }`}
+              >
+                {webhookStatus.message}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -352,11 +404,11 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
                     { label: '≥ 70% Strong', val: 70 },
                     { label: '≥ 80% High Prob', val: 80 },
                     { label: '≥ 90% Elite', val: 90 },
-                  ].map((preset, pIdx) => {
+                  ].map((preset) => {
                     const active = filters.minQualityScore === preset.val;
                     return (
                       <button
-                        key={`${preset.val}-${pIdx}-${Date.now()}`}
+                        key={`preset-${preset.val}`}
                         onClick={() =>
                           setFilters((prev) => ({
                             ...prev,
@@ -396,12 +448,12 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
 
                 {/* Volatility Level Checkboxes/Toggles */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                  {(['low', 'moderate', 'high'] as VolatilityLevel[]).map((level, lIdx) => {
+                  {(['low', 'moderate', 'high'] as VolatilityLevel[]).map((level) => {
                     const isSelected = filters.volatilityLevels.includes(level);
                     const meta = getVolatilityLevelMeta(level);
                     return (
                       <button
-                        key={`${level}-${lIdx}-${Date.now()}`}
+                        key={`vol-${level}`}
                         onClick={() => handleToggleVolatility(level)}
                         className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition ${
                           isSelected
@@ -496,9 +548,9 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
                     { label: 'Bullish', val: 'BULLISH' },
                     { label: 'Bearish', val: 'BEARISH' },
                     { label: 'Triple Only', val: 'TRIPLE' },
-                  ].map((item, dIdx) => (
+                  ].map((item) => (
                     <button
-                      key={`${item.val}-${dIdx}-${Date.now()}`}
+                      key={`dir-${item.val}`}
                       onClick={() =>
                         setFilters((prev) => ({
                           ...prev,
@@ -567,8 +619,7 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
               const isTriple = al.type.includes('TRIPLE');
               const volLevel = al.volatilityLevel || determineVolatilityLevel(al.atrPercent);
               const volMeta = getVolatilityLevelMeta(volLevel);
-              // Stable unique identifier constructed as ${symbol}-${index}-${Date.now()}
-              const alertKey = `${al.symbol}-${idx}-${Date.now()}`;
+              const alertKey = generateStableAlertId(al.symbol, al.type, al.timestamp, idx);
 
               return (
                 <div

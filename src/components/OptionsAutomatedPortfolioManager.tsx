@@ -57,7 +57,7 @@ import {
   relearnOptionsMemoryFromHistory,
   exportOptionsMemoryJSON,
 } from '../utils/optionsAutomatedPortfolio';
-import { OptionsTradeRecord } from '../data/richOptionsTradesArchive';
+import type { OptionsTradeRecord } from '../data/richOptionsTradesArchive';
 import { downloadCSV } from '../utils/tradeJournal';
 import {
   getMarketSessionStatus,
@@ -100,22 +100,60 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     return () => clearInterval(timer);
   }, []);
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  const fetchLiveOptionsCandidates = async () => {
+    const targets = [
+      { symbol: 'ES', feedSymbol: 'ES=F' },
+      { symbol: 'MES', feedSymbol: 'MES=F' },
+      { symbol: 'SPY', feedSymbol: 'SPY' },
+    ];
+    const settled = await Promise.all(
+      targets.map(async ({ symbol, feedSymbol }) => {
+        try {
+          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(feedSymbol)}&timeframe=1d&range=1mo`);
+          if (!res.ok) return null;
+          const json = await res.json();
+          const bars = Array.isArray(json?.candles) ? json.candles : [];
+          if (bars.length < 5) return null;
+          const latestClose = Number(bars[bars.length - 1]?.close);
+          if (!Number.isFinite(latestClose) || latestClose <= 0) return null;
+          return {
+            symbol,
+            currentPrice: latestClose,
+            candles: bars.map((b: any) => ({
+              open: Number(b.open ?? b.close),
+              high: Number(b.high ?? b.close),
+              low: Number(b.low ?? b.close),
+              close: Number(b.close),
+            })),
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+    return settled.filter((item): item is NonNullable<typeof item> => item !== null);
+  };
+
   // Autonomous Intraday Scheduler (every 60s when autopilot is active)
   useEffect(() => {
     if (!account.isAutoPilotActive) return;
 
     if (nextScanCountdown === 60) {
-      const marketCandidates = [
-        { symbol: 'ES', currentPrice: 7648.50 },
-        { symbol: 'MES', currentPrice: 6915.20 },
-        { symbol: 'SPY', currentPrice: 574.80 },
-      ];
-      const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates, true);
-      if (actionsTaken.length > 0) {
-        setAccount(updatedAccount);
-        setCycleFeedbackMessage(`Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s).`);
-        setTimeout(() => setCycleFeedbackMessage(null), 5000);
-      }
+      let active = true;
+      fetchLiveOptionsCandidates().then((marketCandidates) => {
+        if (!active || marketCandidates.length === 0) return;
+        const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates, true);
+        if (actionsTaken.length > 0) {
+          setAccount(updatedAccount);
+          setCycleFeedbackMessage(`Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s) from live feeds.`);
+          setTimeout(() => setCycleFeedbackMessage(null), 5000);
+        }
+      });
+      return () => {
+        active = false;
+      };
     }
   }, [nextScanCountdown, account.isAutoPilotActive]);
 
@@ -280,34 +318,38 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   };
 
   // Run autonomous options cycle
-  const handleRunOptionsCycle = () => {
+  const handleRunOptionsCycle = async () => {
     setIsCycleRunning(true);
-    setCycleFeedbackMessage('Scanning S&P 500 (ES / MES / SPY) & computing TradingWarz Golden Zones...');
+    setCycleFeedbackMessage('Fetching live ES=F, MES=F & SPY OHLCV feeds and evaluating TradingWarz Golden Zones...');
 
-    setTimeout(() => {
-      // Market proxy items for ES and MES
-      const marketCandidates = [
-        { symbol: 'ES', currentPrice: 7648.50 },
-        { symbol: 'MES', currentPrice: 6915.20 },
-        { symbol: 'SPY', currentPrice: 574.80 },
-      ];
+    try {
+      const marketCandidates = await fetchLiveOptionsCandidates();
+      if (marketCandidates.length === 0) {
+        setCycleFeedbackMessage('Cycle aborted: live ES=F / MES=F / SPY market feeds unavailable.');
+        setTimeout(() => setCycleFeedbackMessage(null), 6000);
+        return;
+      }
 
       const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates);
       setAccount(updatedAccount);
-      setIsCycleRunning(false);
 
       if (actionsTaken.length > 0) {
         setCycleFeedbackMessage(
-          `Cycle Complete: Executed ${actionsTaken.length} autonomous options action(s). S&P 500 premium decay locked in!`
+          `Cycle Complete: Executed ${actionsTaken.length} autonomous options action(s) using live ES/MES/SPY telemetry.`
         );
       } else {
         setCycleFeedbackMessage(
-          `Cycle Complete: Evaluated ${account.positions.length} open short put(s). Accruing +$${updatedAccount.dailyThetaIncome.toFixed(2)}/day in natural theta decay.`
+          `Cycle Complete: Evaluated ${account.positions.length} open short put(s) against live market feeds. Accruing +$${updatedAccount.dailyThetaIncome.toFixed(2)}/day in theta decay.`
         );
       }
 
       setTimeout(() => setCycleFeedbackMessage(null), 6000);
-    }, 650);
+    } catch {
+      setCycleFeedbackMessage('Cycle aborted: unable to reach live market candles API.');
+      setTimeout(() => setCycleFeedbackMessage(null), 6000);
+    } finally {
+      setIsCycleRunning(false);
+    }
   };
 
   // Toggle Bot Pause
@@ -324,32 +366,35 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   // Export CSV
   const handleExportCSV = () => {
     const csv = exportOptionsLogsToCSV(account);
-    downloadCSV(csv, `rich_sp500_options_journal_${new Date().toISOString().slice(0, 10)}.csv`);
-    setExportToast(`Exported ${account.tradeHistory.length} verified trade records matching Rich's audit format.`);
+    downloadCSV(csv, `options_harvesting_journal_${new Date().toISOString().slice(0, 10)}.csv`);
+    setExportToast(`Exported ${account.tradeHistory.length} trade records.`);
     setTimeout(() => setExportToast(null), 4000);
   };
 
   // Reset Portfolio
   const handleResetPortfolio = () => {
-    if (confirm('Reset Options Strategy today with $2,000 USD starting capital?\n\nThis will reset active positions & balance to $2,000 while strictly preserving 100% of all 192 historical trade memories & rules!')) {
-      const reset = resetOptionsPortfolio(2000);
-      setAccount(reset);
-      setCycleFeedbackMessage('Options Portfolio reset today with fresh $2,000 USD baseline. Preserved 100% of FinRL epistemic memories & 192 audit trades!');
-      setTimeout(() => setCycleFeedbackMessage(null), 5000);
-    }
+    setShowResetConfirm(true);
+  };
+
+  const confirmResetPortfolio = () => {
+    const reset = resetOptionsPortfolio(2000);
+    setAccount(reset);
+    setShowResetConfirm(false);
+    setCycleFeedbackMessage('Options Portfolio reset with fresh $2,000.00 USD starting capital.');
+    setTimeout(() => setCycleFeedbackMessage(null), 5000);
   };
 
   // Relearn / Resynthesize Active Memory from History
   const handleRelearnFromHistory = () => {
     setIsRelearningMemory(true);
-    setCycleFeedbackMessage('Synthesizing neural reflection memory over all 192 historical trade records...');
+    setCycleFeedbackMessage('Synthesizing reflection memory from recorded closed options trades...');
     setTimeout(() => {
       const updated = relearnOptionsMemoryFromHistory(account);
       setAccount(updated);
       setIsRelearningMemory(false);
-      setCycleFeedbackMessage(`Successfully synthesized ${updated.activeMemory.episodes.length} episodes! Calibrated Max Delta: ≤ ${updated.activeMemory.calibratedMaxDelta}Δ`);
+      setCycleFeedbackMessage(`Synthesized ${updated.activeMemory.episodes.length} trade episode(s). Calibrated Max Delta: ≤ ${updated.activeMemory.calibratedMaxDelta}Δ`);
       setTimeout(() => setCycleFeedbackMessage(null), 4500);
-    }, 600);
+    }, 300);
   };
 
   // Export Memory JSON
@@ -404,7 +449,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   return (
     <div className="space-y-6">
-      {/* PERSISTENT OPTIONS HUD (Rich's 192-Trade Performance Dashboard) */}
+      {/* PERSISTENT OPTIONS HUD */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
         
@@ -414,7 +459,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
               <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 <Flame className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Rich's S&P 500 Harvesting Engine ($2k Virtual Era)</span>
+                <span>S&amp;P 500 Options Harvesting Engine ($2,000 Baseline)</span>
               </span>
               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                 <Sparkles className="w-3 h-3 text-indigo-400" />
@@ -493,7 +538,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <button
               onClick={handleResetPortfolio}
               className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors"
-              title="Reset Portfolio to $50k"
+              title="Reset Options Portfolio ($2,000)"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -548,7 +593,13 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 uppercase font-semibold">Profit Factor</div>
             <div className="text-xl font-bold text-white mt-1">{stats.profitFactor}x</div>
-            <div className="text-[10px] text-emerald-400 mt-0.5">Exceptional Asymmetry</div>
+            <div className="text-[10px] text-emerald-400 mt-0.5">
+              {stats.totalTradesCount === 0
+                ? 'No Closed Trades'
+                : stats.profitFactor >= 2
+                ? 'Strong Asymmetry'
+                : 'Active Ratio'}
+            </div>
           </div>
 
           <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3">
@@ -562,7 +613,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3">
             <div className="text-[11px] text-zinc-400 uppercase font-semibold">Avg Win / Trade</div>
             <div className="text-xl font-bold text-emerald-400 mt-1">+${stats.averageWin.toFixed(2)}</div>
-            <div className="text-[10px] text-zinc-400 mt-0.5">Losses: $0.00 (Protected)</div>
+            <div className="text-[10px] text-zinc-400 mt-0.5">Avg Loss: -${stats.averageLoss.toFixed(2)}</div>
           </div>
         </div>
       </div>
@@ -607,20 +658,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             }`}
           >
             <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Options Trade Journal (Active $2k) ({filteredHistory.length})</span>
+            <span>Options Trade Journal ({filteredHistory.length})</span>
           </button>
 
-          <button
-            onClick={() => setMainTab('legacy')}
-            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-              mainTab === 'legacy'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                : 'text-zinc-400 hover:text-amber-200 hover:bg-zinc-800/50'
-            }`}
-          >
-            <Award className="w-3.5 h-3.5 text-amber-400" />
-            <span>Legacy (50k era) ({filteredLegacy.length})</span>
-          </button>
+          {account.legacyHistory && account.legacyHistory.length > 0 && (
+            <button
+              onClick={() => setMainTab('legacy')}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                mainTab === 'legacy'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                  : 'text-zinc-400 hover:text-amber-200 hover:bg-zinc-800/50'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5 text-amber-400" />
+              <span>Archived ({filteredLegacy.length})</span>
+            </button>
+          )}
 
           <button
             onClick={() => setMainTab('open-positions')}
@@ -996,10 +1049,10 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold text-amber-300 text-sm block mb-1">
-                Read-Only Legacy Archive: 192 Historical Audit Trades ($115,008.44 Banked Income)
+                Read-Only Archived Trades ({account.legacyHistory.length})
               </span>
               <p className="text-amber-200/80 leading-relaxed">
-                All 192 trades from Rich's $50,000 era are safely archived here in read-only mode. They remain available for post-trade audit and continue powering the <strong>FinRL &amp; TradeMemory Continual Learning Engine</strong>, but do not count toward active $2,000 dashboard metrics.
+                Archived trade records available for post-trade inspection and calibration analysis.
               </p>
             </div>
           </div>
@@ -1361,10 +1414,10 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   onClick={handleRelearnFromHistory}
                   disabled={isRelearningMemory}
                   className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white flex items-center space-x-1.5 transition-colors shadow"
-                  title="Re-run neural synthesis and reflection across all 192 historical trade records"
+                  title="Re-run synthesis and reflection across recorded trade history"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isRelearningMemory ? 'animate-spin' : ''}`} />
-                  <span>{isRelearningMemory ? 'Synthesizing...' : 'Relearn from 192 Trades'}</span>
+                  <span>{isRelearningMemory ? 'Synthesizing...' : 'Relearn from Trade History'}</span>
                 </button>
                 <button
                   onClick={handleExportMemoryJSON}
@@ -1389,25 +1442,25 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   {account.activeMemory.episodes?.length || account.activeMemory.learningIterations}
                 </div>
                 <div className="text-[10px] text-purple-400">
-                  {account.tradeHistory.length} Archive + Live Loaded
+                  {account.tradeHistory.length} Live Closed Trade(s) Loaded
                 </div>
               </div>
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
                 <div className="text-[10px] text-zinc-500 uppercase font-semibold">Calibrated Delta Cap</div>
                 <div className="text-xl font-bold text-emerald-400 mt-1">≤ {account.activeMemory.calibratedMaxDelta} Δ</div>
-                <div className="text-[10px] text-zinc-400">88-92% Win Margin</div>
+                <div className="text-[10px] text-zinc-400">Target OTM Put Delta</div>
               </div>
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
                 <div className="text-[10px] text-zinc-500 uppercase font-semibold">Optimal TP Target</div>
                 <div className="text-xl font-bold text-indigo-400 mt-1">{account.activeMemory.calibratedProfitTakePct}%</div>
-                <div className="text-[10px] text-zinc-400">Zero Weekend Gamma Risk</div>
+                <div className="text-[10px] text-zinc-400">Early Profit Lock Target</div>
               </div>
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
                 <div className="text-[10px] text-zinc-500 uppercase font-semibold">Total Theta Harvested</div>
                 <div className="text-xl font-bold text-emerald-400 mt-1">
                   ${account.activeMemory.totalThetaHarvested.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-emerald-400">100% Compounding Record</div>
+                <div className="text-[10px] text-emerald-400">Realized Premium Record</div>
               </div>
             </div>
 
@@ -1763,6 +1816,34 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* RESET PORTFOLIO CONFIRMATION MODAL */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Reset Options Portfolio?</h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              This clears open options positions and resets starting cash to <strong className="text-white">$2,000.00 USD</strong> while preserving recorded strategy calibration rules.
+            </p>
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(false)}
+                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmResetPortfolio}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold"
+              >
+                Reset to $2,000
+              </button>
+            </div>
           </div>
         </div>
       )}

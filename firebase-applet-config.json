@@ -1,8 +1,9 @@
 {
   "projectId": "gen-lang-client-0003725602",
-  "appId": "1:242140993421:web:6832e0295f9ecc76938fc4",
+  "appId": "1:242140993421:web:b43187d710bac42f938fc4",
   "apiKey": "AIzaSyBnjOpYu34VU817iEIkySDECSpxwKr-omY",
   "authDomain": "gen-lang-client-0003725602.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-trullsdivergence-b16c2f43-924c-49ee-8350-f85ceffa630b",
   "storageBucket": "gen-lang-client-0003725602.firebasestorage.app",
   "messagingSenderId": "242140993421",
   "measurementId": "",

@@ -83,7 +83,15 @@ export const WatchlistManager: React.FC<WatchlistManagerProps> = ({ onWatchlistS
                   {w.symbols.map((s, sIdx) => (
                     <span key={`wl-sym-${w.id}-${s}-${sIdx}`} className="bg-gray-600 rounded px-2 py-0.5 text-xs flex items-center">
                       {s}
-                      <button onClick={() => removeSymbolFromWatchlist(w.id, s)} className="ml-1"><X size={12}/></button>
+                      <button
+                        onClick={() => {
+                          removeSymbolFromWatchlist(w.id, s);
+                          setWatchlists(getWatchlists());
+                        }}
+                        className="ml-1"
+                      >
+                        <X size={12}/>
+                      </button>
                     </span>
                   ))}
                 </div>

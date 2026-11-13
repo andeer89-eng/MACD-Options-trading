@@ -3,12 +3,94 @@ import assert from 'node:assert/strict';
 import {
   calculateJournalStats,
   exportJournalToCSV,
-  SEED_JOURNAL_ENTRIES,
   JournalEntry,
 } from './tradeJournal.ts';
 
+const TEST_FIXTURE_ENTRIES: JournalEntry[] = [
+  {
+    id: 'test-1',
+    symbol: 'NVDA',
+    companyName: 'NVIDIA Corporation',
+    setupType: 'BULLISH_TRIPLE',
+    timeframe: '1d',
+    status: 'CLOSED_WIN',
+    entryDate: '2026-10-14',
+    exitDate: '2026-10-24',
+    entryPrice: 124.5,
+    exitPrice: 138.2,
+    stopLoss: 120.0,
+    targetPrice: 138.0,
+    quantity: 150,
+    realizedPnL: 2055.0,
+    pnlPercent: 11.0,
+    notes: 'Entered Tranche 1 at 23.6% trigger breakout.',
+    tags: ['Followed 4-Pillars'],
+    executionRating: 5,
+    createdAt: 1760400000000,
+  },
+  {
+    id: 'test-2',
+    symbol: 'AAPL',
+    companyName: 'Apple Inc.',
+    setupType: 'BULLISH_DOUBLE',
+    timeframe: '1d',
+    status: 'CLOSED_WIN',
+    entryDate: '2026-10-18',
+    exitDate: '2026-10-28',
+    entryPrice: 222.0,
+    exitPrice: 231.5,
+    stopLoss: 218.0,
+    targetPrice: 232.0,
+    quantity: 100,
+    realizedPnL: 950.0,
+    pnlPercent: 4.28,
+    notes: 'Took profit at Target 1.',
+    tags: ['TP1 Hit'],
+    executionRating: 4,
+    createdAt: 1760745600000,
+  },
+  {
+    id: 'test-3',
+    symbol: 'TSLA',
+    companyName: 'Tesla, Inc.',
+    setupType: 'BEARISH_TRIPLE',
+    timeframe: '1d',
+    status: 'CLOSED_LOSS',
+    entryDate: '2026-10-20',
+    exitDate: '2026-10-22',
+    entryPrice: 252.0,
+    exitPrice: 258.5,
+    stopLoss: 258.0,
+    targetPrice: 238.0,
+    quantity: 80,
+    realizedPnL: -520.0,
+    pnlPercent: -2.58,
+    notes: 'Respected hard stop.',
+    tags: ['Respected Stop Loss'],
+    executionRating: 4,
+    createdAt: 1760918400000,
+  },
+  {
+    id: 'test-4',
+    symbol: 'MSFT',
+    companyName: 'Microsoft Corporation',
+    setupType: 'BULLISH_TRIPLE',
+    timeframe: '1d',
+    status: 'OPEN',
+    entryDate: '2026-10-30',
+    entryPrice: 422.0,
+    stopLoss: 414.0,
+    targetPrice: 438.0,
+    quantity: 50,
+    notes: 'Active setup.',
+    tags: ['Active'],
+    executionRating: 5,
+    createdAt: 1761782400000,
+  },
+];
+
 test('calculateJournalStats computes win rate and P&L metrics accurately', () => {
-  const stats = calculateJournalStats(SEED_JOURNAL_ENTRIES);
+  const stats = calculateJournalStats(TEST_FIXTURE_ENTRIES);
 
   assert.equal(stats.totalTrades, 4);
   assert.equal(stats.openTrades, 1);
@@ -16,7 +98,7 @@ test('calculateJournalStats computes win rate and P&L metrics accurately', () =>
   assert.equal(stats.winningTrades, 2);
   assert.equal(stats.losingTrades, 1);
   assert.equal(stats.winRatePct, 66.7);
-  assert.equal(stats.totalRealizedPnL, 2485.0); // 2055 + 950 - 520
+  assert.equal(stats.totalRealizedPnL, 2485.0);
   assert.ok(stats.profitFactor > 1.0);
   assert.equal(stats.bestTradePnL, 2055.0);
   assert.equal(stats.worstTradePnL, -520.0);
@@ -33,10 +115,9 @@ test('calculateJournalStats handles empty closed trades list without dividing by
 });
 
 test('exportJournalToCSV generates compliant CSV with audit headers and escaped values', () => {
-  const csv = exportJournalToCSV(SEED_JOURNAL_ENTRIES);
+  const csv = exportJournalToCSV(TEST_FIXTURE_ENTRIES);
   const lines = csv.split('\r\n');
 
-  // Verify header line
   assert.ok(lines.length >= 5, 'Should contain header + 4 rows');
   const header = lines[0];
   assert.ok(header.includes('"Trade ID"'));
@@ -45,7 +126,6 @@ test('exportJournalToCSV generates compliant CSV with audit headers and escaped 
   assert.ok(header.includes('"Risk/Reward Ratio"'));
   assert.ok(header.includes('"Performance & Audit Notes"'));
 
-  // Verify row 1 (NVDA)
   const nvdaRow = lines.find((l) => l.includes('"NVDA"'));
   assert.ok(nvdaRow, 'NVDA row should exist');
   assert.ok(nvdaRow?.includes('"NVIDIA Corporation"'));
@@ -53,7 +133,6 @@ test('exportJournalToCSV generates compliant CSV with audit headers and escaped 
   assert.ok(nvdaRow?.includes('"2055.00"'));
   assert.ok(nvdaRow?.includes('"11.00%"'));
 
-  // Verify row 4 (MSFT open position)
   const msftRow = lines.find((l) => l.includes('"MSFT"'));
   assert.ok(msftRow, 'MSFT row should exist');
   assert.ok(msftRow?.includes('"OPEN"'));

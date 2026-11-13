@@ -2,9 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   GICS_SECTORS_METADATA,
+  GicsSectorPerformance,
   filterWatchlistBySectors,
   calculateSectorBreadth,
-  generateFallbackSectorMetrics,
   getSectorPresets,
 } from './sectorMetrics';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
@@ -40,8 +40,25 @@ describe('GICS Sector Metrics & Filtering Logic', () => {
     assert.equal(tickers.length, 0);
   });
 
-  it('calculates market breadth correctly', () => {
-    const sample = generateFallbackSectorMetrics();
+  it('calculates market breadth correctly from live sector snapshots', () => {
+    const sample: GicsSectorPerformance[] = GICS_SECTORS_METADATA.map((meta, idx) => {
+      const chg = idx % 2 === 0 ? 1.25 - idx * 0.1 : -0.75 - idx * 0.05;
+      return {
+        name: meta.name,
+        etf: meta.etf,
+        price: 100 + idx * 5,
+        changeNominal: Number(chg.toFixed(2)),
+        changePercent: Number(chg.toFixed(2)),
+        weekChangePercent: Number((chg * 1.5).toFixed(2)),
+        volume: 10_000_000,
+        constituentCount: 40,
+        sp500WeightPct: meta.sp500WeightPct,
+        sentiment: chg > 0.3 ? 'bullish' : chg < -0.3 ? 'bearish' : 'neutral',
+        sparkline: [98, 99, 100],
+        keyMegaCaps: meta.keyMegaCaps,
+        isLive: true,
+      };
+    });
     const breadth = calculateSectorBreadth(sample);
     assert.equal(breadth.total, 11);
     assert.ok(breadth.advancing > 0);

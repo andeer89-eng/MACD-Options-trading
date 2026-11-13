@@ -21,9 +21,11 @@ describe('TRULLAS Unified Chart Router (Item 4 Acceptance Tests)', () => {
       source: 'watchlist',
     });
 
-    assert.strictEqual(notifiedTarget?.symbol, 'MSFT');
-    assert.strictEqual(notifiedTarget?.timeframe, '1d');
-    assert.strictEqual(notifiedTarget?.source, 'watchlist');
+    const captured = notifiedTarget as OpenChartParams | null;
+    assert.ok(captured !== null, 'Expected subscriber to receive OpenChartParams');
+    assert.strictEqual(captured.symbol, 'MSFT');
+    assert.strictEqual(captured.timeframe, '1d');
+    assert.strictEqual(captured.source, 'watchlist');
 
     const active = getActiveChartTarget();
     assert.strictEqual(active.symbol, 'MSFT');

@@ -9,14 +9,15 @@ import {
   relearnOptionsMemoryFromHistory,
 } from './optionsAutomatedPortfolio.ts';
 
-test('initDefaultOptionsPortfolio loads 192 historical trades in legacyHistory and initializes fresh $2k active journal', () => {
+test('initDefaultOptionsPortfolio initializes clean empty journal with zero synthetic trades or seeded income', () => {
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.startingBalance, 2000);
   assert.strictEqual(account.cash, 2000);
   assert.strictEqual(account.positions.length, 0);
   assert.strictEqual(account.tradeHistory.length, 0, 'Active trade history starts clean with 0 trades');
-  assert.ok(account.legacyHistory.length >= 192, `Expected at least 192 archived legacy trades, got ${account.legacyHistory.length}`);
-  assert.strictEqual(account.activeMemory.totalThetaHarvested, 115008.44);
+  assert.strictEqual(account.legacyHistory.length, 0, 'No synthetic archive trades seeded');
+  assert.strictEqual(account.activeMemory.totalThetaHarvested, 0);
+  assert.strictEqual(account.activeMemory.episodes.length, 0);
 
   const stats = calculateOptionsStats(account);
   assert.strictEqual(stats.startingBalance, 2000);
@@ -30,21 +31,34 @@ test('processOptionsAutonomousCycle scans and opens a qualified MES position on 
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.positions.length, 0);
 
+  const testCandles = [
+    { open: 6850, high: 6890, low: 6820, close: 6880 },
+    { open: 6880, high: 6910, low: 6840, close: 6895 },
+    { open: 6895, high: 6945, low: 6875, close: 6920 },
+    { open: 6920, high: 6935, low: 6890, close: 6915 }, // Outside/Inside setup
+    { open: 6915, high: 6930, low: 6900, close: 6920 },
+  ];
   const marketItems = [
-    { symbol: 'MES', currentPrice: 6920.0 },
+    { symbol: 'MES', currentPrice: 6920.0, candles: testCandles },
   ];
 
-  const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketItems, true);
+  const { updatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
   assert.ok(updatedAccount.positions.length >= 1, `Expected at least 1 position opened, got ${updatedAccount.positions.length}`);
   assert.ok(updatedAccount.equity > 0);
   assert.ok(updatedAccount.positions[0].executionSession, 'Expected position to have executionSession');
   assert.strictEqual(typeof updatedAccount.dailyThetaIncome, 'number');
 });
 
-test('manualCloseOptionsPosition closes an option and updates realized income', () => {
+test('manualCloseOptionsPosition closes an option, updates realized income, and learns from real trade history', () => {
   const account = initDefaultOptionsPortfolio(2000);
-  // Add a test position
-  const marketItems = [{ symbol: 'MES', currentPrice: 6920.0 }];
+  const testCandles = [
+    { open: 6850, high: 6890, low: 6820, close: 6880 },
+    { open: 6880, high: 6910, low: 6840, close: 6895 },
+    { open: 6895, high: 6945, low: 6875, close: 6920 },
+    { open: 6920, high: 6935, low: 6890, close: 6915 },
+    { open: 6915, high: 6930, low: 6900, close: 6920 },
+  ];
+  const marketItems = [{ symbol: 'MES', currentPrice: 6920.0, candles: testCandles }];
   const { updatedAccount: populatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
   assert.ok(populatedAccount.positions.length > 0);
 
@@ -54,40 +68,24 @@ test('manualCloseOptionsPosition closes an option and updates realized income', 
   const updatedAccount = manualCloseOptionsPosition(
     populatedAccount,
     targetPos.id,
-    5.0, // buy back at 5.0
+    0.10, // buy back near worthless
     'Take profit on test'
   );
 
   assert.strictEqual(updatedAccount.positions.some((p) => p.id === targetPos.id), false);
   assert.ok(updatedAccount.totalRealizedIncome !== initialIncome || updatedAccount.cash > 0);
   assert.ok(updatedAccount.sessionLogs.length > 0);
-});
+  assert.strictEqual(updatedAccount.tradeHistory.length, 1);
 
-test('exportOptionsLogsToCSV generates valid CSV matching Rich document columns including Session', () => {
-  const account = initDefaultOptionsPortfolio(2000);
-  const csv = exportOptionsLogsToCSV(account);
+  const relearned = relearnOptionsMemoryFromHistory(updatedAccount);
+  assert.strictEqual(relearned.activeMemory.episodes.length, 1);
+  assert.strictEqual(relearned.activeMemory.learningIterations, 1);
+  assert.ok(relearned.activeMemory.learnedRules.length >= 5);
+  assert.ok(relearned.activeMemory.episodes[0].reflectionCritique.length > 0);
 
+  const csv = exportOptionsLogsToCSV(relearned);
   assert.ok(csv.includes('Date,Ticker,Session,Bought/Sold,Contract,Expiration'));
-  assert.ok(csv.includes('ES 05NOV26 7340 P'));
-  assert.ok(csv.includes('MES 16MAY25 5650 P'));
+  assert.ok(csv.includes(targetPos.contract));
 });
 
-test('activeMemory synthesizes 192+ episodes and relearnOptionsMemoryFromHistory recalculates policies', () => {
-  const account = initDefaultOptionsPortfolio(50000);
-  assert.ok(account.activeMemory.episodes.length >= 192, `Expected >= 192 episodes, got ${account.activeMemory.episodes.length}`);
-  assert.strictEqual(account.activeMemory.learningIterations, account.activeMemory.episodes.length);
-  assert.ok(account.activeMemory.learnedRules.length >= 5);
-
-  // Check structure of first episode
-  const ep1 = account.activeMemory.episodes[0];
-  assert.ok(ep1.id);
-  assert.ok(ep1.contract);
-  assert.ok(ep1.reflectionCritique);
-  assert.ok(ep1.learnedRule);
-
-  // Test relearning
-  const relearned = relearnOptionsMemoryFromHistory(account);
-  assert.strictEqual(relearned.activeMemory.episodes.length, account.activeMemory.episodes.length);
-  assert.strictEqual(relearned.activeMemory.calibratedMaxDelta, 0.12);
-});
 

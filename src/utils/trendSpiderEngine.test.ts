@@ -25,7 +25,7 @@ function createSampleCandles(count: number, trend: 'UP' | 'DOWN' | 'SIDEWAYS'): 
     const high = basePrice + 1.2;
     const low = basePrice - 1.0;
     const close = basePrice + (trend === 'UP' ? 0.3 : trend === 'DOWN' ? -0.3 : 0.05);
-    const volume = 1000000 + Math.round(Math.random() * 500000);
+    const volume = 1000000 + ((i * 73856093) % 500000);
 
     candles.push({
       time: 1700000000 + i * 86400,

@@ -27,7 +27,7 @@ function createMockCandles(count: number = 60, trend: 'bull' | 'bear' | 'range' 
     const close = Number((basePrice + (i % 2 === 0 ? 0.8 : -0.8)).toFixed(2));
     const high = Number((Math.max(open, close) + 1.2).toFixed(2));
     const low = Number((Math.min(open, close) - 1.2).toFixed(2));
-    const volume = 1000000 + Math.floor(Math.random() * 500000);
+    const volume = 1000000 + ((i * 73856093) % 500000);
 
     candles.push({
       timestamp: now - (count - i) * 86400000,

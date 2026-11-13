@@ -26,7 +26,6 @@ import {
   GICS_SECTORS_METADATA,
   filterWatchlistBySectors,
   calculateSectorBreadth,
-  generateFallbackSectorMetrics,
   getSectorPresets,
 } from '../utils/sectorMetrics';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
@@ -51,6 +50,7 @@ export const SectorFiltering: React.FC<SectorFilteringProps> = ({
 }) => {
   const [sectors, setSectors] = useState<GicsSectorPerformance[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
@@ -63,26 +63,22 @@ export const SectorFiltering: React.FC<SectorFilteringProps> = ({
     return new Set(GICS_SECTORS_METADATA.map((s) => s.name));
   });
 
-  // Fetch real-time sector metrics from API
+  // Fetch real-time sector metrics from API (no synthetic fallback)
   const fetchSectorMetrics = async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const res = await fetch('/api/sectors');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sectors && Array.isArray(data.sectors)) {
-          setSectors(data.sectors);
-          setLastUpdated(new Date());
-          return;
-        }
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.sectors) && data.sectors.length > 0) {
+        setSectors(data.sectors);
+        setLastUpdated(new Date());
+        return;
       }
-      // Fallback
-      setSectors(generateFallbackSectorMetrics());
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.warn('Error fetching real-time sector metrics, using fallback', err);
-      setSectors(generateFallbackSectorMetrics());
-      setLastUpdated(new Date());
+      throw new Error(data.error || 'Live sector ETF quotes unavailable.');
+    } catch (err: any) {
+      setSectors([]);
+      setFetchError(err?.message || 'Unable to load live GICS sector benchmarks.');
     } finally {
       setLoading(false);
     }
@@ -452,6 +448,19 @@ export const SectorFiltering: React.FC<SectorFilteringProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Error Banner if upstream unavailable */}
+          {!loading && fetchError && (
+            <div className="px-4 py-3 rounded-lg bg-rose-950/30 border border-rose-500/30 text-xs text-rose-300 flex items-center justify-between">
+              <span>{fetchError}</span>
+              <button
+                onClick={fetchSectorMetrics}
+                className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold"
+              >
+                Retry
+              </button>
+            </div>
+          )}
 
           {/* Sector View: Grid vs Compact */}
           {viewMode === 'grid' ? (

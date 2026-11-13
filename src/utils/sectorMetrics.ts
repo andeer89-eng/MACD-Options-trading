@@ -15,6 +15,8 @@ export interface GicsSectorPerformance {
   changeNominal: number;
   changePercent: number;
   weekChangePercent?: number;
+  monthChangePercent?: number;
+  rsVsSpy?: number;
   volume: number;
   constituentCount: number;
   sp500WeightPct: number;
@@ -22,6 +24,7 @@ export interface GicsSectorPerformance {
   sparkline: number[];
   keyMegaCaps: string[];
   activeDivergenceCount?: number;
+  isLive?: boolean;
 }
 
 export const GICS_SECTORS_METADATA: GicsSectorMetadata[] = [
@@ -119,7 +122,7 @@ export function filterWatchlistBySectors(
 }
 
 /**
- * Computes S&P 500 Market Breadth and leadership from sector performance
+ * Computes S&P 500 Market Breadth and leadership from live sector performance
  */
 export function calculateSectorBreadth(sectors: GicsSectorPerformance[]) {
   let advancing = 0;
@@ -189,55 +192,4 @@ export function getSectorPresets(): { id: string; label: string; sectors: string
       sectors: ['Energy', 'Real Estate', 'Utilities', 'Materials'],
     },
   ];
-}
-
-/**
- * Deterministic fallback realistic sector performance if quotes are offline
- */
-export function generateFallbackSectorMetrics(): GicsSectorPerformance[] {
-  // Realistic base prices and recent trends for the 11 sector ETFs
-  const fallbackBases: Record<string, { price: number; change: number; weekChange: number }> = {
-    XLK: { price: 232.4, change: 1.48, weekChange: 3.12 },
-    XLF: { price: 47.85, change: 0.72, weekChange: 1.84 },
-    XLV: { price: 148.2, change: -0.28, weekChange: 0.45 },
-    XLY: { price: 198.6, change: 1.15, weekChange: 2.30 },
-    XLC: { price: 92.4, change: 0.86, weekChange: 1.95 },
-    XLI: { price: 134.1, change: 0.35, weekChange: 1.10 },
-    XLP: { price: 81.5, change: -0.42, weekChange: -0.65 },
-    XLE: { price: 91.2, change: -0.92, weekChange: -1.75 },
-    XLB: { price: 93.8, change: 0.22, weekChange: 0.85 },
-    XLU: { price: 74.3, change: -0.55, weekChange: -1.15 },
-    XLRE: { price: 43.1, change: -0.18, weekChange: 0.32 },
-  };
-
-  return GICS_SECTORS_METADATA.map((meta) => {
-    const base = fallbackBases[meta.etf] || { price: 100, change: 0.5, weekChange: 1.0 };
-    const constituentCount = SP500_UNIVERSE.filter((c) => c.sector === meta.name).length;
-    const changeNominal = Number(((base.price * base.change) / 100).toFixed(2));
-
-    // Generate mini 7-day sparkline trend
-    const sparkline: number[] = [];
-    let p = base.price * (1 - base.weekChange / 100);
-    for (let i = 0; i < 7; i++) {
-      const step = ((base.price - p) / (7 - i)) + (Math.sin(i * 1.5) * (base.price * 0.004));
-      p += step;
-      sparkline.push(Number(p.toFixed(2)));
-    }
-    sparkline[sparkline.length - 1] = base.price;
-
-    return {
-      name: meta.name,
-      etf: meta.etf,
-      price: base.price,
-      changeNominal,
-      changePercent: base.change,
-      weekChangePercent: base.weekChange,
-      volume: 12500000,
-      constituentCount,
-      sp500WeightPct: meta.sp500WeightPct,
-      sentiment: base.change > 0.3 ? 'bullish' : base.change < -0.3 ? 'bearish' : 'neutral',
-      sparkline,
-      keyMegaCaps: meta.keyMegaCaps,
-    };
-  });
 }
