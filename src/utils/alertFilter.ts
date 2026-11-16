@@ -180,3 +180,73 @@ export function filterAlertList(
     return true;
   });
 }
+
+function escapeCSVCell(value: string | number | boolean | undefined | null): string {
+  if (value === undefined || value === null) return '""';
+  const str = String(value);
+  const escaped = str.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+/**
+ * Serialize triggered divergence alerts into a RFC 4180 compliant CSV string
+ * for offline analysis in spreadsheets or Python/R notebooks.
+ */
+export function exportAlertsToCSV(alerts: AlertItemData[]): string {
+  const headers = [
+    'Alert ID',
+    'Timestamp (ISO)',
+    'Symbol',
+    'Company Name',
+    'Sector',
+    'Timeframe',
+    'Divergence Type',
+    'MACD Quality Score (%)',
+    'Price ($)',
+    'Trigger 23.6% ($)',
+    'Stop Loss ($)',
+    'Target2 61.8% ($)',
+    'Risk/Reward Ratio',
+    'ATR(14) ($)',
+    'ATR (%)',
+    'Volatility Level',
+    'Near Support',
+  ];
+
+  const rows = alerts.map((alert) => {
+    const volLevel = alert.volatilityLevel || determineVolatilityLevel(alert.atrPercent);
+    const risk = Math.abs(alert.trigger - alert.stopLoss);
+    const reward = Math.abs(alert.target2 - alert.trigger);
+    const rrRatio = risk > 0 ? (reward / risk).toFixed(2) : 'N/A';
+    const timestampIso =
+      typeof alert.timestamp === 'number' && !Number.isNaN(alert.timestamp)
+        ? new Date(alert.timestamp).toISOString()
+        : '';
+
+    return [
+      escapeCSVCell(alert.id),
+      escapeCSVCell(timestampIso),
+      escapeCSVCell(alert.symbol),
+      escapeCSVCell(alert.companyName || ''),
+      escapeCSVCell(alert.sector || ''),
+      escapeCSVCell(alert.timeframe || ''),
+      escapeCSVCell(alert.type),
+      escapeCSVCell(alert.score),
+      escapeCSVCell(Number.isFinite(alert.price) ? alert.price.toFixed(2) : ''),
+      escapeCSVCell(Number.isFinite(alert.trigger) ? alert.trigger.toFixed(2) : ''),
+      escapeCSVCell(Number.isFinite(alert.stopLoss) ? alert.stopLoss.toFixed(2) : ''),
+      escapeCSVCell(Number.isFinite(alert.target2) ? alert.target2.toFixed(2) : ''),
+      escapeCSVCell(rrRatio),
+      escapeCSVCell(alert.atr !== undefined && Number.isFinite(alert.atr) ? alert.atr.toFixed(2) : ''),
+      escapeCSVCell(
+        alert.atrPercent !== undefined && Number.isFinite(alert.atrPercent)
+          ? alert.atrPercent.toFixed(2)
+          : ''
+      ),
+      escapeCSVCell(volLevel),
+      escapeCSVCell(alert.priceNearSupport ? 'Yes' : 'No'),
+    ].join(',');
+  });
+
+  return [headers.map((h) => `"${h}"`).join(','), ...rows].join('\r\n');
+}

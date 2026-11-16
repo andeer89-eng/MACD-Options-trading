@@ -31,6 +31,7 @@ import {
   Clock,
   Activity,
   Sparkles,
+  BarChart3,
 } from 'lucide-react';
 import {
   JournalEntry,
@@ -49,18 +50,29 @@ import {
 import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
+import { BacktesterView } from './BacktesterView';
+
+export type JournalSubTab = 'automated' | 'options' | 'manual' | 'backtester';
 
 interface TradeJournalViewProps {
   onSelectSymbolForChart: (sym: string) => void;
   scannerResults?: any[];
+  requestedSubTab?: JournalSubTab;
 }
 
 export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   onSelectSymbolForChart,
   scannerResults = [],
+  requestedSubTab,
 }) => {
   const { user } = useAuth();
-  const [journalTab, setJournalTab] = useState<'automated' | 'options' | 'manual'>('automated');
+  const [journalTab, setJournalTab] = useState<JournalSubTab>(requestedSubTab || 'automated');
+
+  useEffect(() => {
+    if (requestedSubTab) {
+      setJournalTab(requestedSubTab);
+    }
+  }, [requestedSubTab]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -385,6 +397,18 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             <BookOpen className="w-4 h-4" />
             <span>Manual Trade Diary ({entries.length})</span>
           </button>
+
+          <button
+            onClick={() => setJournalTab('backtester')}
+            className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+              journalTab === 'backtester'
+                ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Strategy Backtester</span>
+          </button>
         </div>
 
         <div className="flex items-center space-x-3 px-3 text-xs text-zinc-400 font-mono">
@@ -395,6 +419,8 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 ? "Rich's S&P 500 Put Harvesting + TradingWarz"
                 : journalTab === 'automated'
                 ? 'Trullàs 4-Pillars Algorithm'
+                : journalTab === 'backtester'
+                ? 'Historical Multi-Asset Simulation'
                 : 'Manual Journal'}
             </span>
           </span>
@@ -411,6 +437,8 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           onSelectSymbolForChart={onSelectSymbolForChart}
           scannerResults={scannerResults}
         />
+      ) : journalTab === 'backtester' ? (
+        <BacktesterView onSelectSymbolForChart={onSelectSymbolForChart} />
       ) : (
         <>
           {/* Header Banner */}
@@ -514,7 +542,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
               </span>
             </div>
             <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
-              n = {stats.closedTrades} tranzacții
+              n = {stats.closedTrades} trades
             </span>
           </div>
 
@@ -534,17 +562,17 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
               {stats.profitFactorDisplay}
             </div>
             <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
-              {stats.profitFactorValid ? 'Audited' : 'Prag n ≥ 10 necesar'}
+              {stats.profitFactorValid ? 'Audited' : 'Min n ≥ 10 req'}
             </span>
           </div>
 
           <div className="border-r border-zinc-800 pr-2">
-            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Eșantion (n / n_eff)</span>
+            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Sample (n / n_eff)</span>
             <div className="text-xl font-bold text-white mt-1">
               {stats.closedTrades} <span className="text-xs font-normal text-zinc-400">/ {stats.effectiveDays}d</span>
             </div>
             <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
-              {stats.openTrades} deschise
+              {stats.openTrades} open
             </span>
           </div>
 
@@ -552,7 +580,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Avg Win</span>
             <div className="text-xl font-bold text-emerald-400 mt-1">+${stats.averageWinPnL}</div>
             <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
-              {stats.winningTrades} câștigătoare
+              {stats.winningTrades} wins
             </span>
           </div>
 
@@ -560,7 +588,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             <span className="text-[10px] text-zinc-400 block font-sans uppercase">Avg Loss</span>
             <div className="text-xl font-bold text-rose-400 mt-1">-${stats.averageLossPnL}</div>
             <span className="text-[10px] text-zinc-500 block mt-0.5 font-sans">
-              {stats.losingTrades} pierzătoare
+              {stats.losingTrades} losses
             </span>
           </div>
         </div>

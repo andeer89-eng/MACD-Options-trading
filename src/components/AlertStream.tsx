@@ -21,6 +21,8 @@ import {
   Gauge,
   Sparkles,
   Zap,
+  Download,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   AlertFilterCriteria,
@@ -32,8 +34,10 @@ import {
   getVolatilityLevelMeta,
   isFilterActive,
   countActiveFilters,
+  exportAlertsToCSV,
 } from '../utils/alertFilter';
 import { generateStableAlertId } from '../utils/dataFetcher';
+import { downloadCSV } from '../utils/tradeJournal';
 
 export type AlertLogItem = AlertItemData;
 export type { VolatilityLevel, AlertFilterCriteria };
@@ -62,6 +66,7 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
   // Filter settings state
   const [showSettings, setShowSettings] = useState(true);
   const [filters, setFilters] = useState<AlertFilterCriteria>(DEFAULT_ALERT_FILTERS);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const handleSendTestWebhook = async () => {
     const url = discordWebhook.trim();
@@ -132,6 +137,20 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
   const filterIsActive = useMemo(() => {
     return isFilterActive(filters);
   }, [filters]);
+
+  const handleExportCSV = () => {
+    if (filteredAlerts.length === 0) {
+      setExportMessage('No triggered divergence signals match the current view to export.');
+      setTimeout(() => setExportMessage(null), 3500);
+      return;
+    }
+    const csvContent = exportAlertsToCSV(filteredAlerts);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const fileName = `trullas_divergence_alerts_${dateStamp}.csv`;
+    downloadCSV(csvContent, fileName);
+    setExportMessage(`Exported ${filteredAlerts.length} divergence signal${filteredAlerts.length === 1 ? '' : 's'} to ${fileName}.`);
+    setTimeout(() => setExportMessage(null), 4000);
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
@@ -285,7 +304,23 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Export CSV Button */}
+            <button
+              onClick={handleExportCSV}
+              disabled={filteredAlerts.length === 0}
+              data-testid="export-alerts-csv-btn"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-950 hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none text-zinc-200 hover:text-white border border-zinc-800 hover:border-zinc-700 transition"
+              title={
+                filteredAlerts.length === 0
+                  ? 'No divergence alerts available to export'
+                  : `Export ${filteredAlerts.length} divergence signal${filteredAlerts.length === 1 ? '' : 's'} to CSV for offline analysis`
+              }
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Export CSV</span>
+            </button>
+
             {/* Toggle Settings Panel Button */}
             <button
               onClick={() => setShowSettings(!showSettings)}
@@ -322,6 +357,23 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
             )}
           </div>
         </div>
+
+        {/* Export Feedback Banner */}
+        {exportMessage && (
+          <div className="p-3 bg-emerald-950/70 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs text-emerald-200">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{exportMessage}</span>
+            </div>
+            <button
+              onClick={() => setExportMessage(null)}
+              className="text-emerald-400 hover:text-white ml-3"
+              aria-label="Dismiss export notice"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* SETTINGS PANEL (Collapsible) */}
         {showSettings && (

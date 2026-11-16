@@ -40,6 +40,7 @@ export interface SectorFilteringProps {
     hasTripleDivergence?: boolean;
     hasDoubleDivergence?: boolean;
   }>;
+  initialExpanded?: boolean;
 }
 
 export const SectorFiltering: React.FC<SectorFilteringProps> = ({
@@ -47,12 +48,13 @@ export const SectorFiltering: React.FC<SectorFilteringProps> = ({
   onApplyWatchlist,
   onScanNow,
   scanResults = [],
+  initialExpanded = true,
 }) => {
   const [sectors, setSectors] = useState<GicsSectorPerformance[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const [isExpanded, setIsExpanded] = useState<boolean>(initialExpanded);
   const [viewMode, setViewMode] = useState<'grid' | 'compact'>('grid');
   const [autoSync, setAutoSync] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');

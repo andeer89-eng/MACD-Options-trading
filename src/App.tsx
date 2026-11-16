@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  Radio,
+  Sparkles,
+  Compass,
+  Bookmark,
+  LineChart,
+  FileText,
+  Grid,
+  PieChart,
+  Code2,
+  BookOpen,
+  Bell,
+  Activity,
+  Terminal,
+} from 'lucide-react';
 import { Header, ActiveTab } from './components/Header';
 import { StrategyGuide } from './components/StrategyGuide';
 import { LiveScanner } from './components/LiveScanner';
 import { ChartViewer } from './components/ChartViewer';
-import { BacktesterView } from './components/BacktesterView';
 import { LuxAlgoSuite } from './components/LuxAlgoSuite';
 import { SecEdgarInspector } from './components/SecEdgarInspector';
 import { PythonDaemonView } from './components/PythonDaemonView';
@@ -11,7 +25,7 @@ import { AlertStream, AlertLogItem } from './components/AlertStream';
 import { ActionDashboard } from './components/ActionDashboard';
 import { IndicatorLibraryView } from './components/IndicatorLibraryView';
 import { MarketHeatmap } from './components/MarketHeatmap';
-import { TradeJournalView } from './components/TradeJournalView';
+import { TradeJournalView, JournalSubTab } from './components/TradeJournalView';
 import { CboeOptionsAnalytics } from './components/CboeOptionsAnalytics';
 import { SystemHealthView } from './components/SystemHealthView';
 import { WatchlistManagerView } from './components/WatchlistManagerView';
@@ -29,11 +43,79 @@ import {
   sendTelegramMessage,
 } from './utils/telegramAlerts';
 import { DivergenceSetup } from './utils/trullasStrategy';
-import { SP500_TOP_50, SP500_UNIVERSE } from './data/sp500Universe';
+import { SP500_UNIVERSE } from './data/sp500Universe';
 import { deduplicateSymbols, generateStableAlertId } from './utils/dataFetcher';
+
+type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
+type ChartSubTab = 'studio' | 'sec';
+type MarketsSubTab = 'heatmap' | 'sectors';
+type QuantSubTab = 'luxalgo' | 'trendspider' | 'indicators' | 'rules';
+type OpsSubTab = 'alerts' | 'health' | 'python';
+
+interface SubTabItem<T extends string> {
+  id: T;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string | number;
+}
+
+function WorkspaceSubNav<T extends string>({
+  items,
+  active,
+  onSelect,
+  subtitle,
+}: {
+  items: SubTabItem<T>[];
+  active: T;
+  onSelect: (id: T) => void;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-zinc-900/90 border border-zinc-800 p-1.5 rounded-xl mb-6">
+      <div className="flex flex-wrap items-center gap-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const isActive = active === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSelect(item.id)}
+              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                isActive
+                  ? 'bg-zinc-800 text-white border border-zinc-700 shadow-sm'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50 border border-transparent'
+              }`}
+            >
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-400' : 'text-zinc-400'}`} />
+              <span>{item.label}</span>
+              {item.badge !== undefined && (
+                <span className="text-[10px] px-1.5 py-0 rounded-full font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono tabular-nums">
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {subtitle && (
+        <span className="text-[11px] text-zinc-400 font-mono px-2.5 hidden md:inline">
+          {subtitle}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
+  const [scannerSubTab, setScannerSubTab] = useState<ScannerSubTab>('live');
+  const [chartSubTab, setChartSubTab] = useState<ChartSubTab>('studio');
+  const [marketsSubTab, setMarketsSubTab] = useState<MarketsSubTab>('heatmap');
+  const [journalSubTab, setJournalSubTab] = useState<JournalSubTab>('automated');
+  const [quantSubTab, setQuantSubTab] = useState<QuantSubTab>('luxalgo');
+  const [opsSubTab, setOpsSubTab] = useState<OpsSubTab>('alerts');
+
   const [timeframe, setTimeframe] = useState<string>('1d');
   // Default to full S&P 500 universe (all 503 constituents)
   const [watchlist, setWatchlist] = useState<string[]>(() =>
@@ -55,6 +137,112 @@ export default function App() {
   const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
 
   const prevSetupIds = useRef<Set<string>>(new Set());
+
+  // Unified router supporting both the 8 concentrated hubs and legacy deep-link tab IDs
+  const navigateTo = (target: string, subTab?: string) => {
+    switch (target) {
+      case 'today':
+        setActiveTab('today');
+        break;
+      case 'scanner':
+        setActiveTab('scanner');
+        if (subTab === 'live' || subTab === 'confluence' || subTab === 'zones' || subTab === 'watchlists') {
+          setScannerSubTab(subTab);
+        }
+        break;
+      case 'confluence':
+        setActiveTab('scanner');
+        setScannerSubTab('confluence');
+        break;
+      case 'action-zones':
+        setActiveTab('scanner');
+        setScannerSubTab('zones');
+        break;
+      case 'watchlists':
+        setActiveTab('scanner');
+        setScannerSubTab('watchlists');
+        break;
+      case 'chart':
+        setActiveTab('chart');
+        if (subTab === 'studio' || subTab === 'sec') {
+          setChartSubTab(subTab);
+        }
+        break;
+      case 'sec':
+        setActiveTab('chart');
+        setChartSubTab('sec');
+        break;
+      case 'markets':
+        setActiveTab('markets');
+        if (subTab === 'heatmap' || subTab === 'sectors') {
+          setMarketsSubTab(subTab);
+        }
+        break;
+      case 'heatmap':
+        setActiveTab('markets');
+        setMarketsSubTab('heatmap');
+        break;
+      case 'sectors':
+        setActiveTab('markets');
+        setMarketsSubTab('sectors');
+        break;
+      case 'options':
+        setActiveTab('options');
+        break;
+      case 'journal':
+        setActiveTab('journal');
+        if (subTab === 'automated' || subTab === 'options' || subTab === 'manual' || subTab === 'backtester') {
+          setJournalSubTab(subTab);
+        }
+        break;
+      case 'backtester':
+        setActiveTab('journal');
+        setJournalSubTab('backtester');
+        break;
+      case 'quant':
+        setActiveTab('quant');
+        if (subTab === 'luxalgo' || subTab === 'trendspider' || subTab === 'indicators' || subTab === 'rules') {
+          setQuantSubTab(subTab);
+        }
+        break;
+      case 'luxalgo':
+        setActiveTab('quant');
+        setQuantSubTab('luxalgo');
+        break;
+      case 'trendspider':
+        setActiveTab('quant');
+        setQuantSubTab('trendspider');
+        break;
+      case 'indicators':
+        setActiveTab('quant');
+        setQuantSubTab('indicators');
+        break;
+      case 'rules':
+        setActiveTab('quant');
+        setQuantSubTab('rules');
+        break;
+      case 'ops':
+        setActiveTab('ops');
+        if (subTab === 'alerts' || subTab === 'health' || subTab === 'python') {
+          setOpsSubTab(subTab);
+        }
+        break;
+      case 'alerts':
+        setActiveTab('ops');
+        setOpsSubTab('alerts');
+        break;
+      case 'health':
+        setActiveTab('ops');
+        setOpsSubTab('health');
+        break;
+      case 'python':
+        setActiveTab('ops');
+        setOpsSubTab('python');
+        break;
+      default:
+        setActiveTab('today');
+    }
+  };
 
   // Web Audio Synth for Alert Chime (zero mp3 dependencies)
   const playAlertChime = () => {
@@ -96,7 +284,6 @@ export default function App() {
         setResults(data.results || []);
         setLastScanTime(new Date());
 
-        // Check for new setups to notify
         let newFound = false;
         const newAlerts: AlertLogItem[] = [];
 
@@ -135,7 +322,6 @@ export default function App() {
         if (newAlerts.length > 0) {
           setAlerts((prev) => {
             const combined = [...newAlerts, ...prev];
-            // Deduplicate alerts by ID to guarantee uniqueness
             const seenAlerts = new Set<string>();
             const uniqueAlerts: AlertLogItem[] = [];
             for (const a of combined) {
@@ -150,7 +336,6 @@ export default function App() {
             playAlertChime();
           }
 
-          // Dispatch Telegram Push Notifications if enabled
           const tgConfig = loadTelegramConfig();
           if (tgConfig.enabled && tgConfig.botToken && tgConfig.chatId) {
             for (const item of data.results || []) {
@@ -209,13 +394,22 @@ export default function App() {
   const handleSelectSymbolForChart = (sym: string) => {
     setSelectedSymbol(sym);
     setActiveTab('chart');
+    setChartSubTab('studio');
+  };
+
+  const handleScanCustomSymbols = (symbols: string[]) => {
+    setWatchlist(symbols);
+    setActiveTab('scanner');
+    setScannerSubTab('live');
+    runScan(symbols, timeframe);
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-emerald-500 selection:text-zinc-950">
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => navigateTo(tab)}
+        onQuickJump={(tab, subTab) => navigateTo(tab, subTab)}
         isAutoScanning={isAutoScanning}
         setIsAutoScanning={setIsAutoScanning}
         soundEnabled={soundEnabled}
@@ -229,6 +423,7 @@ export default function App() {
       />
 
       <main className="max-w-[1720px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* 1. TODAY COMMAND CENTER */}
         {activeTab === 'today' && (
           <TodayView
             onOpenChart={handleSelectSymbolForChart}
@@ -237,57 +432,102 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'action-zones' && (
-          <ActionDashboard
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onOpenCalculator={(s) => setCalculatorSetup(s)}
-          />
-        )}
-
+        {/* 2. SCANNER HUB (Live Scanner | Confluence 360° | Action Zones | Watchlists) */}
         {activeTab === 'scanner' && (
-          <LiveScanner
-            results={results}
-            scanning={scanning}
-            onScanNow={runScan}
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onOpenCalculator={(s) => setCalculatorSetup(s)}
-            watchlist={watchlist}
-            setWatchlist={setWatchlist}
-            timeframe={timeframe}
-            setTimeframe={setTimeframe}
-          />
+          <div>
+            <WorkspaceSubNav<ScannerSubTab>
+              active={scannerSubTab}
+              onSelect={setScannerSubTab}
+              subtitle="S&P 500 Divergences, 6-Angle Confluence, Action Zones & Custom Watchlists"
+              items={[
+                { id: 'live', label: 'Live Divergence Scanner', icon: Radio },
+                { id: 'confluence', label: 'Confluence 360°', icon: Sparkles },
+                { id: 'zones', label: 'Action Zones', icon: Compass },
+                { id: 'watchlists', label: 'Watchlists', icon: Bookmark },
+              ]}
+            />
+            {scannerSubTab === 'live' && (
+              <LiveScanner
+                results={results}
+                scanning={scanning}
+                onScanNow={runScan}
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onOpenCalculator={(s) => setCalculatorSetup(s)}
+                watchlist={watchlist}
+                setWatchlist={setWatchlist}
+                timeframe={timeframe}
+                setTimeframe={setTimeframe}
+              />
+            )}
+            {scannerSubTab === 'confluence' && (
+              <ConfluenceMatrixView
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                scannerResults={results}
+              />
+            )}
+            {scannerSubTab === 'zones' && (
+              <ActionDashboard
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onOpenCalculator={(s) => setCalculatorSetup(s)}
+              />
+            )}
+            {scannerSubTab === 'watchlists' && (
+              <WatchlistManagerView
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onSetScanWatchlist={(symbols) => handleScanCustomSymbols(symbols)}
+              />
+            )}
+          </div>
         )}
 
-        {activeTab === 'confluence' && (
-          <ConfluenceMatrixView
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            scannerResults={results}
-          />
+        {/* 3. CHARTS & SEC HUB (Technical Chart Studio | SEC EDGAR Search) */}
+        {activeTab === 'chart' && (
+          <div>
+            <WorkspaceSubNav<ChartSubTab>
+              active={chartSubTab}
+              onSelect={setChartSubTab}
+              subtitle="Interactive Charting with Integrated SEC Filings Sidebar & Standalone EDGAR Search"
+              items={[
+                { id: 'studio', label: 'Chart Studio', icon: LineChart },
+                { id: 'sec', label: 'SEC EDGAR Search', icon: FileText },
+              ]}
+            />
+            {chartSubTab === 'studio' && (
+              <ChartViewer
+                initialSymbol={selectedSymbol}
+                onOpenCalculator={(s) => setCalculatorSetup(s)}
+              />
+            )}
+            {chartSubTab === 'sec' && <SecEdgarInspector />}
+          </div>
         )}
 
-        {activeTab === 'watchlists' && (
-          <WatchlistManagerView
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onSetScanWatchlist={(symbols, name) => {
-              setWatchlist(symbols);
-              setActiveTab('scanner');
-              runScan(symbols, timeframe);
-            }}
-          />
+        {/* 4. MARKETS HUB (S&P 500 Heatmap | GICS Sectors & Breadth) */}
+        {activeTab === 'markets' && (
+          <div>
+            <WorkspaceSubNav<MarketsSubTab>
+              active={marketsSubTab}
+              onSelect={setMarketsSubTab}
+              subtitle="S&P 500 Treemap & 11 SPDR Sector ETF Breadth Benchmarks"
+              items={[
+                { id: 'heatmap', label: 'S&P 500 Heatmap', icon: Grid },
+                { id: 'sectors', label: 'GICS Sectors & Breadth', icon: PieChart },
+              ]}
+            />
+            {marketsSubTab === 'heatmap' && (
+              <MarketHeatmap onSelectSymbolForChart={handleSelectSymbolForChart} />
+            )}
+            {marketsSubTab === 'sectors' && (
+              <SectorPerformanceView
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onSetScanWatchlist={(symbols) => handleScanCustomSymbols(symbols)}
+                scannerResults={results}
+              />
+            )}
+          </div>
         )}
 
-        {activeTab === 'sectors' && (
-          <SectorPerformanceView
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onSetScanWatchlist={(symbols, name) => {
-              setWatchlist(symbols);
-              setActiveTab('scanner');
-              runScan(symbols, timeframe);
-            }}
-            scannerResults={results}
-          />
-        )}
-
+        {/* 5. OPTIONS FLOW & GEX */}
         {activeTab === 'options' && (
           <CboeOptionsAnalytics
             initialSymbol={selectedSymbol}
@@ -295,66 +535,81 @@ export default function App() {
           />
         )}
 
-
-        {activeTab === 'chart' && (
-          <ChartViewer
-            initialSymbol={selectedSymbol}
-            onOpenCalculator={(s) => setCalculatorSetup(s)}
-          />
-        )}
-
-        {activeTab === 'heatmap' && (
-          <MarketHeatmap onSelectSymbolForChart={handleSelectSymbolForChart} />
-        )}
-
-        {activeTab === 'backtester' && (
-          <BacktesterView onSelectSymbolForChart={handleSelectSymbolForChart} />
-        )}
-
-        {activeTab === 'luxalgo' && (
-          <LuxAlgoSuite
-            initialSymbol={selectedSymbol}
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-          />
-        )}
-
-        {activeTab === 'indicators' && (
-          <IndicatorLibraryView
-            onSelectIndicatorForChart={() => setActiveTab('chart')}
-          />
-        )}
-
+        {/* 6. BOTS, JOURNAL & BACKTESTER HUB */}
         {activeTab === 'journal' && (
           <TradeJournalView
             onSelectSymbolForChart={handleSelectSymbolForChart}
             scannerResults={results}
+            requestedSubTab={journalSubTab}
           />
         )}
 
-        {activeTab === 'rules' && <StrategyGuide />}
-
-        {activeTab === 'sec' && <SecEdgarInspector />}
-
-        {activeTab === 'trendspider' && (
-          <TrendSpiderSuite
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onOpenCalculator={(s) => setCalculatorSetup(s)}
-            onNavigateToTab={(t) => setActiveTab(t)}
-          />
+        {/* 7. QUANT LAB HUB (LuxAlgo Suite | TrendSpider Quant | Indicator Library | Trullàs Rules) */}
+        {activeTab === 'quant' && (
+          <div>
+            <WorkspaceSubNav<QuantSubTab>
+              active={quantSubTab}
+              onSelect={setQuantSubTab}
+              subtitle="Quantitative Indicators, Stage Analysis, PineTS Validation & Playbook"
+              items={[
+                { id: 'luxalgo', label: 'LuxAlgo Suite', icon: Sparkles },
+                { id: 'trendspider', label: 'TrendSpider Quant', icon: Compass },
+                { id: 'indicators', label: 'Indicator Library', icon: Code2 },
+                { id: 'rules', label: 'Trullàs 4-Pillars Rules', icon: BookOpen },
+              ]}
+            />
+            {quantSubTab === 'luxalgo' && (
+              <LuxAlgoSuite
+                initialSymbol={selectedSymbol}
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+              />
+            )}
+            {quantSubTab === 'trendspider' && (
+              <TrendSpiderSuite
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onOpenCalculator={(s) => setCalculatorSetup(s)}
+                onNavigateToTab={(t) => navigateTo(t)}
+              />
+            )}
+            {quantSubTab === 'indicators' && (
+              <IndicatorLibraryView
+                onSelectIndicatorForChart={() => navigateTo('chart', 'studio')}
+              />
+            )}
+            {quantSubTab === 'rules' && <StrategyGuide />}
+          </div>
         )}
 
-        {activeTab === 'python' && <PythonDaemonView />}
-
-        {activeTab === 'alerts' && (
-          <AlertStream
-            alerts={alerts}
-            onClearAlerts={() => setAlerts([])}
-            onSelectSymbolForChart={handleSelectSymbolForChart}
-            onPlayChime={playAlertChime}
-          />
+        {/* 8. OPS & ALERTS HUB (Alerts Stream | System Health | Python 24/7 Daemon) */}
+        {activeTab === 'ops' && (
+          <div>
+            <WorkspaceSubNav<OpsSubTab>
+              active={opsSubTab}
+              onSelect={setOpsSubTab}
+              subtitle="Live Signal Dispatch, Upstream Diagnostics & Standalone Python Daemon"
+              items={[
+                {
+                  id: 'alerts',
+                  label: 'Alerts & Webhooks',
+                  icon: Bell,
+                  badge: alerts.length > 0 ? alerts.length : undefined,
+                },
+                { id: 'health', label: 'System Health', icon: Activity },
+                { id: 'python', label: 'Python 24/7 Daemon', icon: Terminal },
+              ]}
+            />
+            {opsSubTab === 'alerts' && (
+              <AlertStream
+                alerts={alerts}
+                onClearAlerts={() => setAlerts([])}
+                onSelectSymbolForChart={handleSelectSymbolForChart}
+                onPlayChime={playAlertChime}
+              />
+            )}
+            {opsSubTab === 'health' && <SystemHealthView />}
+            {opsSubTab === 'python' && <PythonDaemonView />}
+          </div>
         )}
-
-        {activeTab === 'health' && <SystemHealthView />}
       </main>
 
       {/* Position Scaling Calculator Modal */}

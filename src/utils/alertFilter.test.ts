@@ -6,6 +6,7 @@ import {
   DEFAULT_ALERT_FILTERS,
   isFilterActive,
   countActiveFilters,
+  exportAlertsToCSV,
   AlertItemData,
   AlertFilterCriteria,
 } from './alertFilter.ts';
@@ -197,4 +198,48 @@ test('isFilterActive and countActiveFilters track state changes correctly', () =
   };
   assert.equal(isFilterActive(modified), true);
   assert.equal(countActiveFilters(modified), 2);
+});
+
+test('exportAlertsToCSV serializes alerts with proper headers and RFC 4180 escaping', () => {
+  const alertsWithQuotes: AlertItemData[] = [
+    ...SAMPLE_ALERTS,
+    {
+      id: '5',
+      timestamp: Date.UTC(2026, 10, 16, 12, 0, 0),
+      symbol: 'BRK.B',
+      companyName: 'Berkshire "Hathaway", Inc.',
+      sector: 'Financials',
+      timeframe: '1D',
+      type: 'BULLISH_DOUBLE',
+      price: 450.5,
+      score: 84,
+      trigger: 455.0,
+      stopLoss: 445.0,
+      target2: 475.0,
+      atr: 5.2,
+      atrPercent: 1.15,
+      priceNearSupport: true,
+    },
+  ];
+
+  const csv = exportAlertsToCSV(alertsWithQuotes);
+  const lines = csv.split('\r\n');
+  assert.equal(lines.length, 6); // 1 header + 5 rows
+  assert.ok(lines[0].includes('"Symbol"'));
+  assert.ok(lines[0].includes('"MACD Quality Score (%)"'));
+  assert.ok(lines[0].includes('"Risk/Reward Ratio"'));
+
+  // Verify Tesla comma is quoted and Berkshire quotes are doubled
+  assert.ok(lines[4].includes('"Tesla, Inc."'));
+  assert.ok(lines[5].includes('"Berkshire ""Hathaway"", Inc."'));
+  assert.ok(lines[5].includes('"2026-11-16T12:00:00.000Z"'));
+  assert.ok(lines[5].includes('"2.00"')); // Risk/Reward (475-455)/(455-445) = 2.00
+  assert.ok(lines[5].includes('"Yes"')); // priceNearSupport
+});
+
+test('exportAlertsToCSV returns header row when alert list is empty', () => {
+  const csv = exportAlertsToCSV([]);
+  const lines = csv.split('\r\n');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].startsWith('"Alert ID","Timestamp (ISO)","Symbol"'));
 });

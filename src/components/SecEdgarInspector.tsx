@@ -65,7 +65,7 @@ export const SecEdgarInspector: React.FC = () => {
         </div>
 
         {/* Search Bar & Quick Tickers */}
-        <div className="mt-6 pt-6 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-4">
+        <div className="mt-5 pt-5 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-4">
           <form onSubmit={handleSearch} className="flex items-center space-x-2">
             <div className="relative">
               <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
@@ -86,8 +86,8 @@ export const SecEdgarInspector: React.FC = () => {
             </button>
           </form>
 
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-zinc-500">Popular:</span>
+          <div className="flex items-center flex-wrap gap-1.5 text-xs">
+            <span className="text-zinc-500 mr-1">Popular:</span>
             {popularTickers.map((sym) => (
               <button
                 key={sym}
@@ -103,39 +103,6 @@ export const SecEdgarInspector: React.FC = () => {
               </button>
             ))}
           </div>
-        </div>
-      </div>
-
-      {/* Why Combine Triple Divergence with SEC Filings */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm mb-3">
-            <TrendingUp className="w-4 h-4" />
-          </div>
-          <h3 className="font-bold text-white text-sm">Form 4: Insider Buying Cluster</h3>
-          <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
-            When corporate officers (CEOs, CFOs, board members) buy shares with their own cash right as a <strong className="text-emerald-400">Bullish Triple Divergence</strong> forms at Point 3, conviction reaches institutional grade. Insiders know intrinsic value before the public.
-          </p>
-        </div>
-
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-sm mb-3">
-            <Building2 className="w-4 h-4" />
-          </div>
-          <h3 className="font-bold text-white text-sm">Form 8-K: Material Catalysts</h3>
-          <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
-            Form 8-K reports unscheduled material corporate changes (mergers, patents, contract wins, or executive departures). A technical divergence combined with an 8-K disclosure often triggers rapid mean reversion back to Fibonacci targets.
-          </p>
-        </div>
-
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm mb-3">
-            <ShieldCheck className="w-4 h-4" />
-          </div>
-          <h3 className="font-bold text-white text-sm">SEC Fair Access API Protocol</h3>
-          <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
-            SEC EDGAR requires automated scanners to declare a user-agent header containing an email. Our 24/7 Python scanner natively adheres to the 10 requests/sec SEC Fair Access rate limit.
-          </p>
         </div>
       </div>
 

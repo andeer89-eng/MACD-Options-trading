@@ -25,7 +25,6 @@ import {
   Check,
   Info,
 } from 'lucide-react';
-import { WatchlistManager } from './WatchlistManager';
 import {
   SP500_UNIVERSE,
   SP500_SECTORS,
@@ -111,8 +110,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   // S&P 500 Index Search Bar State
   const [sp500SearchQuery, setSp500SearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [showMarketOverview, setShowMarketOverview] = useState(true);
-  const [showWatchlistManager, setShowWatchlistManager] = useState(false);
+  const [showMarketOverview, setShowMarketOverview] = useState(false);
 
   // Filter S&P 500 Universe by symbol or company name or sector
   const matchedUniverseTickers = React.useMemo(() => {
@@ -288,7 +286,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Real-time GICS Sector Performance & Watchlist Refiner */}
+      {/* Real-time GICS Sector Performance & Watchlist Refiner (collapsed by default to prioritize setups) */}
       <SectorFiltering
         currentWatchlist={watchlist}
         onApplyWatchlist={(newWatchlist) => {
@@ -298,6 +296,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           onScanNow(tickers, timeframe);
         }}
         scanResults={results}
+        initialExpanded={false}
       />
 
       {/* S&P 500 Universe Selector Banner */}
@@ -477,25 +476,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           </div>
         </div>
 
-        {/* Watchlist tags and custom input */}
+        {/* Watchlist search and custom queue */}
         <div className="pt-3 border-t border-zinc-800/60 space-y-3">
-          <div className="flex justify-end mb-2">
-            <button
-              onClick={() => setShowWatchlistManager(!showWatchlistManager)}
-              className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-mono"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              {showWatchlistManager ? 'Hide Watchlist Manager' : 'Open Watchlist Manager'}
-            </button>
-          </div>
-          {showWatchlistManager && (
-            <WatchlistManager onWatchlistSelect={(symbols) => {
-              if (symbols) {
-                setWatchlist(symbols);
-              }
-            }} />
-          )}
-
           {/* S&P 500 Search Bar with Live Autocomplete */}
           <div className="relative">
             <div className="flex items-center space-x-2">
@@ -643,11 +625,29 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         </div>
       </div>
 
-      {/* Market Overview Aggregate Stats Component */}
-      <MarketOverview
-        results={results}
-        onSelectSymbolForChart={onSelectSymbolForChart}
-      />
+      {/* Collapsible Market Overview Aggregate Stats */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between bg-zinc-900/70 border border-zinc-800 rounded-xl px-4 py-2.5">
+          <div className="flex items-center gap-2 text-xs text-zinc-300">
+            <PieChart className="w-4 h-4 text-emerald-400" />
+            <span className="font-semibold">Basket Snapshot &amp; Momentum Leaders</span>
+            <span className="text-zinc-500 hidden sm:inline">({results.length} symbols scanned)</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMarketOverview((prev) => !prev)}
+            className="text-xs font-medium text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 transition"
+          >
+            {showMarketOverview ? 'Hide Snapshot' : 'Expand Snapshot'}
+          </button>
+        </div>
+        {showMarketOverview && (
+          <MarketOverview
+            results={results}
+            onSelectSymbolForChart={onSelectSymbolForChart}
+          />
+        )}
+      </div>
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

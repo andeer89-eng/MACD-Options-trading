@@ -198,61 +198,12 @@ export const PythonDaemonView: React.FC = () => {
               <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xs">
                 D
               </div>
-              <h3 className="font-bold text-white text-sm">Alerts & 24/7 Supervisor</h3>
+              <h3 className="font-bold text-white text-sm">Alerts &amp; 24/7 Supervisor</h3>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                Dispatches push notifications via Telegram Bot API or Discord Webhook. Employs state cache to avoid repeated alerts on the same bar.
+                Dispatches push notifications via Telegram Bot API or Discord Webhook with bar-level deduplication and exponential HTTP 429 backoff.
               </p>
               <div className="text-[11px] font-mono text-zinc-500 bg-zinc-950 p-2 rounded border border-zinc-800">
                 Telegram / Discord Webhook
-              </div>
-            </div>
-          </div>
-
-          {/* Deep Technical Architectural Blueprint */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-5">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Layers className="w-5 h-5 text-blue-400" />
-              <span>Production Continuous Scanner Architecture</span>
-            </h3>
-
-            <div className="space-y-4 text-xs text-zinc-300 leading-relaxed">
-              <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                <h4 className="font-bold text-white mb-1.5 text-sm flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                  1. Zero-Subscription Data Strategy (Free Sources)
-                </h4>
-                <p className="text-zinc-400">
-                  Commercial market data feeds (Bloomberg Terminal, Polygon.io, Refinitiv) cost hundreds to thousands of dollars per month. A high-efficiency scanner achieves identical technical results using:
-                </p>
-                <ul className="list-disc list-inside mt-2 space-y-1 text-zinc-300">
-                  <li>
-                    <strong className="text-white">Yahoo Finance v8 Chart JSON:</strong> Directly accessible via <code className="text-emerald-400 bg-zinc-900 px-1 py-0.5 rounded">https://query1.finance.yahoo.com/v8/finance/chart/{'{ticker}'}</code>. Delivers real-time 1m, 5m, 15m, 1h, and 1d OHLCV data with zero API key required.
-                  </li>
-                  <li>
-                    <strong className="text-white">SEC EDGAR Free JSON API:</strong> Hosted at <code className="text-violet-400 bg-zinc-900 px-1 py-0.5 rounded">https://data.sec.gov/submissions/CIK{'{cik}'}.json</code>. Requires only a declared User-Agent string adhering to the SEC Fair Access Policy (&le; 10 req/sec). Provides raw corporate insider filings (Form 4) and breaking news (Form 8-K).
-                  </li>
-                </ul>
-              </div>
-
-              <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                <h4 className="font-bold text-white mb-1.5 text-sm flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                  2. 24/7 Resilience & Fault-Tolerant Daemon Loop
-                </h4>
-                <p className="text-zinc-400">
-                  To run uninterrupted 365 days a year without crashing, the Python process must implement:
-                </p>
-                <ul className="list-disc list-inside mt-2 space-y-1 text-zinc-300">
-                  <li>
-                    <strong className="text-white">Exponential Backoff with Jitter:</strong> If Yahoo Finance temporarily rate-limits (HTTP 429), the scanner sleeps for 2s, 4s, 8s rather than flooding the connection.
-                  </li>
-                  <li>
-                    <strong className="text-white">Duplicate Alert Deduplication:</strong> Keeps a set of <code className="text-blue-300">f&quot;{'{symbol}'}_{'{timeframe}'}_{'{p3_timestamp}'}&quot;</code> in memory or in a local SQLite/JSON cache. Only new, newly confirmed pivot bars trigger audible or webhook notifications.
-                  </li>
-                  <li>
-                    <strong className="text-white">Zero Memory Leaks:</strong> Avoids unbounded array growth by strictly retaining rolling windows (e.g. last 100-200 bars per asset).
-                  </li>
-                </ul>
               </div>
             </div>
           </div>
