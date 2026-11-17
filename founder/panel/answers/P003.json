@@ -1,0 +1,13 @@
+{
+  "id": "P003",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "need",
+  "reason": "Even at $29 a month, I already scan in thinkorswim Stock Hacker for free and maintain my TradingView Plus setup, so I do not need another charting subscription.",
+  "objection": "Overlap with thinkorswim and TradingView Plus when I already enjoy building my own scripts.",
+  "would_change_my_mind": "Offer an EOD email/journal-only plan under $19/mo or direct Schwab order routing.",
+  "price_too_cheap": 9,
+  "price_cheap": 19,
+  "price_expensive": 35,
+  "price_too_expensive": 49
+}

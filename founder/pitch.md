@@ -1,0 +1,5 @@
+Finish your US stock & options swing prep in 10 minutes before the 09:30 ET open: one clean Today view shows Market Regime breadth, CBOE VIX/GEX context, and a ranked shortlist of S&P 500 Stan Weinstein Stage 2 + MACD Triple Divergence setups with pre-calculated stop/invalidation levels and SEC Form 4 insider clusters.
+
+No black boxes and zero Yahoo delay on paid plans: Swing Pro runs on a licensed commercial market-data feed, lets you inspect our public 5-year methodology & live 60-day anti-lookahead Shadow Signal Ledger (X1/X2/X3 net of slippage vs. SPY) before paying, and imports your TradingView/broker CSV journal in one click.
+
+Start with a 14-day no-card Shadow Ledger & paper preview; then choose Nightly Watchlist ($29/mo EOD shortlist + journal) or Swing Pro ($39/mo real-time watchlist + Telegram alerts + SEC/GEX; Founding Cohort: $29/mo for your first 3 months, ends 14 days after launch), backed by a one-click 30-day refund guarantee (analytical software only, not investment advice).

@@ -1,0 +1,13 @@
+{
+  "id": "P013",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "trust",
+  "reason": "I review charts after the 16:00 ET close, so the workflow fits, but I always verify Reddit and Trustpilot feedback first and the delayed-data caveat at $49 a month gives me pause.",
+  "objection": "Unknown brand with no public Reddit/Trustpilot track record yet and ambiguity around real-time vs. delayed quotes.",
+  "would_change_my_mind": "Clearly separate licensed real-time feeds from delayed tiers and share verifiable third-party user reviews plus 90-day shadow results.",
+  "price_too_cheap": 19,
+  "price_cheap": 35,
+  "price_expensive": 69,
+  "price_too_expensive": 99
+}

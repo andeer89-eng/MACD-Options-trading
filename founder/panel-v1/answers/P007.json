@@ -1,0 +1,13 @@
+{
+  "id": "P007",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "convenience",
+  "reason": "With a full-time engineering job and a larger account, paying $49 for one month to test automated S&P 500 Stage 2 + EDGAR + shadow R-tracking in one terminal is an easy experiment, though I will cancel fast if the UI feels bloated.",
+  "objection": "$49/mo is higher than TradingView Plus, so the pre-market workflow has to be noticeably cleaner and faster to justify keeping.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 19,
+  "price_cheap": 35,
+  "price_expensive": 59,
+  "price_too_expensive": 89
+}

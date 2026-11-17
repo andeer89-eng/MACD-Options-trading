@@ -381,23 +381,23 @@ if __name__ == "__main__":
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                 <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                TrendSpider Quant Trading Terminal
+                Stage &amp; AVWAP Quant Lab
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
                 All 503 S&amp;P 500 Stocks + Any Custom Ticker
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                Stan Weinstein 4-Stage
+                Weinstein 4-Stage
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                Raindrop® Volume Profiles
+                Volume-Split Candles
               </span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-zinc-100 mt-2 flex items-center gap-2">
-              TrendSpider Quantitative Analysis &amp; Backtesting Terminal
+              Stage Analysis, Auto-AVWAP &amp; Backtesting Lab
             </h1>
             <p className="text-sm text-zinc-400 max-w-3xl mt-1">
-              Full-scale institutional terminal: scan all 503 S&amp;P 500 stocks across Stan Weinstein’s 4 Stages, inspect any custom ticker, analyze Raindrop® volume profiles, Auto-AVWAP, and simulate stage breakout backtests with capital preservation alpha.
+              Scan all 503 S&amp;P 500 constituents across Stan Weinstein’s 4 Stages, inspect custom tickers, analyze split-session volume profiles and Auto-AVWAP, and run stage breakout backtests.
             </p>
           </div>
 
@@ -1448,7 +1448,7 @@ if __name__ == "__main__":
               <div>
                 <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
                   <BarChart2 className="w-5 h-5 text-cyan-400" />
-                  TrendSpider Raindrop® Charts Engine: {selectedSymbol}
+                  Split-Session Volume Profile (Left vs Right VWAP): {selectedSymbol}
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-3xl mt-1">
                   Volume distribution visualizer: Left VWAP (first 50% of bar) vs Right VWAP (second 50% of bar).
@@ -1755,7 +1755,7 @@ if __name__ == "__main__":
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
             <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
               <Code2 className="w-5 h-5 text-indigo-400" />
-              TrendSpider Reverse-Engineered (REA) Code Exporter
+              Stage &amp; AVWAP Python / Pine Formula Exporter
             </h3>
 
             <div className="space-y-4">

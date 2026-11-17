@@ -544,7 +544,7 @@ export default function App() {
           />
         )}
 
-        {/* 7. QUANT LAB HUB (LuxAlgo Suite | TrendSpider Quant | Indicator Library | Trullàs Rules) */}
+        {/* 7. QUANT LAB HUB (Orderflow & SMC Lab | Stage & AVWAP Lab | Indicator Library | 4-Pillars Playbook) */}
         {activeTab === 'quant' && (
           <div>
             <WorkspaceSubNav<QuantSubTab>
@@ -552,10 +552,10 @@ export default function App() {
               onSelect={setQuantSubTab}
               subtitle="Quantitative Indicators, Stage Analysis, PineTS Validation & Playbook"
               items={[
-                { id: 'luxalgo', label: 'LuxAlgo Suite', icon: Sparkles },
-                { id: 'trendspider', label: 'TrendSpider Quant', icon: Compass },
+                { id: 'luxalgo', label: 'Orderflow & SMC Lab', icon: Sparkles },
+                { id: 'trendspider', label: 'Stage & AVWAP Lab', icon: Compass },
                 { id: 'indicators', label: 'Indicator Library', icon: Code2 },
-                { id: 'rules', label: 'Trullàs 4-Pillars Rules', icon: BookOpen },
+                { id: 'rules', label: '4-Pillars Playbook', icon: BookOpen },
               ]}
             />
             {quantSubTab === 'luxalgo' && (
@@ -580,7 +580,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 8. OPS & ALERTS HUB (Alerts Stream | System Health | Python 24/7 Daemon) */}
+        {/* 8. OPS & ALERTS HUB (Alerts Stream | System Health | Python Daemon) */}
         {activeTab === 'ops' && (
           <div>
             <WorkspaceSubNav<OpsSubTab>
@@ -595,7 +595,7 @@ export default function App() {
                   badge: alerts.length > 0 ? alerts.length : undefined,
                 },
                 { id: 'health', label: 'System Health', icon: Activity },
-                { id: 'python', label: 'Python 24/7 Daemon', icon: Terminal },
+                { id: 'python', label: 'Python Daemon', icon: Terminal },
               ]}
             />
             {opsSubTab === 'alerts' && (
@@ -611,6 +611,15 @@ export default function App() {
           </div>
         )}
       </main>
+
+      <footer className="max-w-[1720px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-4 border-t border-zinc-900 text-[11px] text-zinc-500 flex flex-wrap items-center justify-between gap-2">
+        <span>
+          StageLedger &middot; Analytical research &amp; journaling software. Not personalized investment advice or an automated brokerage execution service.
+        </span>
+        <span className="font-mono tabular-nums">
+          Market feeds via public Yahoo Finance (10–20m delayed quote windows), CBOE &amp; SEC EDGAR.
+        </span>
+      </footer>
 
       {/* Position Scaling Calculator Modal */}
       {calculatorSetup && (

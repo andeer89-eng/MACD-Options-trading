@@ -114,15 +114,19 @@ export const HeatmapCanvasWebGL: React.FC<HeatmapCanvasWebGLProps> = ({
           else if (item.rsi >= 70) fillColor = '#e11d48';
           else if (item.rsi >= 60) fillColor = '#881337';
         } else if (colorMode === 'INSTITUTIONAL_FLOW') {
-          if (item.netDeltaFlowMillions >= 100) fillColor = '#059669';
-          else if (item.netDeltaFlowMillions > 0) fillColor = '#064e3b';
-          else if (item.netDeltaFlowMillions <= -100) fillColor = '#e11d48';
-          else if (item.netDeltaFlowMillions < 0) fillColor = '#881337';
+          if (item.netDeltaFlowMillions !== null) {
+            if (item.netDeltaFlowMillions >= 100) fillColor = '#059669';
+            else if (item.netDeltaFlowMillions > 0) fillColor = '#064e3b';
+            else if (item.netDeltaFlowMillions <= -100) fillColor = '#e11d48';
+            else if (item.netDeltaFlowMillions < 0) fillColor = '#881337';
+          }
         } else if (colorMode === 'SHORT_SQUEEZE_RISK') {
-          const squeezeScore = item.squeezeRiskScore ?? 0;
-          if (squeezeScore >= 75) fillColor = '#7e22ce';
-          else if (squeezeScore >= 50) fillColor = '#3730a3';
-        } else if (item.hasEarningsSoon) {
+          const squeezeScore = item.squeezeRiskScore;
+          if (squeezeScore !== null && squeezeScore !== undefined) {
+            if (squeezeScore >= 75) fillColor = '#7e22ce';
+            else if (squeezeScore >= 50) fillColor = '#3730a3';
+          }
+        } else if (item.hasEarningsSoon === true) {
           fillColor = '#d97706';
         }
 
@@ -168,7 +172,9 @@ export const HeatmapCanvasWebGL: React.FC<HeatmapCanvasWebGLProps> = ({
                 ? `${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`
                 : colorMode === 'RSI_MOMENTUM'
                 ? `RSI ${item.rsi}`
-                : `${item.netDeltaFlowMillions >= 0 ? '+' : ''}$${item.netDeltaFlowMillions.toFixed(0)}M`;
+                : item.netDeltaFlowMillions !== null
+                ? `${item.netDeltaFlowMillions >= 0 ? '+' : ''}$${item.netDeltaFlowMillions.toFixed(0)}M`
+                : 'L2 Req';
 
             ctx.font = 'bold 11px sans-serif';
             ctx.fillStyle = chg >= 0 ? '#34d399' : '#f87171';

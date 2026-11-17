@@ -196,13 +196,13 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
           <div>
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium mb-3">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>LuxAlgo GitHub Open-Source Suite & PineTS Engine</span>
+              <span>Orderflow, Kernel Envelopes &amp; PineTS Runtime</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              LuxAlgo Quantitative Indicators & Confluence Engine
+              Orderflow, SMC &amp; Kernel Confluence Lab
             </h1>
             <p className="mt-2 text-sm text-zinc-400 max-w-3xl leading-relaxed">
-              Integrates LuxAlgo's premier open-source algorithms: Nadaraya-Watson Kernel Envelopes, Smart Money Concepts (Order Blocks & FVGs), Oscillator Matrix, and live PineTS Pine Script execution.
+              Combines Nadaraya-Watson Kernel Envelopes, Smart Money Concepts (Order Blocks &amp; Fair Value Gaps), Oscillator Matrix momentum, and live PineTS script validation.
             </p>
           </div>
 
@@ -237,7 +237,7 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
         {/* Suite Sub-Navigation Tabs */}
         <div className="flex flex-wrap items-center gap-2 mt-6 pt-6 border-t border-zinc-800/80">
           {[
-            { id: 'confluence', label: 'Trullàs + LuxAlgo Confluence', icon: Flame },
+            { id: 'confluence', label: 'Divergence + Orderflow Confluence', icon: Flame },
             { id: 'nwe', label: 'Nadaraya-Watson Envelope (NWE)', icon: Layers },
             { id: 'smc', label: 'Smart Money Concepts (SMC)', icon: ShieldAlert },
             { id: 'pinets', label: 'PineTS Execution Sandbox', icon: Code2 },
@@ -264,7 +264,7 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
 
       {error && (
         <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-4 text-xs text-rose-300 flex items-center justify-between gap-4">
-          <span>Unable to compute LuxAlgo indicators for {symbol}: {error}</span>
+          <span>Unable to compute orderflow &amp; envelope indicators for {symbol}: {error}</span>
           <button
             onClick={() => fetchLuxAlgoData(symbol, timeframe, bandwidth, multiplier)}
             className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 rounded-lg font-medium text-rose-200 transition shrink-0"
@@ -317,7 +317,7 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
               </div>
 
               <p className="text-xs text-zinc-400 leading-relaxed">
-                When a David Trullàs 3rd-wave MACD divergence converges with a LuxAlgo Nadaraya-Watson envelope extreme and SMC order block demand, false breakout frequency drops significantly.
+                When a 3rd-wave MACD divergence converges with a Nadaraya-Watson envelope extreme and SMC order block demand, false breakout frequency drops significantly.
               </p>
             </div>
 

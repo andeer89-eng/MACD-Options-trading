@@ -1,0 +1,86 @@
+{
+ "n": 20,
+ "seed": 7,
+ "customer": {
+  "business": "Trullàs Divergence 24/7 Scanner (US equities & options swing scanner)",
+  "target": "Self-directed retail and semi-pro swing traders, 24 to 58, who trade US stocks or options 2 to 10 times a month with $10k to $250k accounts",
+  "where": "Online web app (English; US, UK, Canada, EU retail traders trading NYSE/Nasdaq)",
+  "age": [
+   24,
+   58
+  ],
+  "segments": [
+   {
+    "name": "Part-time salaried swing trader ($10k-$50k account)",
+    "share": 0.45,
+    "income": [
+     60000,
+     125000
+    ]
+   },
+   {
+    "name": "Active side-hustle trader ($50k-$150k account)",
+    "share": 0.35,
+    "income": [
+     110000,
+     210000
+    ]
+   },
+   {
+    "name": "Systematic / semi-pro trader ($150k+ account)",
+    "share": 0.2,
+    "income": [
+     165000,
+     350000
+    ]
+   }
+  ],
+  "behaviours": [
+   {
+    "name": "TradingView / Finviz loyalist",
+    "share": 0.25,
+    "how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions."
+   },
+   {
+    "name": "Evidence skeptic",
+    "share": 0.2,
+    "how": "Refuses any scanner without multi-year, net-of-slippage proof that signals beat random entries."
+   },
+   {
+    "name": "Time-strapped prep trader",
+    "share": 0.2,
+    "how": "Checks setups for 20 minutes before the New York open or at night around a day job."
+   },
+   {
+    "name": "Cost-cutter / DIY tinkerer",
+    "share": 0.15,
+    "how": "Uses thinkorswim Stock Hacker, Pine scripts, or Python yfinance instead of paying $50/mo."
+   },
+   {
+    "name": "Tools hopper",
+    "share": 0.1,
+    "how": "Tries new scanners and journals via trials, cancels fast if workflow feels cluttered."
+   },
+   {
+    "name": "Review & community checker",
+    "share": 0.1,
+    "how": "Searches Reddit r/swingtrading and Trustpilot before entering a card, wary of auto-renew traps."
+   }
+  ],
+  "objections": [
+   "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+   "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+   "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+   "I already have too many tabs and complex scanners I barely use",
+   "I worry another monthly SaaS will lock me into an auto-renewal I forget to cancel",
+   "I can write a Python script or TradingView Pine screener for free"
+  ],
+  "habits": [
+   "you review charts for 30 minutes after the US market close at 16:00 ET",
+   "you work a full-time engineering or finance job during NYSE regular hours",
+   "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet",
+   "you got burned last quarter by an unverified options Discord alert service"
+  ]
+ },
+ "pitch": "Finish your US stock & options swing prep in 10 minutes before the 09:30 ET open: one clean Today view shows Market Regime breadth, CBOE VIX/GEX context, and a ranked shortlist of S&P 500 Stan Weinstein Stage 2 + MACD Triple Divergence setups with pre-calculated stop/invalidation levels and SEC Form 4 insider clusters.\n\nNo black boxes and zero Yahoo delay on paid plans: Swing Pro runs on a licensed commercial market-data feed, lets you inspect our public 5-year methodology & live 60-day anti-lookahead Shadow Signal Ledger (X1/X2/X3 net of slippage vs. SPY) before paying, and imports your TradingView/broker CSV journal in one click.\n\nStart with a 14-day no-card Shadow Ledger & paper preview; then choose Nightly Watchlist ($29/mo EOD shortlist + journal) or Swing Pro ($39/mo real-time watchlist + Telegram alerts + SEC/GEX; Founding Cohort: $29/mo for your first 3 months, ends 14 days after launch), backed by a one-click 30-day refund guarantee (analytical software only, not investment advice)."
+}

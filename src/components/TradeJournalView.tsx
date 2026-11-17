@@ -47,6 +47,10 @@ import {
   downloadCSV,
   enrichJournalEntryAnalytics,
 } from '../utils/tradeJournal';
+import {
+  parseBrokerCsvToJournalEntries,
+  SAMPLE_BROKER_CSV,
+} from '../utils/csvJournalImport';
 import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
@@ -125,6 +129,45 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [closeExitScreenshot, setCloseExitScreenshot] = useState<string>('');
   const [exportToast, setExportToast] = useState<string | null>(null);
 
+  // 1-Click CSV Import Modal State
+  const [showCsvImportModal, setShowCsvImportModal] = useState(false);
+  const [csvImportText, setCsvImportText] = useState('');
+
+  const parsedCsvPreview = useMemo(() => {
+    if (!csvImportText.trim()) return null;
+    return parseBrokerCsvToJournalEntries(csvImportText);
+  }, [csvImportText]);
+
+  const handleCsvFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setCsvImportText(reader.result);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmCsvImport = () => {
+    if (!parsedCsvPreview || parsedCsvPreview.entries.length === 0) return;
+    const enriched = parsedCsvPreview.entries.map(enrichJournalEntryAnalytics);
+    const updated = [...enriched, ...entries];
+    updateEntriesState(updated);
+    if (user) {
+      enriched.forEach((entry) => {
+        createJournalEntryInFirestore(entry).catch((err) =>
+          console.warn('Firestore CSV import create failed:', err)
+        );
+      });
+    }
+    setShowCsvImportModal(false);
+    setCsvImportText('');
+    setExportToast(`Imported ${enriched.length} trades from CSV into your active ledger.`);
+    setTimeout(() => setExportToast(null), 4500);
+  };
+
   const handleExportCSV = (entriesToExport: JournalEntry[] = entries) => {
     if (entriesToExport.length === 0) {
       setExportToast('No logged trade records to export.');
@@ -133,7 +176,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     }
     const csvData = exportJournalToCSV(entriesToExport);
     const dateStamp = new Date().toISOString().slice(0, 10);
-    const fileName = `trullas_trade_journal_${dateStamp}.csv`;
+    const fileName = `stageledger_trade_journal_${dateStamp}.csv`;
     downloadCSV(csvData, fileName);
     setExportToast(`Exported ${entriesToExport.length} trade records to ${fileName} for external auditing.`);
     setTimeout(() => setExportToast(null), 4500);
@@ -382,7 +425,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           >
             <Sparkles className="w-4 h-4 text-emerald-300" />
             <span className="flex items-center space-x-1.5">
-              <span>Options Harvesting &amp; TradingWarz Bot</span>
+              <span>Options Harvesting Bot</span>
             </span>
           </button>
 
@@ -412,17 +455,14 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         </div>
 
         <div className="flex items-center space-x-3 px-3 text-xs text-zinc-400 font-mono">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>
-              {journalTab === 'options'
-                ? "Rich's S&P 500 Put Harvesting + TradingWarz"
-                : journalTab === 'automated'
-                ? 'Trullàs 4-Pillars Algorithm'
-                : journalTab === 'backtester'
-                ? 'Historical Multi-Asset Simulation'
-                : 'Manual Journal'}
-            </span>
+          <span>
+            {journalTab === 'options'
+              ? 'S&P 500 Put Harvesting & Golden Zone'
+              : journalTab === 'automated'
+              ? '4-Pillars Equity Engine'
+              : journalTab === 'backtester'
+              ? 'Historical Multi-Asset Simulation'
+              : 'Manual Journal & CSV Ledger'}
           </span>
         </div>
       </div>
@@ -457,11 +497,21 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center space-x-2.5 shrink-0">
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  onClick={() => setShowCsvImportModal(true)}
+                  data-testid="open-csv-import-btn"
+                  className="flex items-center space-x-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700 rounded-lg text-xs font-semibold shadow-sm transition whitespace-nowrap"
+                  title="Import broker or TradingView trade export CSV into your journal"
+                >
+                  <Upload className="w-4 h-4 text-sky-400" />
+                  <span>Import CSV</span>
+                </button>
+
                 <button
                   onClick={() => handleExportCSV(entries)}
                   data-testid="export-journal-csv-btn"
-                  className="flex items-center space-x-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700 rounded-lg text-xs font-semibold shadow-sm transition"
+                  className="flex items-center space-x-2 px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700 rounded-lg text-xs font-semibold shadow-sm transition whitespace-nowrap"
                   title="Export complete logged trade history to CSV file for external performance auditing"
                 >
                   <Download className="w-4 h-4 text-emerald-400" />
@@ -470,7 +520,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
 
                 <button
                   onClick={() => setShowLogModal(true)}
-                  className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/20 transition"
+                  className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/20 transition whitespace-nowrap"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Log New Trade</span>
@@ -1107,7 +1157,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                                     </h4>
                                   </div>
                                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-emerald-400 border border-emerald-500/30 font-semibold">
-                                    David Trullàs Quantitative Framework
+                                    StageLedger 4-Pillars Framework
                                   </span>
                                 </div>
 
@@ -1781,6 +1831,146 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           </div>
         );
       })()}
+      {/* 1-CLICK BROKER / TRADINGVIEW CSV IMPORT MODAL */}
+      {showCsvImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative overflow-y-auto max-h-[90vh]">
+            <button
+              type="button"
+              onClick={() => setShowCsvImportModal(false)}
+              aria-label="Close CSV import modal"
+              className="absolute top-5 right-5 text-zinc-400 hover:text-white p-1.5 rounded-lg bg-zinc-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center space-x-2 pb-2 border-b border-zinc-800">
+              <FileSpreadsheet className="w-5 h-5 text-sky-400" />
+              <h3 className="font-bold text-white text-base">Import Broker / TradingView CSV</h3>
+            </div>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Upload a CSV file or paste rows with headers such as <code className="text-zinc-200">Symbol, Side, Entry Date, Exit Date, Quantity, Entry Price, Exit Price, Stop Loss, Target Price, Notes</code>.
+              R-multiples and realized P&amp;L are computed deterministically without modifying your existing trades.
+            </p>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <label className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg border border-zinc-700 cursor-pointer transition inline-flex items-center space-x-1.5">
+                <Upload className="w-3.5 h-3.5 text-sky-400" />
+                <span>Choose .CSV File</span>
+                <input
+                  type="file"
+                  accept=".csv,.txt,text/csv"
+                  onChange={handleCsvFileUpload}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                type="button"
+                data-testid="load-sample-csv-btn"
+                onClick={() => setCsvImportText(SAMPLE_BROKER_CSV)}
+                className="px-3 py-1.5 bg-zinc-950 hover:bg-zinc-800 text-sky-400 border border-zinc-800 rounded-lg transition font-medium"
+              >
+                Load Sample Broker CSV (3 Trades)
+              </button>
+            </div>
+
+            <div>
+              <label htmlFor="csv-paste-area" className="text-xs text-zinc-400 block mb-1">
+                CSV Data
+              </label>
+              <textarea
+                id="csv-paste-area"
+                rows={5}
+                value={csvImportText}
+                onChange={(e) => setCsvImportText(e.target.value)}
+                placeholder="Symbol,Side,Entry Date,Exit Date,Quantity,Entry Price,Exit Price,Stop Loss,Target Price&#10;NVDA,Long,2026-10-08,2026-10-21,20,124.50,136.80,119.20,136.50"
+                className="w-full p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-sky-500"
+              />
+            </div>
+
+            {parsedCsvPreview && (
+              <div className="space-y-2 bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-white">
+                    Preview: {parsedCsvPreview.entries.length} valid trade{parsedCsvPreview.entries.length === 1 ? '' : 's'}
+                    {parsedCsvPreview.errors.length > 0 && (
+                      <span className="text-rose-400 ml-2">
+                        &middot; {parsedCsvPreview.errors.length} skipped row(s)
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-[10px] font-mono text-zinc-400">
+                    Mapped: {parsedCsvPreview.detectedColumns.slice(0, 5).join(', ')}
+                  </span>
+                </div>
+
+                {parsedCsvPreview.errors.length > 0 && (
+                  <ul className="text-[11px] text-rose-300 space-y-0.5 max-h-20 overflow-y-auto">
+                    {parsedCsvPreview.errors.map((err) => (
+                      <li key={err.rowNumber}>
+                        Row {err.rowNumber}: {err.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {parsedCsvPreview.entries.length > 0 && (
+                  <div className="overflow-x-auto max-h-40">
+                    <table className="w-full text-left font-mono text-[11px]">
+                      <thead>
+                        <tr className="text-zinc-400 border-b border-zinc-800">
+                          <th className="py-1 pr-2">Date</th>
+                          <th className="py-1 pr-2">Symbol</th>
+                          <th className="py-1 pr-2">Status</th>
+                          <th className="py-1 pr-2 text-right">Qty</th>
+                          <th className="py-1 pr-2 text-right">Entry</th>
+                          <th className="py-1 text-right">P&amp;L</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-900">
+                        {parsedCsvPreview.entries.slice(0, 8).map((row) => (
+                          <tr key={row.id}>
+                            <td className="py-1 pr-2 text-zinc-300">{row.entryDate}</td>
+                            <td className="py-1 pr-2 font-bold text-white">{row.symbol}</td>
+                            <td className="py-1 pr-2 text-zinc-300">{row.status}</td>
+                            <td className="py-1 pr-2 text-right text-zinc-300">{row.quantity}</td>
+                            <td className="py-1 pr-2 text-right text-zinc-300">${row.entryPrice.toFixed(2)}</td>
+                            <td className={`py-1 text-right font-bold ${(row.realizedPnL ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {row.realizedPnL !== undefined ? `${row.realizedPnL >= 0 ? '+' : ''}$${row.realizedPnL.toFixed(2)}` : 'OPEN'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCsvImportModal(false)}
+                className="px-4 py-2 text-xs text-zinc-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-csv-import-btn"
+                disabled={!parsedCsvPreview || parsedCsvPreview.entries.length === 0}
+                onClick={handleConfirmCsvImport}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-semibold text-xs rounded-lg shadow-md transition flex items-center space-x-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Confirm Import ({parsedCsvPreview?.entries.length || 0} Trades)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
         </>
       )}
     </div>

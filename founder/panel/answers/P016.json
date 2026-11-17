@@ -1,0 +1,13 @@
+{
+  "id": "P016",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "convenience",
+  "reason": "One-click CSV import from my spreadsheet, $29 founding pricing, and a one-click 30-day refund let me test replacing my clunky spreadsheet without auto-renew worry.",
+  "objection": "Needs to preserve my historical R-multiple tags cleanly during CSV import.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 12,
+  "price_cheap": 25,
+  "price_expensive": 45,
+  "price_too_expensive": 59
+}

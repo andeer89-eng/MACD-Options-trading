@@ -1,0 +1,13 @@
+{
+  "id": "P011",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "habit",
+  "reason": "I already pay $35 a month for TradingView Plus and track my swings in a spreadsheet, and I am not adding $49 more for quotes that may still be 10 to 20 minutes delayed.",
+  "objection": "Why pay $49/mo on top of TradingView Plus when free-tier public data has a 10–20 minute delay?",
+  "would_change_my_mind": "Show verified licensed data with zero delay and let the built-in journal replace my spreadsheet at $35-$39/mo.",
+  "price_too_cheap": 12,
+  "price_cheap": 24,
+  "price_expensive": 44,
+  "price_too_expensive": 59
+}

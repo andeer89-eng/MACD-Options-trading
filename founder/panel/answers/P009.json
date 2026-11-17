@@ -1,0 +1,13 @@
+{
+  "id": "P009",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "trust",
+  "reason": "Letting me inspect the 60-day X1/X2/X3 shadow signal outcomes net of slippage without putting a card down first is exactly what separates an engineering tool from hype; I will convert at the $29 founding rate if the ledger looks clean.",
+  "objection": "Still dependent on the actual live R-expectancy stats inside the preview.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 15,
+  "price_cheap": 29,
+  "price_expensive": 49,
+  "price_too_expensive": 69
+}

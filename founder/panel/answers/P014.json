@@ -1,0 +1,13 @@
+{
+  "id": "P014",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "price",
+  "reason": "The $29/mo Nightly Watchlist tier is close, yet with my $67k salary and $35/mo TradingView Plus plan I cannot carry both subscriptions unless I cancel TradingView completely.",
+  "objection": "Still adds $29/mo on top of my existing $35/mo charting bill.",
+  "would_change_my_mind": "Verify in the free 14-day preview that the built-in charts cover my needs so I can downgrade TradingView to free.",
+  "price_too_cheap": 9,
+  "price_cheap": 19,
+  "price_expensive": 34,
+  "price_too_expensive": 45
+}

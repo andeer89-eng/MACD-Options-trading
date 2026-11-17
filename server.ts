@@ -238,6 +238,47 @@ interface YahooSparkEntry {
 /**
  * Fetches batched Yahoo Finance v8/finance/spark close series in parallel 45-symbol chunks.
  */
+async function fetchSingleSparkChunk(
+  chunk: string[],
+  range: string,
+  interval: string
+): Promise<Record<string, YahooSparkEntry>> {
+  if (chunk.length === 0) return {};
+  const yahooList = chunk.map((sym) => normalizeSymbolForYahoo(sym));
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(
+    yahooList.join(',')
+  )}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': USER_AGENT },
+    });
+    clearTimeout(timeoutId);
+
+    if (res.status === 429) rateLimitHitsCount++;
+    if (res.status === 400 && chunk.length > 5) {
+      // Split chunk in half recursively and retry down to 5 symbols
+      const mid = Math.ceil(chunk.length / 2);
+      const [left, right] = await Promise.all([
+        fetchSingleSparkChunk(chunk.slice(0, mid), range, interval),
+        fetchSingleSparkChunk(chunk.slice(mid), range, interval),
+      ]);
+      return { ...left, ...right };
+    }
+    if (!res.ok) return {};
+
+    const json = (await res.json()) as Record<string, YahooSparkEntry>;
+    return json || {};
+  } catch {
+    clearTimeout(timeoutId);
+    return {};
+  }
+}
+
 async function fetchYahooSparkBatch(
   symbols: string[],
   range: string = '3mo',
@@ -245,48 +286,29 @@ async function fetchYahooSparkBatch(
 ): Promise<Map<string, YahooSparkEntry>> {
   const unique = deduplicateSymbols(symbols);
   const out = new Map<string, YahooSparkEntry>();
-  const CHUNK_SIZE = 45;
+  const CHUNK_SIZE = 20;
 
   const chunks: string[][] = [];
   for (let i = 0; i < unique.length; i += CHUNK_SIZE) {
     chunks.push(unique.slice(i, i + CHUNK_SIZE));
   }
 
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      const yahooMap = new Map<string, string>();
-      const yahooList = chunk.map((sym) => {
-        const ySym = normalizeSymbolForYahoo(sym);
-        yahooMap.set(ySym.toUpperCase(), sym);
-        return ySym;
-      });
-
-      try {
-        const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(
-          yahooList.join(',')
-        )}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(url, {
-          signal: controller.signal,
-          headers: { 'User-Agent': USER_AGENT },
-        });
-        clearTimeout(timeoutId);
-
-        if (res.status === 429) rateLimitHitsCount++;
-        if (!res.ok) return;
-
-        const json = (await res.json()) as Record<string, YahooSparkEntry>;
-        for (const [respKey, entry] of Object.entries(json)) {
-          if (!entry || !Array.isArray(entry.close) || !Array.isArray(entry.timestamp)) continue;
-          const origSym = yahooMap.get(respKey.toUpperCase()) || respKey.toUpperCase();
-          out.set(origSym, entry);
-        }
-      } catch {
-        // Chunk failed silently — symbols simply omitted rather than fabricated
-      }
-    })
+  const results = await Promise.all(
+    chunks.map((chunk) => fetchSingleSparkChunk(chunk, range, interval))
   );
+
+  const yahooToOrig = new Map<string, string>();
+  for (const sym of unique) {
+    yahooToOrig.set(normalizeSymbolForYahoo(sym).toUpperCase(), sym);
+  }
+
+  for (const batch of results) {
+    for (const [respKey, entry] of Object.entries(batch)) {
+      if (!entry || !Array.isArray(entry.close) || !Array.isArray(entry.timestamp)) continue;
+      const origSym = yahooToOrig.get(respKey.toUpperCase()) || respKey.toUpperCase();
+      out.set(origSym, entry);
+    }
+  }
 
   return out;
 }
@@ -909,9 +931,8 @@ async function startServer() {
         totalEvaluated: targetTickers.length,
         count: adviceList.length,
         cachedHits,
-        durationMs,
-        parallelWorkerThreads: 8,
-        concurrencyPoolSize: 50,
+        workerThreads: 1,
+        concurrencyChunkSize: 50,
         advice: adviceList,
       });
     } catch (err: any) {
@@ -1118,15 +1139,22 @@ async function startServer() {
           })),
         ];
 
-        const sparkMap = await fetchYahooSparkBatch(
-          universeEntries.map((u) => u.symbol),
-          range,
-          '1d'
-        );
+        const [dailySparkMap, intradaySparkMap] = await Promise.all([
+          fetchYahooSparkBatch(
+            universeEntries.map((u) => u.symbol),
+            range,
+            '1d'
+          ),
+          fetchYahooSparkBatch(
+            universeEntries.map((u) => u.symbol),
+            '1d',
+            '1m'
+          ),
+        ]);
 
         items = [];
         for (const meta of universeEntries) {
-          const entry = sparkMap.get(meta.symbol);
+          const entry = dailySparkMap.get(meta.symbol);
           if (!entry || !Array.isArray(entry.close)) continue;
 
           const closes = entry.close.filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
@@ -1142,21 +1170,34 @@ async function startServer() {
               ? Number(entry.fulldayPrice.toFixed(2))
               : Number(latestClose.toFixed(2));
 
-          const chg1D =
-            typeof entry.fulldayChangePercent === 'number' && Number.isFinite(entry.fulldayChangePercent)
-              ? Number(entry.fulldayChangePercent.toFixed(2))
-              : Number((((latestClose - prevClose) / prevClose) * 100).toFixed(2));
+          // 1D change computed strictly from real close series (latest vs previous session)
+          const chg1D = Number((((latestClose - prevClose) / prevClose) * 100).toFixed(2));
           const chg1W = Number((((latestClose - weekClose) / weekClose) * 100).toFixed(2));
           const chgPeriod = Number((((latestClose - startClose) / startClose) * 100).toFixed(2));
 
-          const rsi = computeRsiFromCloses(closes, 14);
-          const marketCapM = KNOWN_MARKET_CAPS[meta.symbol] || (meta.indexTag === 'Crypto' ? 40000 : 52000);
+          // 1m and 15m changes computed from real 1-minute intraday spark series
+          let chg1m: number = 0;
+          let chg15m: number = 0;
+          const intraEntry = intradaySparkMap.get(meta.symbol);
+          if (intraEntry && Array.isArray(intraEntry.close)) {
+            const intraCloses = intraEntry.close.filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
+            if (intraCloses.length >= 2) {
+              const cur = intraCloses[intraCloses.length - 1];
+              const prev1 = intraCloses[intraCloses.length - 2];
+              const prev15 = intraCloses[Math.max(0, intraCloses.length - 16)];
+              chg1m = Number((((cur - prev1) / prev1) * 100).toFixed(2));
+              chg15m = Number((((cur - prev15) / prev15) * 100).toFixed(2));
+            }
+          }
 
-          // Check cached OHLCV if available for exact volume / RVOL
+          const rsi = computeRsiFromCloses(closes, 14);
+          const marketCapM: number | null = KNOWN_MARKET_CAPS[meta.symbol] ?? null;
+
+          // Check cached OHLCV if available for exact volume / RVOL; null if not yet cached
           const cachedDaily = candleCache.get(`${meta.symbol}_1d`);
-          let volume24hM = Number((marketCapM * 0.0045).toFixed(1));
-          let avgVolM = volume24hM;
-          let rvol = 1.0;
+          let volume24hM: number | null = null;
+          let avgVolM: number | null = null;
+          let rvol: number | null = null;
 
           if (cachedDaily && cachedDaily.candles.length >= 2) {
             const vols = cachedDaily.candles.map((c) => c.volume).filter((v) => v > 0);
@@ -1169,14 +1210,17 @@ async function startServer() {
             }
           }
 
-          // Directional price-velocity capital flow proxy computed purely from real price change & cap
-          const netDeltaFlowM = Number(((chg1D / 100) * marketCapM * 0.0012).toFixed(1));
-          const squeezeRiskScore = Number(
-            Math.max(0, Math.min(100, (chg1D > 3 ? 35 : 15) + Math.max(0, rsi - 50) * 0.8 + rvol * 10)).toFixed(0)
-          );
+          // Net order delta requires Level-2 institutional order-flow feed; null to prevent misleading fabrications
+          const netDeltaFlowM: number | null = null;
+          const squeezeRiskScore: number | null =
+            rvol !== null && typeof chg1D === 'number'
+              ? Number(
+                  Math.max(0, Math.min(100, (chg1D > 3 ? 35 : 15) + Math.max(0, rsi - 50) * 0.8 + rvol * 10)).toFixed(0)
+                )
+              : null;
 
           let anomalyAlert: HeatmapItem['anomalyAlert'];
-          if (rvol >= 2.2) anomalyAlert = 'VOLUME_SPIKE';
+          if (rvol !== null && rvol >= 2.2) anomalyAlert = 'VOLUME_SPIKE';
           else if (chg1D >= 4.0) anomalyAlert = 'BREAKOUT';
 
           items.push({
@@ -1189,8 +1233,8 @@ async function startServer() {
             marketCapMillions: marketCapM,
             price,
             timeframeChanges: {
-              '1m': chg1D,
-              '15m': chg1D,
+              '1m': chg1m,
+              '15m': chg15m,
               '1D': chg1D,
               '1W': chg1W,
               YTD: chgPeriod,
@@ -1201,7 +1245,7 @@ async function startServer() {
             netDeltaFlowMillions: netDeltaFlowM,
             rsi,
             squeezeRiskScore,
-            hasEarningsSoon: false,
+            hasEarningsSoon: null,
             anomalyAlert,
             sparkline: closes.slice(-10).map((v) => Number(v.toFixed(2))),
           });
@@ -1404,8 +1448,9 @@ async function startServer() {
                 hasDoubleDivergence: setups.some((s) => s.type.includes('DOUBLE')),
                 sec: {
                   symbol: sym,
-                  available: Boolean(spItem?.cik),
+                  available: false,
                   cik: spItem?.cik || null,
+                  note: 'Fetch on demand via /api/sec-filings',
                   filings: [],
                 },
                 candleCount: candles.length,
@@ -1484,18 +1529,19 @@ async function startServer() {
         memoryHealth: utilizationPercent > 85 ? 'CRITICAL' : utilizationPercent > 70 ? 'ELEVATED' : 'HEALTHY',
       },
       apiQuota: {
-        provider: 'Yahoo Finance v8 + CBOE Delayed Quotes + SEC EDGAR',
+        provider: 'Yahoo Finance v8 (Unofficial) + CBOE Delayed Quotes + SEC EDGAR',
         usedRequests: totalApiRequestsCount,
-        maxHourlyQuota: 2000,
-        remainingQuota: Math.max(0, 2000 - totalApiRequestsCount),
-        percentUsed: Number(((totalApiRequestsCount / 2000) * 100).toFixed(1)),
+        maxHourlyQuota: null,
+        remainingQuota: null,
+        percentUsed: null,
         rateLimitHits: rateLimitHitsCount,
-        resetTimeStr: 'Session rolling telemetry',
+        resetTimeStr: 'Dynamic rate limit by IP (Unofficial API)',
+        quotaNote: 'Yahoo Finance v8 has no formal public quota. Rate limiting is dynamic and unannounced.',
       },
       secCompliance: {
         currentReqsPerSec: Number((totalApiRequestsCount / Math.max(1, uptimeSeconds)).toFixed(2)),
         maxAllowedReqsPerSec: 10.0,
-        isCompliant: true,
+        isCompliant: rateLimitHitsCount === 0,
         userAgent: 'TrullasTradingScanner/2.0 (trader@trullas-scanner.com)',
       },
       cache: {
@@ -1504,7 +1550,8 @@ async function startServer() {
         estimatedMemoryKb: Math.round(candleCache.size * 2.8),
       },
       daemon: {
-        is247Active: true,
+        is247Active: false,
+        mode: 'on-request scans driven by frontend polling',
         intervalSeconds: 45,
         lastHeartbeat: lastScanTimestampIso || new Date().toISOString(),
         consecutiveSuccessfulScans,

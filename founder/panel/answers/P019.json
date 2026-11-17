@@ -1,0 +1,13 @@
+{
+  "id": "P019",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "convenience",
+  "reason": "At $29 founding ($39 regular) with a 14-day no-card preview, one-click CSV import, and a focused Today view, this is an obvious month-one switch from my spreadsheet.",
+  "objection": "Still expecting fast UI responsiveness inside Today and Chart views.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 12,
+  "price_cheap": 25,
+  "price_expensive": 49,
+  "price_too_expensive": 65
+}

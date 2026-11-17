@@ -1,0 +1,171 @@
+{
+ "business": "Trullàs Divergence 24/7 Scanner (US equities & options swing scanner)",
+ "seed": 7,
+ "dealt": 20,
+ "answered": 20,
+ "skipped": [],
+ "buys": 3,
+ "passes": 17,
+ "buy_rate": 0.15,
+ "by_segment": [
+  [
+   "Systematic / semi-pro trader ($150k+ account)",
+   4,
+   0.25
+  ],
+  [
+   "Part-time salaried swing trader ($10k-$50k account)",
+   9,
+   0.2222222222222222
+  ],
+  [
+   "Active side-hustle trader ($50k-$150k account)",
+   7,
+   0.0
+  ]
+ ],
+ "by_behaviour": [
+  [
+   "Tools hopper",
+   2,
+   1.0
+  ],
+  [
+   "Time-strapped prep trader",
+   4,
+   0.25
+  ],
+  [
+   "Evidence skeptic",
+   4,
+   0.0
+  ],
+  [
+   "Review & community checker",
+   2,
+   0.0
+  ],
+  [
+   "Cost-cutter / DIY tinkerer",
+   3,
+   0.0
+  ],
+  [
+   "TradingView / Finviz loyalist",
+   5,
+   0.0
+  ]
+ ],
+ "by_income": [
+  [
+   "under $105,000",
+   6,
+   0.3333333333333333
+  ],
+  [
+   "$171,000 and up",
+   7,
+   0.14285714285714285
+  ],
+  [
+   "$105,000 to $171,000",
+   7,
+   0.0
+  ]
+ ],
+ "why_not": [
+  [
+   "trust",
+   6,
+   [
+    "The shadow ledger and fail-closed session gate sound disciplined, but you are asking for $49 a month with zero published multi-year net-of-slippage backtest results against a random baseline.",
+    "After getting burned by an unverified options Discord last quarter, I will not put a card down on a new scanner until there is a public track record and independent reviews on Reddit or Trustpilot."
+   ],
+   [
+    "P001",
+    "P002"
+   ]
+  ],
+  [
+   "price",
+   6,
+   [
+    "At $49 a month on top of my TradingView plan, it is too expensive for a $10k-$50k swing account when I can code basic divergence and Stage filters in Pine Script.",
+    "Almost $600 a year eats a big chunk of a smaller swing account, and without real backtest proof I am not paying more than Finviz Elite."
+   ],
+   [
+    "P005",
+    "P006"
+   ]
+  ],
+  [
+   "need",
+   2,
+   [
+    "I already pay $35 a month for TradingView Plus and run free scans in thinkorswim Stock Hacker, so adding a $49 subscription on top just duplicates work I already automate.",
+    "I already run custom scans in thinkorswim Stock Hacker and Python scripts after 16:00 ET, and the pitch provides zero backtested edge metrics to prove this is better than my setup."
+   ],
+   [
+    "P003",
+    "P015"
+   ]
+  ],
+  [
+   "habit",
+   2,
+   [
+    "I already pay $35 a month for TradingView Plus and track my swings in a spreadsheet, and I am not adding $49 more for quotes that may still be 10 to 20 minutes delayed.",
+    "I am comfortable with TradingView Plus at $35 and my spreadsheet, and I do not want to juggle another $49 monthly auto-renewal that feels redundant."
+   ],
+   [
+    "P011",
+    "P016"
+   ]
+  ],
+  [
+   "quality",
+   1,
+   [
+    "Mentioning a 10 to 20 minute exchange delay and a downloadable Python script makes it sound like a wrapper over free Yahoo Finance data, which I can already query myself."
+   ],
+   [
+    "P018"
+   ]
+  ]
+ ],
+ "why_yes": [
+  [
+   "convenience",
+   3,
+   [
+    "With a full-time engineering job and a larger account, paying $49 for one month to test automated S&P 500 Stage 2 + EDGAR + shadow R-tracking in one terminal is an easy experiment, though I will cancel fast if the UI feels bloated.",
+    "Scanning 500 stocks around a full-time job takes hours I do not have, so having invalidation levels, regime breadth, and Telegram alerts ready before the bell justifies trying $49 for a month."
+   ],
+   [
+    "P007",
+    "P010"
+   ]
+  ]
+ ],
+ "flip": [
+  "Show a 5-year net-of-cost backtest beating random entries and let me test a 14-day trial without a card on file.",
+  "Publish a live, unedited 90-day shadow signal ledger upfront so I can audit the wins and losses before signing up.",
+  "Price an EOD-only digest under $20/mo that replaces my trade-journal spreadsheet automatically.",
+  "Include an open methodology and historical R-multiple report net of 5-10 bps slippage before checkout.",
+  "Bundle the scanner, journal, and regime filter around $29/mo with a 30-day money-back guarantee so I can drop another tool.",
+  "Show verified shadow signal stats and offer a $29/mo swing tier with a free 14-day trial.",
+  "Drop an EOD daily watchlist tier to $25-$29/mo or clearly include real-time exchange data at $49.",
+  "Open a read-only preview of the past 60 days of shadow signals and their net R outcomes.",
+  "Show verified licensed data with zero delay and let the built-in journal replace my spreadsheet at $35-$39/mo.",
+  "Give a 14-day risk-free trial or $29/mo nightly prep tier after I verify sample daily watchlists.",
+  "Clearly separate licensed real-time feeds from delayed tiers and share verifiable third-party user reviews plus 90-day shadow results.",
+  "Offer an EOD-focused prep tier around $25-$29/mo so I do not pay for intraday features I cannot use at work.",
+  "Publish full 5-year point-in-time test results vs. SPY plus pre-parsed EDGAR Form 4 and CBOE GEX history I do not want to maintain myself.",
+  "Price below $35/mo with one-click CSV journal migration and a clear 30-day money-back guarantee.",
+  "Offer a $29/mo swing plan with full journaling and regime breadth so I can drop extra subscriptions.",
+  "Confirm a licensed commercial data provider with zero quote lag on the paid plan and clean API/webhook exports.",
+  "Publish a 5-year out-of-sample expectancy breakdown and include a 14-day guided trial with zero auto-renew surprise."
+ ],
+ "purchases_first_month_per_buyer": 1.0,
+ "price_answers": 20
+}

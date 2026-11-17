@@ -1,0 +1,222 @@
+[
+ {
+  "id": "P001",
+  "name": "Omar",
+  "age": 24,
+  "segment": "Systematic / semi-pro trader ($150k+ account)",
+  "income": 255000,
+  "behaviour": "Evidence skeptic",
+  "behaviour_how": "Refuses any scanner without multi-year, net-of-slippage proof that signals beat random entries.",
+  "objection": "I worry another monthly SaaS will lock me into an auto-renewal I forget to cancel",
+  "habit": "you work a full-time engineering or finance job during NYSE regular hours"
+ },
+ {
+  "id": "P002",
+  "name": "Raj",
+  "age": 40,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 138000,
+  "behaviour": "Review & community checker",
+  "behaviour_how": "Searches Reddit r/swingtrading and Trustpilot before entering a card, wary of auto-renew traps.",
+  "objection": "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+  "habit": "you got burned last quarter by an unverified options Discord alert service"
+ },
+ {
+  "id": "P003",
+  "name": "Emil",
+  "age": 58,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 147000,
+  "behaviour": "Cost-cutter / DIY tinkerer",
+  "behaviour_how": "Uses thinkorswim Stock Hacker, Pine scripts, or Python yfinance instead of paying $50/mo.",
+  "objection": "I worry another monthly SaaS will lock me into an auto-renewal I forget to cancel",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P004",
+  "name": "Owen",
+  "age": 32,
+  "segment": "Systematic / semi-pro trader ($150k+ account)",
+  "income": 293000,
+  "behaviour": "Evidence skeptic",
+  "behaviour_how": "Refuses any scanner without multi-year, net-of-slippage proof that signals beat random entries.",
+  "objection": "I worry another monthly SaaS will lock me into an auto-renewal I forget to cancel",
+  "habit": "you review charts for 30 minutes after the US market close at 16:00 ET"
+ },
+ {
+  "id": "P005",
+  "name": "Sana",
+  "age": 53,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 118000,
+  "behaviour": "TradingView / Finviz loyalist",
+  "behaviour_how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions.",
+  "objection": "I can write a Python script or TradingView Pine screener for free",
+  "habit": "you got burned last quarter by an unverified options Discord alert service"
+ },
+ {
+  "id": "P006",
+  "name": "Maya",
+  "age": 49,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 86000,
+  "behaviour": "Evidence skeptic",
+  "behaviour_how": "Refuses any scanner without multi-year, net-of-slippage proof that signals beat random entries.",
+  "objection": "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+  "habit": "you got burned last quarter by an unverified options Discord alert service"
+ },
+ {
+  "id": "P007",
+  "name": "Selin",
+  "age": 49,
+  "segment": "Systematic / semi-pro trader ($150k+ account)",
+  "income": 177000,
+  "behaviour": "Tools hopper",
+  "behaviour_how": "Tries new scanners and journals via trials, cancels fast if workflow feels cluttered.",
+  "objection": "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+  "habit": "you work a full-time engineering or finance job during NYSE regular hours"
+ },
+ {
+  "id": "P008",
+  "name": "Ruby",
+  "age": 52,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 71000,
+  "behaviour": "Time-strapped prep trader",
+  "behaviour_how": "Checks setups for 20 minutes before the New York open or at night around a day job.",
+  "objection": "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+  "habit": "you review charts for 30 minutes after the US market close at 16:00 ET"
+ },
+ {
+  "id": "P009",
+  "name": "Nora",
+  "age": 30,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 110000,
+  "behaviour": "Evidence skeptic",
+  "behaviour_how": "Refuses any scanner without multi-year, net-of-slippage proof that signals beat random entries.",
+  "objection": "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+  "habit": "you review charts for 30 minutes after the US market close at 16:00 ET"
+ },
+ {
+  "id": "P010",
+  "name": "Fatima",
+  "age": 47,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 100000,
+  "behaviour": "Time-strapped prep trader",
+  "behaviour_how": "Checks setups for 20 minutes before the New York open or at night around a day job.",
+  "objection": "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+  "habit": "you work a full-time engineering or finance job during NYSE regular hours"
+ },
+ {
+  "id": "P011",
+  "name": "Tariq",
+  "age": 48,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 125000,
+  "behaviour": "TradingView / Finviz loyalist",
+  "behaviour_how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions.",
+  "objection": "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P012",
+  "name": "Felix",
+  "age": 47,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 91000,
+  "behaviour": "Time-strapped prep trader",
+  "behaviour_how": "Checks setups for 20 minutes before the New York open or at night around a day job.",
+  "objection": "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+  "habit": "you got burned last quarter by an unverified options Discord alert service"
+ },
+ {
+  "id": "P013",
+  "name": "Zoe",
+  "age": 53,
+  "segment": "Systematic / semi-pro trader ($150k+ account)",
+  "income": 254000,
+  "behaviour": "Review & community checker",
+  "behaviour_how": "Searches Reddit r/swingtrading and Trustpilot before entering a card, wary of auto-renew traps.",
+  "objection": "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+  "habit": "you review charts for 30 minutes after the US market close at 16:00 ET"
+ },
+ {
+  "id": "P014",
+  "name": "Dev",
+  "age": 33,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 67000,
+  "behaviour": "Time-strapped prep trader",
+  "behaviour_how": "Checks setups for 20 minutes before the New York open or at night around a day job.",
+  "objection": "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P015",
+  "name": "Yusuf",
+  "age": 54,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 193000,
+  "behaviour": "Cost-cutter / DIY tinkerer",
+  "behaviour_how": "Uses thinkorswim Stock Hacker, Pine scripts, or Python yfinance instead of paying $50/mo.",
+  "objection": "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+  "habit": "you review charts for 30 minutes after the US market close at 16:00 ET"
+ },
+ {
+  "id": "P016",
+  "name": "Theo",
+  "age": 37,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 122000,
+  "behaviour": "TradingView / Finviz loyalist",
+  "behaviour_how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions.",
+  "objection": "I worry another monthly SaaS will lock me into an auto-renewal I forget to cancel",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P017",
+  "name": "Alma",
+  "age": 33,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 105000,
+  "behaviour": "TradingView / Finviz loyalist",
+  "behaviour_how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions.",
+  "objection": "$49/month is more than TradingView Plus or Finviz Elite, why pay extra?",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P018",
+  "name": "Freya",
+  "age": 29,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 180000,
+  "behaviour": "Cost-cutter / DIY tinkerer",
+  "behaviour_how": "Uses thinkorswim Stock Hacker, Pine scripts, or Python yfinance instead of paying $50/mo.",
+  "objection": "Is the data truly real-time or delayed Yahoo Finance scraped under the hood?",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P019",
+  "name": "Harper",
+  "age": 34,
+  "segment": "Part-time salaried swing trader ($10k-$50k account)",
+  "income": 83000,
+  "behaviour": "Tools hopper",
+  "behaviour_how": "Tries new scanners and journals via trials, cancels fast if workflow feels cluttered.",
+  "objection": "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+  "habit": "you already pay $35/mo for TradingView Plus and track trades in a spreadsheet"
+ },
+ {
+  "id": "P020",
+  "name": "Emma",
+  "age": 38,
+  "segment": "Active side-hustle trader ($50k-$150k account)",
+  "income": 171000,
+  "behaviour": "TradingView / Finviz loyalist",
+  "behaviour_how": "Already pays for TradingView or uses free Finviz daily and hates duplicating subscriptions.",
+  "objection": "Where is the verified multi-year backtest proof that MACD divergence + Weinstein beats buy-and-hold?",
+  "habit": "you work a full-time engineering or finance job during NYSE regular hours"
+ }
+]

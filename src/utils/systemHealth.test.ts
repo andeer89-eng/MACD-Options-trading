@@ -66,7 +66,7 @@ test('createEmptyHealthData initializes clean unpopulated telemetry without fake
   assert.equal(data.uptimeSeconds, 0);
   assert.equal(data.scanLatencyMs, 0);
   assert.equal(data.latencyHistory.length, 0);
-  assert.equal(data.apiQuota.maxHourlyQuota, 2000);
+  assert.equal(data.apiQuota.maxHourlyQuota, null);
   assert.equal(data.apiQuota.usedRequests, 0);
   assert.ok(data.secCompliance.isCompliant);
 });

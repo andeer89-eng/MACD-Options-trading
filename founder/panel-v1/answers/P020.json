@@ -1,0 +1,13 @@
+{
+  "id": "P020",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "trust",
+  "reason": "Having a daily S&P 500 shortlist ready around my day job sounds helpful, but without any backtest track record vs. SPY I will stick with TradingView Plus until I see hard numbers.",
+  "objection": "Unverified multi-year performance and overlap with my existing TradingView Plus subscription.",
+  "would_change_my_mind": "Publish a 5-year out-of-sample expectancy breakdown and include a 14-day guided trial with zero auto-renew surprise.",
+  "price_too_cheap": 15,
+  "price_cheap": 29,
+  "price_expensive": 52,
+  "price_too_expensive": 75
+}

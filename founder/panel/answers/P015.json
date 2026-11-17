@@ -1,0 +1,13 @@
+{
+  "id": "P015",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "need",
+  "reason": "Even with a licensed feed and public shadow ledger, I already enjoy maintaining my own thinkorswim Stock Hacker scans and Python scripts at zero software cost.",
+  "objection": "Why pay monthly for daily scanning when my own free brokerage tools handle it?",
+  "would_change_my_mind": "Include direct historical point-in-time CSV/API exports of S&P 500 + EDGAR clusters under $39/mo.",
+  "price_too_cheap": 15,
+  "price_cheap": 29,
+  "price_expensive": 49,
+  "price_too_expensive": 75
+}

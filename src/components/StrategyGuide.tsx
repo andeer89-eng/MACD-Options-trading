@@ -27,13 +27,13 @@ export const StrategyGuide: React.FC = () => {
           <div>
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium mb-3">
               <Award className="w-3.5 h-3.5" />
-              <span>4-Time World Cup Championship Winner</span>
+              <span>4-Pillars Quantitative Swing Methodology</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              David Trullàs Trading Rules & MACD Triple Divergence
+              4-Pillars Playbook &amp; MACD Triple Divergence Rules
             </h1>
             <p className="mt-2 text-sm sm:text-base text-zinc-400 max-w-3xl leading-relaxed">
-              Spanish master trader David Trullàs (author and founder of <span className="text-zinc-200">Live in Trading</span>) gained global acclaim for winning the prestigious World Cup Championship of Day Trading Futures. He relies not on complex modern Order Flow or SMC hype, but on a rigorous discretionary system of <span className="text-emerald-400 font-medium">4 Classical Technical Pillars</span> centered around <span className="text-emerald-400 font-medium">MACD Triple Divergences</span>.
+              A structured multi-oscillator reversal framework built on <span className="text-emerald-400 font-medium">4 Classical Technical Pillars</span> centered around <span className="text-emerald-400 font-medium">MACD Triple Divergences</span>, bounded RSI extremes, volume dry-up, and Fibonacci neckline triggers.
             </p>
           </div>
         </div>
@@ -78,7 +78,7 @@ export const StrategyGuide: React.FC = () => {
                 : 'bg-zinc-800/60 text-zinc-400 hover:text-white hover:bg-zinc-800'
             }`}
           >
-            4. Trullàs 3-Tranche Scaling & Sizing
+            4. 3-Tranche Scaling &amp; Sizing Rules
           </button>
         </div>
       </div>
@@ -199,7 +199,7 @@ export const StrategyGuide: React.FC = () => {
               Regular Divergences (Reversal) vs. Hidden Divergences (Trend Continuation)
             </h4>
             <p className="mt-1 text-xs text-zinc-400 leading-relaxed">
-              David Trullàs explicitly teaches both types: <strong className="text-zinc-200">Regular Divergences</strong> signal structural trend exhaustions (when price makes an extreme that indicators refuse to validate), whereas <strong className="text-zinc-200">Hidden Divergences</strong> signal healthy pullbacks within an established trend (e.g., price makes a higher low, but MACD resets deeply into oversold territory, offering continuation entries).
+              The playbook distinguishes both structures: <strong className="text-zinc-200">Regular Divergences</strong> signal structural trend exhaustions (when price makes an extreme that indicators refuse to validate), whereas <strong className="text-zinc-200">Hidden Divergences</strong> signal healthy pullbacks within an established trend (e.g., price makes a higher low, but MACD resets deeply into oversold territory, offering continuation entries).
             </p>
           </div>
         </div>
@@ -362,10 +362,10 @@ export const StrategyGuide: React.FC = () => {
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-6">
           <div className="flex items-center space-x-3">
             <Layers className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-lg font-bold text-white">David Trullàs 3-Tranche Scaling Methodology</h3>
+            <h3 className="text-lg font-bold text-white">3-Tranche Scaling &amp; Risk Methodology</h3>
           </div>
           <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed">
-            A key secret to Trullàs&apos; multi-year victory in the World Cup Championship of Futures Trading is his <strong className="text-white">anti-all-in position building</strong>. Instead of committing 100% of the position on a single tick, he splits risk into 3 structural tranches:
+            A core rule of the playbook is <strong className="text-white">anti-all-in position building</strong>. Instead of committing 100% of the position on a single tick, risk is split into 3 structural tranches:
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

@@ -1,0 +1,13 @@
+{
+  "id": "P004",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "trust",
+  "reason": "Inspecting a 60-day anti-lookahead shadow ledger net of slippage with no card upfront addresses my biggest doubt, and $29 founding / $39 regular on a licensed feed is trivial for my $150k+ account if the math checks out.",
+  "objection": "If the 5-year test fails to clear random-entry baselines inside the 14-day preview, I will not convert.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 19,
+  "price_cheap": 35,
+  "price_expensive": 65,
+  "price_too_expensive": 95
+}

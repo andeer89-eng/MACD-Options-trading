@@ -1,0 +1,13 @@
+{
+  "id": "P017",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "price",
+  "reason": "On a $10k to $50k account I have to protect every basis point of drag, and paying $49 a month on top of TradingView Plus does not make sense without clear ROI.",
+  "objection": "$49/mo beats TradingView Plus on cost without proving it can replace it.",
+  "would_change_my_mind": "Offer a $29/mo swing plan with full journaling and regime breadth so I can drop extra subscriptions.",
+  "price_too_cheap": 10,
+  "price_cheap": 22,
+  "price_expensive": 39,
+  "price_too_expensive": 55
+}

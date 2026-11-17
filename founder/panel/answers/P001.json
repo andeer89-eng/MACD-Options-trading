@@ -1,0 +1,13 @@
+{
+  "id": "P001",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "trust",
+  "reason": "Opening a 14-day no-card preview of the 5-year methodology and live 60-day anti-lookahead shadow ledger lets me verify real R-outcomes net of slippage before paying $29 to $39 a month.",
+  "objection": "I still expect the actual X1/X2/X3 statistics inside the trial to hold up against SPY before my 30-day refund window closes.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 15,
+  "price_cheap": 29,
+  "price_expensive": 55,
+  "price_too_expensive": 79
+}

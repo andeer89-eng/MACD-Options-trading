@@ -15,11 +15,12 @@ export interface MemoryMetrics {
 export interface ApiQuotaMetrics {
   provider: string;
   usedRequests: number;
-  maxHourlyQuota: number;
-  remainingQuota: number;
-  percentUsed: number;
+  maxHourlyQuota: number | null;
+  remainingQuota: number | null;
+  percentUsed: number | null;
   rateLimitHits: number;
   resetTimeStr: string;
+  quotaNote?: string;
 }
 
 export interface SecComplianceMetrics {
@@ -49,7 +50,8 @@ export interface SystemHealthData {
   };
   daemon: {
     is247Active: boolean;
-    intervalSeconds: number;
+    mode?: string;
+    intervalSeconds?: number;
     lastHeartbeat: string;
     consecutiveSuccessfulScans: number;
     nodeVersion: string;
@@ -104,8 +106,11 @@ export function calculateThroughput(tickerCount: number, durationMs: number): nu
 
 export function calculateQuotaUsage(
   usedRequests: number,
-  maxHourlyQuota: number = 2000
-): { remaining: number; percentUsed: number } {
+  maxHourlyQuota: number | null = 2000
+): { remaining: number | null; percentUsed: number | null } {
+  if (maxHourlyQuota === null) {
+    return { remaining: null, percentUsed: null };
+  }
   const remaining = Math.max(0, maxHourlyQuota - usedRequests);
   const percentUsed = Number(((usedRequests / maxHourlyQuota) * 100).toFixed(1));
   return { remaining, percentUsed };
@@ -141,13 +146,14 @@ export function createEmptyHealthData(): SystemHealthData {
     totalTickersScannedSession: 0,
     lastCycleDurationMs: 0,
     apiQuota: {
-      provider: 'Yahoo Finance Chart & Spark API',
+      provider: 'Yahoo Finance Chart & Spark API (Unofficial)',
       usedRequests: 0,
-      maxHourlyQuota: 2000,
-      remainingQuota: 2000,
-      percentUsed: 0,
+      maxHourlyQuota: null,
+      remainingQuota: null,
+      percentUsed: null,
       rateLimitHits: 0,
-      resetTimeStr: 'Top of the hour (rolling window)',
+      resetTimeStr: 'Dynamic rate limit by IP (Unofficial API)',
+      quotaNote: 'Yahoo Finance v8 has no formal public quota. Rate limiting is dynamic and unannounced.',
     },
     secCompliance: {
       currentReqsPerSec: 0,
@@ -169,7 +175,8 @@ export function createEmptyHealthData(): SystemHealthData {
       estimatedMemoryKb: 0,
     },
     daemon: {
-      is247Active: true,
+      is247Active: false,
+      mode: 'on-request scans driven by frontend polling',
       intervalSeconds: 45,
       lastHeartbeat: new Date().toISOString(),
       consecutiveSuccessfulScans: 0,

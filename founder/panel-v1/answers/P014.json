@@ -1,0 +1,13 @@
+{
+  "id": "P014",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "price",
+  "reason": "Between my $35 TradingView plan and a modest salary, adding $49 a month brings my software bill to $84 a month before I place a single trade.",
+  "objection": "Budget constraint plus delayed quotes; I need a streamlined nightly prep list under $30/mo.",
+  "would_change_my_mind": "Offer an EOD-focused prep tier around $25-$29/mo so I do not pay for intraday features I cannot use at work.",
+  "price_too_cheap": 9,
+  "price_cheap": 19,
+  "price_expensive": 34,
+  "price_too_expensive": 45
+}

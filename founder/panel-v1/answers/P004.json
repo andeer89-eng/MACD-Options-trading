@@ -1,0 +1,13 @@
+{
+  "id": "P004",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "trust",
+  "reason": "Every scanner claims discipline, yet the pitch gives no sample size, profit factor, or slippage assumptions for the S&P 500 setups.",
+  "objection": "I refuse to pay monthly for rule-based signals before seeing audited multi-year test results net of costs.",
+  "would_change_my_mind": "Include an open methodology and historical R-multiple report net of 5-10 bps slippage before checkout.",
+  "price_too_cheap": 19,
+  "price_cheap": 35,
+  "price_expensive": 65,
+  "price_too_expensive": 95
+}

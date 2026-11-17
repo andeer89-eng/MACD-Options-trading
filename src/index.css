@@ -1,11 +1,28 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "Plus Jakarta Sans", "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 html,
 body {
   background-color: #09090b;
   color: #f4f4f5;
+  font-family: var(--font-sans);
   overflow-x: hidden;
   max-width: 100vw;
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+.tabular-nums,
+table,
+.font-mono {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Custom scrollbar utility for horizontal sub-navs */
@@ -15,20 +32,5 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
-}
-
-/* Suppress third-party TradingView attribution watermarks */
-a[href*="tradingview.com"],
-a[href*="tradingview"],
-div[class*="tv-watermark"],
-div[class*="tradingview"] {
-  display: none !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  height: 0 !important;
-  width: 0 !important;
-  position: absolute !important;
-  overflow: hidden !important;
 }
 

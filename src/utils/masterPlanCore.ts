@@ -408,7 +408,7 @@ export function isNyseMarketOpen(now: Date = new Date()): { isOpen: boolean; ses
     }
     return { isOpen: false, sessionName: 'ÎNCHIS' };
   } catch {
-    return { isOpen: true, sessionName: 'REGULAR (Fallback)' };
+    return { isOpen: false, sessionName: 'ÎNCHIS (Session Unverified)' };
   }
 }
 

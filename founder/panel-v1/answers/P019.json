@@ -1,0 +1,13 @@
+{
+  "id": "P019",
+  "buys": true,
+  "purchases_first_month": 1,
+  "reason_code": "convenience",
+  "reason": "I like testing new tools that tie scanning, invalidation levels, and journaling together instead of maintaining spreadsheets, so I would pay $49 for one month to try it—though I will cancel immediately if it feels cluttered or lacks real backtest proof inside.",
+  "objection": "Needs instant proof inside the app that the divergence setups actually hold an edge and a clean 5-minute interface.",
+  "would_change_my_mind": "",
+  "price_too_cheap": 12,
+  "price_cheap": 25,
+  "price_expensive": 49,
+  "price_too_expensive": 65
+}

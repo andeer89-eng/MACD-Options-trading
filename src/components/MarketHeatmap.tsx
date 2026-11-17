@@ -164,7 +164,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
       if ((drillState.level === 'SUB_INDUSTRY' || drillState.level === 'ASSET') && drillState.subIndustry && item.subIndustry !== drillState.subIndustry) return false;
 
       // Market Cap Filter ($ Billions)
-      if (minCapFilter > 0 && item.marketCapMillions < minCapFilter * 1000) return false;
+      if (minCapFilter > 0 && (item.marketCapMillions === null || item.marketCapMillions < minCapFilter * 1000)) return false;
 
       // Search Query
       if (searchQuery.trim()) {
@@ -267,6 +267,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
     }
 
     if (colorMode === 'INSTITUTIONAL_FLOW') {
+      if (item.netDeltaFlowMillions === null) return { bg: 'bg-zinc-900 text-zinc-400 border-zinc-800', text: 'text-zinc-500' };
       if (item.netDeltaFlowMillions >= 100) return { bg: 'bg-emerald-600 text-white border-emerald-400 font-bold', text: 'text-white' };
       if (item.netDeltaFlowMillions > 0) return { bg: 'bg-emerald-900/70 text-emerald-200 border-emerald-700/60', text: 'text-emerald-300' };
       if (item.netDeltaFlowMillions <= -100) return { bg: 'bg-rose-600 text-white border-rose-400 font-bold', text: 'text-white' };
@@ -275,13 +276,14 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
     }
 
     if (colorMode === 'SHORT_SQUEEZE_RISK') {
-      const sqScore = item.squeezeRiskScore ?? 0;
+      const sqScore = item.squeezeRiskScore;
+      if (sqScore === null || sqScore === undefined) return { bg: 'bg-zinc-900 text-zinc-400 border-zinc-800', text: 'text-zinc-500' };
       if (sqScore >= 75) return { bg: 'bg-purple-600 text-white border-purple-300 font-bold animate-pulse', text: 'text-purple-100' };
       if (sqScore >= 50) return { bg: 'bg-indigo-900/80 text-indigo-200 border-indigo-600/70', text: 'text-indigo-300' };
       return { bg: 'bg-zinc-900 text-zinc-400 border-zinc-800', text: 'text-zinc-500' };
     }
 
-    if (item.hasEarningsSoon) {
+    if (item.hasEarningsSoon === true) {
       return { bg: 'bg-amber-600/90 text-white border-amber-300 font-bold', text: 'text-amber-100' };
     }
     return { bg: 'bg-zinc-900 text-zinc-300 border-zinc-800', text: 'text-zinc-400' };
@@ -302,10 +304,14 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
         : colorMode === 'RSI_MOMENTUM'
         ? `RSI ${item.rsi}`
         : colorMode === 'INSTITUTIONAL_FLOW'
-        ? `${item.netDeltaFlowMillions >= 0 ? '+' : ''}$${item.netDeltaFlowMillions.toFixed(0)}M`
+        ? item.netDeltaFlowMillions !== null
+          ? `${item.netDeltaFlowMillions >= 0 ? '+' : ''}$${item.netDeltaFlowMillions.toFixed(0)}M`
+          : 'L2 Req'
         : colorMode === 'SHORT_SQUEEZE_RISK'
-        ? `Risk ${item.squeezeRiskScore ?? 0}/100`
-        : item.hasEarningsSoon
+        ? item.squeezeRiskScore !== null && item.squeezeRiskScore !== undefined
+          ? `Risk ${item.squeezeRiskScore}/100`
+          : '—'
+        : item.hasEarningsSoon === true
         ? `Earnings: ${item.earningsProximityDays === 0 ? 'Today' : item.earningsProximityDays + 'd'}`
         : `${(item.timeframeChanges[tf] || 0) >= 0 ? '+' : ''}${(item.timeframeChanges[tf] || 0).toFixed(1)}%`;
 
@@ -364,8 +370,8 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
         {/* Minified Sparkline & Metrics */}
         <div className="mt-2 pt-1.5 border-t border-white/10 flex items-center justify-between text-[10px] font-mono">
           <div className="flex items-center space-x-2 text-zinc-300">
-            <span>Vol: ${item.volume24hMillions.toFixed(0)}M</span>
-            <span>RVOL: {item.rvol.toFixed(1)}x</span>
+            <span>Vol: {item.volume24hMillions !== null ? `$${item.volume24hMillions.toFixed(0)}M` : '—'}</span>
+            <span>RVOL: {item.rvol !== null ? `${item.rvol.toFixed(1)}x` : '—'}</span>
           </div>
 
           <div className="w-12 h-3 opacity-70 group-hover/tile:opacity-100 transition hidden sm:block">
@@ -987,17 +993,21 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
                     <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Relative Volume</span>
                     <span className="text-sm font-bold text-emerald-400 block mt-1">
-                      {selectedAsset.rvol.toFixed(1)}x Normal
+                      {selectedAsset.rvol !== null ? `${selectedAsset.rvol.toFixed(1)}x Normal` : '—'}
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">${selectedAsset.volume24hMillions.toFixed(0)}M Turnover</span>
+                    <span className="text-[10px] text-zinc-500 block">
+                      {selectedAsset.volume24hMillions !== null ? `$${selectedAsset.volume24hMillions.toFixed(0)}M Turnover` : 'Vol: —'}
+                    </span>
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
                     <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Institutional Delta</span>
-                    <span className={`text-sm font-bold block mt-1 ${selectedAsset.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {selectedAsset.netDeltaFlowMillions >= 0 ? '+' : ''}${selectedAsset.netDeltaFlowMillions.toFixed(0)}M
+                    <span className={`text-sm font-bold block mt-1 ${selectedAsset.netDeltaFlowMillions !== null ? (selectedAsset.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+                      {selectedAsset.netDeltaFlowMillions !== null ? `${selectedAsset.netDeltaFlowMillions >= 0 ? '+' : ''}$${selectedAsset.netDeltaFlowMillions.toFixed(0)}M` : 'Requires L2'}
                     </span>
-                    <span className="text-[10px] text-zinc-500 block">Price-Cap Flow Proxy</span>
+                    <span className="text-[10px] text-zinc-500 block">
+                      {selectedAsset.netDeltaFlowMillions !== null ? 'Price-Cap Flow Proxy' : 'Requires Level-2 order-flow feed'}
+                    </span>
                   </div>
 
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
@@ -1013,7 +1023,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800">
                     <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Momentum Risk</span>
                     <span className="text-sm font-bold text-purple-400 block mt-1">
-                      {selectedAsset.squeezeRiskScore ?? 0}/100
+                      {selectedAsset.squeezeRiskScore !== null && selectedAsset.squeezeRiskScore !== undefined ? `${selectedAsset.squeezeRiskScore}/100` : '—'}
                     </span>
                     <span className="text-[10px] text-zinc-500 block">Computed Index</span>
                   </div>
@@ -1115,8 +1125,8 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                 </div>
                 <div className="bg-zinc-900 p-3 rounded-xl border border-zinc-800">
                   <span className="text-[10px] text-zinc-500 uppercase block">Net Delta Proxy</span>
-                  <span className={`text-base font-bold mt-0.5 block ${inspectedItem.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {inspectedItem.netDeltaFlowMillions >= 0 ? '+' : ''}${inspectedItem.netDeltaFlowMillions.toFixed(1)}M
+                  <span className={`text-base font-bold mt-0.5 block ${inspectedItem.netDeltaFlowMillions !== null ? (inspectedItem.netDeltaFlowMillions >= 0 ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+                    {inspectedItem.netDeltaFlowMillions !== null ? `${inspectedItem.netDeltaFlowMillions >= 0 ? '+' : ''}$${inspectedItem.netDeltaFlowMillions.toFixed(1)}M` : 'Requires L2 feed'}
                   </span>
                 </div>
               </div>

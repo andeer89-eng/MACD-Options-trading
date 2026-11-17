@@ -1,0 +1,13 @@
+{
+  "id": "P011",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "habit",
+  "reason": "Moving to a licensed commercial feed fixes my delayed-quote objection, yet I am deeply used to my TradingView Plus charts and spreadsheet and prefer not to switch mid-quarter.",
+  "objection": "Habit and switching friction away from TradingView Plus.",
+  "would_change_my_mind": "Have TradingView Plus raise prices again or let me test a 30-day parallel run cleanly.",
+  "price_too_cheap": 12,
+  "price_cheap": 24,
+  "price_expensive": 44,
+  "price_too_expensive": 59
+}

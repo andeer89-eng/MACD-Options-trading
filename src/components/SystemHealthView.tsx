@@ -157,12 +157,11 @@ export const SystemHealthView: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
                 <Activity className="w-3.5 h-3.5" />
-                <span>24/7 Scanner Daemon Telemetry</span>
+                <span>Scanner Runtime Telemetry</span>
               </span>
 
-              <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>DAEMON: {healthData.status}</span>
+              <span className="text-[11px] font-mono font-semibold text-emerald-400">
+                RUNTIME: {healthData.status}
               </span>
 
               <span className="text-xs text-zinc-400 font-mono flex items-center gap-1">
@@ -332,17 +331,25 @@ export const SystemHealthView: React.FC = () => {
 
           <div>
             <div className="text-2xl sm:text-3xl font-bold font-mono text-white">
-              {healthData.apiQuota.usedRequests} <span className="text-sm font-normal text-zinc-400">/ {healthData.apiQuota.maxHourlyQuota}</span>
+              {healthData.apiQuota.usedRequests}{' '}
+              <span className="text-sm font-normal text-zinc-400">
+                {healthData.apiQuota.maxHourlyQuota !== null
+                  ? `/ ${healthData.apiQuota.maxHourlyQuota}`
+                  : 'requests (Dynamic)'}
+              </span>
             </div>
-            <div className="text-[11px] text-emerald-400 font-mono mt-0.5">
-              {healthData.apiQuota.remainingQuota} remaining ({healthData.apiQuota.percentUsed}% used)
+            <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
+              {healthData.apiQuota.quotaNote ||
+                (healthData.apiQuota.remainingQuota !== null
+                  ? `${healthData.apiQuota.remainingQuota} remaining (${healthData.apiQuota.percentUsed}% used)`
+                  : 'Unofficial endpoint without fixed quota')}
             </div>
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar / Throttles */}
           <div className="pt-2 border-t border-zinc-800 space-y-1.5">
             <div className="flex items-center justify-between text-[10px] text-zinc-400">
-              <span>Consumption Envelope</span>
+              <span>Rate Limit Health</span>
               <span className={`font-mono ${healthData.apiQuota.rateLimitHits > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {healthData.apiQuota.rateLimitHits} Throttles (HTTP 429)
               </span>
@@ -350,13 +357,15 @@ export const SystemHealthView: React.FC = () => {
             <div className="w-full h-2 bg-zinc-950 rounded-full overflow-hidden border border-zinc-800">
               <div
                 className={`h-full transition-all duration-300 ${
-                  healthData.apiQuota.percentUsed > 80
+                  (healthData.apiQuota.percentUsed ?? 0) > 80
                     ? 'bg-rose-500'
-                    : healthData.apiQuota.percentUsed > 50
+                    : (healthData.apiQuota.percentUsed ?? 0) > 50
+                    ? 'bg-amber-500'
+                    : healthData.apiQuota.rateLimitHits > 0
                     ? 'bg-amber-500'
                     : 'bg-emerald-500'
                 }`}
-                style={{ width: `${Math.min(100, healthData.apiQuota.percentUsed)}%` }}
+                style={{ width: `${Math.min(100, healthData.apiQuota.percentUsed ?? (healthData.apiQuota.rateLimitHits > 0 ? 30 : 10))}%` }}
               ></div>
             </div>
             <div className="text-[10px] text-zinc-500 font-mono">
@@ -452,21 +461,24 @@ export const SystemHealthView: React.FC = () => {
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 shadow-sm">
           <h3 className="text-sm font-bold text-white flex items-center space-x-2 font-mono">
             <Server className="w-4 h-4 text-emerald-400" />
-            <span>24/7 Daemon Subsystem</span>
+            <span>Scanner Execution Subsystem</span>
           </h3>
 
           <div className="space-y-3 text-xs">
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">
-              <span className="text-zinc-400">Daemon Operating Mode</span>
-              <span className="text-emerald-400 font-mono font-bold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Continuous 24/7 Background Loop
+              <span className="text-zinc-400">Execution Mode</span>
+              <span className={`${healthData.daemon.is247Active ? 'text-emerald-400' : 'text-amber-400'} font-mono font-bold flex items-center gap-1.5`}>
+                {healthData.daemon.mode || (healthData.daemon.is247Active ? 'Continuous Background Loop' : 'On-Request Scans Driven by Frontend Polling')}
               </span>
             </div>
 
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">
-              <span className="text-zinc-400">Scan Rebalance Frequency</span>
-              <span className="text-white font-mono font-semibold">Every {healthData.daemon.intervalSeconds} Seconds</span>
+              <span className="text-zinc-400">Scan Execution Architecture</span>
+              <span className="text-white font-mono font-semibold">
+                {healthData.daemon.is247Active
+                  ? `Every ${healthData.daemon.intervalSeconds} Seconds`
+                  : 'On-Demand Scans (Frontend Polling)'}
+              </span>
             </div>
 
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80">

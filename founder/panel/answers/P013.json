@@ -1,0 +1,13 @@
+{
+  "id": "P013",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "trust",
+  "reason": "A licensed market-data feed and 14-day no-card preview look serious, but I still do not enter billing details on any trading SaaS until real users review it on Trustpilot and Reddit.",
+  "objection": "Waiting for independent customer reviews outside the company website.",
+  "would_change_my_mind": "Show verified Trustpilot reviews and public Reddit discussions after the founding cohort runs 60 days.",
+  "price_too_cheap": 19,
+  "price_cheap": 35,
+  "price_expensive": 69,
+  "price_too_expensive": 99
+}

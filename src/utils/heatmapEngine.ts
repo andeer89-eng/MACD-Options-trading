@@ -52,18 +52,18 @@ export interface HeatmapItem {
   subIndustry: string;
   indexTag: 'S&P 500' | 'Nasdaq 100' | 'Crypto' | 'Dow Jones';
   customTag?: 'Mag 7' | 'AI & Chips' | 'High Short Interest' | 'Defensive Yield' | 'Fintech Leaders';
-  marketCapMillions: number;
+  marketCapMillions: number | null;
   price: number;
   timeframeChanges: Record<Timeframe, number>;
-  volume24hMillions: number;
-  volumeAvg30dMillions: number;
-  rvol: number; // Relative Volume vs 20-30d avg
-  netDeltaFlowMillions: number; // Price-volume directional flow proxy from real OHLCV
+  volume24hMillions: number | null;
+  volumeAvg30dMillions: number | null;
+  rvol: number | null; // Relative Volume vs 20-30d avg
+  netDeltaFlowMillions: number | null; // Null or level-2 note
   rsi: number;
-  shortInterestPct?: number;
-  squeezeRiskScore?: number;
-  earningsProximityDays?: number;
-  hasEarningsSoon: boolean;
+  shortInterestPct?: number | null;
+  squeezeRiskScore?: number | null;
+  earningsProximityDays?: number | null;
+  hasEarningsSoon: boolean | null;
   anomalyAlert?: 'VOLUME_SPIKE' | 'BREAKOUT' | 'UNUSUAL_OPTIONS' | 'TRIPLE_DIVERGENCE';
   sparkline: number[];
   orderbookDepth?: OrderbookDepth;
@@ -187,8 +187,8 @@ export function calculateHeatmapSummary(items: HeatmapItem[], activeTimeframe: T
     else if (chg < -0.05) decliners++;
     else unchanged++;
 
-    totalVolM += item.volume24hMillions;
-    totalDeltaM += item.netDeltaFlowMillions;
+    if (item.volume24hMillions !== null) totalVolM += item.volume24hMillions;
+    if (item.netDeltaFlowMillions !== null) totalDeltaM += item.netDeltaFlowMillions;
     if (item.anomalyAlert) anomalies++;
 
     if (!sectorPerformance[item.sector]) {
@@ -256,19 +256,23 @@ export function computeSquarifiedTreemap(
   groupBy: GroupByMode
 ): TreemapNode {
   const getNodeWeight = (item: HeatmapItem): number => {
-    if (sizingMode === 'MARKET_CAP') return Math.max(1, item.marketCapMillions);
-    if (sizingMode === 'VOLUME_24H') return Math.max(1, item.volume24hMillions);
-    if (sizingMode === 'OPEN_INTEREST') return Math.max(1, item.volume24hMillions * 2.5);
-    if (sizingMode === 'RELATIVE_VOLATILITY') return Math.max(0.1, item.rvol) * 10000;
-    return Math.max(1, item.marketCapMillions);
+    const cap = item.marketCapMillions ?? 25000;
+    const vol = item.volume24hMillions ?? 50;
+    const rvol = item.rvol ?? 1.0;
+    if (sizingMode === 'MARKET_CAP') return Math.max(1, cap);
+    if (sizingMode === 'VOLUME_24H') return Math.max(1, vol);
+    if (sizingMode === 'OPEN_INTEREST') return Math.max(1, vol * 2.5);
+    if (sizingMode === 'RELATIVE_VOLATILITY') return Math.max(0.1, rvol) * 10000;
+    return Math.max(1, cap);
   };
 
   const groups: Record<string, HeatmapItem[]> = {};
   items.forEach((item) => {
     let key = item.sector;
     if (groupBy === 'MARKET_CAP_TIER') {
-      if (item.marketCapMillions >= 200000) key = 'Mega-Caps (>$200B)';
-      else if (item.marketCapMillions >= 20000) key = 'Large-Caps ($20B-$200B)';
+      const cap = item.marketCapMillions ?? 0;
+      if (cap >= 200000) key = 'Mega-Caps (>$200B)';
+      else if (cap >= 20000) key = 'Large-Caps ($20B-$200B)';
       else key = 'Mid-Caps (<$20B)';
     } else if (groupBy === 'CUSTOM_TAGS') {
       key = item.customTag || 'Other S&P 500 Stocks';
@@ -366,11 +370,11 @@ export function getSubIndustryGroups(
 
   const groups: SubIndustryGroup[] = [];
   Object.entries(subIndMap).forEach(([subName, grpItems]) => {
-    const weight = grpItems.reduce((acc, it) => acc + it.marketCapMillions, 0);
+    const weight = grpItems.reduce((acc, it) => acc + (it.marketCapMillions ?? 25000), 0);
     const totalChg = grpItems.reduce((acc, it) => acc + (it.timeframeChanges[activeTimeframe] || 0), 0);
     const avgChg = Number((totalChg / Math.max(1, grpItems.length)).toFixed(2));
 
-    grpItems.sort((a, b) => b.marketCapMillions - a.marketCapMillions);
+    grpItems.sort((a, b) => (b.marketCapMillions ?? 0) - (a.marketCapMillions ?? 0));
     const topTickers = grpItems.slice(0, 4).map((it) => it.symbol);
 
     groups.push({
@@ -424,10 +428,10 @@ export function getSectorMacroGroups(
   }[] = [];
 
   Object.entries(sectorMap).forEach(([sec, grpItems]) => {
-    const weight = grpItems.reduce((acc, it) => acc + it.marketCapMillions, 0);
+    const weight = grpItems.reduce((acc, it) => acc + (it.marketCapMillions ?? 25000), 0);
     const totalChg = grpItems.reduce((acc, it) => acc + (it.timeframeChanges[activeTimeframe] || 0), 0);
     const avgChg = Number((totalChg / Math.max(1, grpItems.length)).toFixed(2));
-    const netDelta = grpItems.reduce((acc, it) => acc + it.netDeltaFlowMillions, 0);
+    const netDelta = grpItems.reduce((acc, it) => acc + (it.netDeltaFlowMillions ?? 0), 0);
 
     let adv = 0;
     let dec = 0;
@@ -437,7 +441,7 @@ export function getSectorMacroGroups(
       else dec++;
     });
 
-    grpItems.sort((a, b) => b.marketCapMillions - a.marketCapMillions);
+    grpItems.sort((a, b) => (b.marketCapMillions ?? 0) - (a.marketCapMillions ?? 0));
     const topTickers = grpItems.slice(0, 4).map((it) => ({
       symbol: it.symbol,
       changePct: it.timeframeChanges[activeTimeframe] || 0,

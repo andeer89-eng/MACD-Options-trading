@@ -1,0 +1,13 @@
+{
+  "id": "P018",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "quality",
+  "reason": "Mentioning a 10 to 20 minute exchange delay and a downloadable Python script makes it sound like a wrapper over free Yahoo Finance data, which I can already query myself.",
+  "objection": "I am not paying $49/mo if the underlying feed is delayed public data instead of a commercial real-time feed.",
+  "would_change_my_mind": "Confirm a licensed commercial data provider with zero quote lag on the paid plan and clean API/webhook exports.",
+  "price_too_cheap": 12,
+  "price_cheap": 25,
+  "price_expensive": 49,
+  "price_too_expensive": 69
+}

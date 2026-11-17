@@ -108,14 +108,14 @@ export const ALL_TABS: TabDefinition[] = [
     label: 'Quant Lab',
     icon: Sparkles,
     color: 'text-indigo-400',
-    description: 'LuxAlgo Suite, TrendSpider Stages, Indicator Library & Trullàs Rules',
+    description: 'Orderflow & SMC Lab, Stage & AVWAP Lab, Indicator Library & 4-Pillars Playbook',
   },
   {
     id: 'ops',
     label: 'Ops & Alerts',
     icon: Bell,
     color: 'text-rose-400',
-    description: 'Real-time alert stream, System Health & 24/7 Python daemon',
+    description: 'Alert stream, System Health diagnostics & standalone Python daemon',
   },
 ];
 
@@ -147,7 +147,7 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     group: 'Scanner',
     icon: Sparkles,
     color: 'text-indigo-400',
-    description: '6-angle deterministic setup grading across Trullàs, LuxAlgo & CBOE',
+    description: '6-angle deterministic setup grading across divergence, orderflow & CBOE',
   },
   {
     id: 'scanner-zones',
@@ -236,7 +236,7 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     group: 'Bots & Backtest',
     icon: Sparkles,
     color: 'text-indigo-400',
-    description: 'Put harvesting and TradingWarz options automation',
+    description: 'Put harvesting and Golden Zone options automation',
   },
   {
     id: 'journal-manual',
@@ -262,7 +262,7 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     id: 'quant-luxalgo',
     tab: 'quant',
     subTab: 'luxalgo',
-    label: 'LuxAlgo Suite',
+    label: 'Orderflow & SMC Lab',
     group: 'Quant Lab',
     icon: Sparkles,
     color: 'text-indigo-400',
@@ -272,7 +272,7 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     id: 'quant-trendspider',
     tab: 'quant',
     subTab: 'trendspider',
-    label: 'TrendSpider Quant',
+    label: 'Stage & AVWAP Lab',
     group: 'Quant Lab',
     icon: Compass,
     color: 'text-rose-400',
@@ -292,11 +292,11 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     id: 'quant-rules',
     tab: 'quant',
     subTab: 'rules',
-    label: 'Trullàs 4-Pillars Rules',
+    label: '4-Pillars Divergence Playbook',
     group: 'Quant Lab',
     icon: BookOpen,
     color: 'text-amber-400',
-    description: 'Complete David Trullàs divergence & 1% risk methodology guide',
+    description: 'Complete multi-oscillator divergence & 1% risk methodology guide',
   },
   {
     id: 'ops-alerts',
@@ -322,11 +322,11 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     id: 'ops-python',
     tab: 'ops',
     subTab: 'python',
-    label: 'Python 24/7 Daemon',
+    label: 'Python Standalone Daemon',
     group: 'Ops & Alerts',
     icon: Terminal,
     color: 'text-blue-400',
-    description: 'Run, inspect & deploy standalone trullas_scanner_247.py daemon',
+    description: 'Run, inspect & deploy standalone Python CLI scanner daemon',
   },
 ];
 
@@ -418,7 +418,8 @@ export const Header: React.FC<HeaderProps> = ({
   );
 
   return (
-    <header className="border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md sticky top-0 z-40 shadow-xl">
+    <>
+      <header className="border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-md sticky top-0 z-40 shadow-xl">
       <div className="w-full max-w-[1720px] mx-auto px-3 sm:px-4">
         <div className="flex items-center justify-between min-h-14 py-1.5 gap-2">
           {/* Brand Identity */}
@@ -432,12 +433,12 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center">
-                <span className="font-extrabold text-white text-xs sm:text-sm tracking-tight font-sans whitespace-nowrap group-hover:text-emerald-300 transition-colors">
-                  TRULLÀS 24/7
+                <span className="font-display font-extrabold text-white text-xs sm:text-sm tracking-tight whitespace-nowrap group-hover:text-emerald-300 transition-colors">
+                  StageLedger
                 </span>
               </div>
-              <p className="text-[10px] text-zinc-500 hidden 2xl:block whitespace-nowrap">
-                Divergence &amp; Options Desk
+              <p className="text-[10px] text-zinc-400 hidden 2xl:block whitespace-nowrap">
+                Pre-Market Swing &amp; Shadow Desk
               </p>
             </div>
           </button>
@@ -496,7 +497,8 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   onClick={onRefreshMarketData}
                   disabled={isRefreshingData}
-                  className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition disabled:opacity-50 border border-zinc-700/60"
+                  aria-label="Refresh live market feeds"
+                  className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition disabled:opacity-50 border border-zinc-700/60"
                   title="Manually refresh live market feeds"
                 >
                   <RefreshCw
@@ -506,28 +508,19 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
 
-            {/* 24/7 Loop Toggle */}
+            {/* Client Auto-Poll Loop Toggle */}
             <button
               onClick={() => setIsAutoScanning(!isAutoScanning)}
-              className={`flex items-center space-x-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition-all whitespace-nowrap shrink-0 ${
+              aria-label={isAutoScanning ? 'Pause 45-second browser auto-poll' : 'Resume 45-second browser auto-poll'}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all whitespace-nowrap shrink-0 ${
                 isAutoScanning
                   ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/60'
                   : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:bg-zinc-800'
               }`}
-              title="Continuous 24/7 background scanning loop"
+              title="Browser-tab polling loop (runs every 45s while tab stays open)"
             >
-              <span className="relative flex h-2 w-2">
-                {isAutoScanning && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                )}
-                <span
-                  className={`relative inline-flex rounded-full h-2 w-2 ${
-                    isAutoScanning ? 'bg-emerald-500' : 'bg-zinc-500'
-                  }`}
-                ></span>
-              </span>
-              <span className="hidden md:inline">
-                {isAutoScanning ? '24/7' : 'Paused'}
+              <span className="hidden md:inline font-mono tabular-nums">
+                {isAutoScanning ? 'Auto-Poll 45s' : 'Paused'}
               </span>
               {isAutoScanning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
             </button>
@@ -535,6 +528,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Quick Jump Search Trigger (Ctrl+K) */}
             <button
               onClick={() => setShowQuickSearch(true)}
+              aria-label="Quick Jump search (Ctrl+K)"
               className="p-1.5 rounded-lg border bg-zinc-900 text-zinc-400 hover:text-white border-zinc-800 hover:bg-zinc-800 transition-colors shrink-0"
               title="Quick Jump to any workspace or tool (Ctrl+K)"
             >
@@ -544,6 +538,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Sound Mute/Unmute */}
             <button
               onClick={() => setSoundEnabled(!soundEnabled)}
+              aria-label={soundEnabled ? 'Mute alert chime' : 'Enable alert chime'}
               className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
                 soundEnabled
                   ? 'bg-zinc-900 text-emerald-400 border-zinc-700'
@@ -558,6 +553,7 @@ export const Header: React.FC<HeaderProps> = ({
             {onOpenTelegramConfig && (
               <button
                 onClick={onOpenTelegramConfig}
+                aria-label="Configure Telegram alert bot"
                 className="p-1.5 rounded-lg border bg-zinc-900 text-sky-400 border-zinc-800 hover:border-sky-500/50 hover:bg-sky-500/10 transition-colors shrink-0"
                 title="Configure Telegram Alert Bot"
               >
@@ -571,6 +567,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Compact / Tablet / Mobile Menu Drawer Button */}
             <button
               onClick={() => setShowMobileDrawer(true)}
+              aria-label="Open navigation menu"
               className="xl:hidden p-1.5 rounded-lg bg-zinc-900 text-zinc-300 border border-zinc-800 hover:bg-zinc-800 hover:text-white transition-colors shrink-0"
               title="Open Navigation Menu"
             >
@@ -579,6 +576,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+      </header>
 
       {/* QUICK JUMP MODAL (Searches all 8 workspaces + nested tools) */}
       {showQuickSearch && (
@@ -663,7 +661,8 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="font-bold text-white text-sm">Workspaces (8)</span>
               <button
                 onClick={() => setShowMobileDrawer(false)}
-                className="p-1 rounded bg-zinc-900 text-zinc-400 hover:text-white"
+                aria-label="Close navigation menu"
+                className="p-1.5 rounded bg-zinc-900 text-zinc-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -707,6 +706,6 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       )}
-    </header>
+    </>
   );
 };

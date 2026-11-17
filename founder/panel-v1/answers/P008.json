@@ -1,0 +1,13 @@
+{
+  "id": "P008",
+  "buys": false,
+  "purchases_first_month": 0,
+  "reason_code": "price",
+  "reason": "The 30-minute nightly prep angle fits my schedule, but $49 a month is tough to justify on my salary when the pitch admits quotes may carry a 10 to 20 minute delay.",
+  "objection": "Paying $49/mo for delayed public market data feels off when free screeners already show delayed prices.",
+  "would_change_my_mind": "Drop an EOD daily watchlist tier to $25-$29/mo or clearly include real-time exchange data at $49.",
+  "price_too_cheap": 9,
+  "price_cheap": 19,
+  "price_expensive": 32,
+  "price_too_expensive": 45
+}

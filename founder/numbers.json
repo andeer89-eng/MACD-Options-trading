@@ -1,0 +1,27 @@
+{
+  "business": "Trullàs Divergence 24/7 Scanner (Swing Pro SaaS)",
+  "unit": "subscriber-month",
+  "price": 39.00,
+  "days_per_month": 30,
+  "capacity_per_day": 33,
+  "plan_per_day": 5,
+  "ramp_per_day": [1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5],
+  "variable": [
+    {"label": "Stripe processing (2.9% + $0.30)", "cost": 1.43},
+    {"label": "Alert delivery & DB MAU metering (est.)", "cost": 0.20},
+    {"label": "30-day guarantee / refund reserve (4% est.)", "cost": 1.56}
+  ],
+  "fixed_monthly": [
+    {"label": "Tiingo Startup Redistribution data API", "cost": 250.00},
+    {"label": "Supabase Pro (Postgres + Auth + Cron)", "cost": 25.00},
+    {"label": "Fly.io worker & web app hosting", "cost": 18.00},
+    {"label": "Email / domain / error monitoring (est.)", "cost": 20.00},
+    {"label": "Content & creator marketing budget (est.)", "cost": 250.00},
+    {"label": "Bookkeeping & compliance reserve (est.)", "cost": 75.00}
+  ],
+  "startup": [
+    {"label": "LLC setup & non-advisory legal review (est.)", "cost": 850.00},
+    {"label": "Domain, Spike E/R audit & landing setup (est.)", "cost": 350.00},
+    {"label": "Initial paid search/social pre-sell test (est.)", "cost": 500.00}
+  ]
+}

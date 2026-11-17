@@ -41,6 +41,11 @@ import {
   summarize,
 } from '../utils/trullasOutcomeEngine';
 import {
+  buildShadowAuditReport,
+  ShadowAuditReport,
+} from '../utils/shadowAudit';
+import type { Candle } from '../utils/trullasStrategy';
+import {
   DailyWatchlistItem,
   loadDailyWatchlist,
   subscribeDailyWatchlist,
@@ -441,6 +446,46 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
   // Review & Signal Quality derived strictly from REAL closed trades in user journal
   const [selectedExitPolicy, setSelectedExitPolicy] = useState<string>('X1_fixed_v1');
+  const [shadowAuditLoading, setShadowAuditLoading] = useState<boolean>(false);
+  const [shadowAuditError, setShadowAuditError] = useState<string | null>(null);
+  const [shadowCandleCache, setShadowCandleCache] = useState<Record<string, Candle[]> | null>(null);
+
+  const shadowAuditReport = useMemo<ShadowAuditReport | null>(() => {
+    if (!shadowCandleCache) return null;
+    return buildShadowAuditReport(shadowCandleCache, selectedExitPolicy);
+  }, [shadowCandleCache, selectedExitPolicy]);
+
+  const runLiveShadowAudit = async () => {
+    setShadowAuditLoading(true);
+    setShadowAuditError(null);
+    const benchmarkSymbols = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'MSFT'];
+    try {
+      const responses = await Promise.allSettled(
+        benchmarkSymbols.map(async (sym) => {
+          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=2y`);
+          if (!res.ok) throw new Error(`HTTP ${res.status} for ${sym}`);
+          const data = await res.json();
+          const candles: Candle[] = Array.isArray(data.candles) ? data.candles : [];
+          return { sym, candles };
+        })
+      );
+      const nextMap: Record<string, Candle[]> = {};
+      for (const r of responses) {
+        if (r.status === 'fulfilled' && r.value.candles.length >= 40) {
+          nextMap[r.value.sym] = r.value.candles;
+        }
+      }
+      if (Object.keys(nextMap).length === 0) {
+        setShadowAuditError('Historical candles temporarily unavailable from upstream Yahoo feed.');
+      } else {
+        setShadowCandleCache(nextMap);
+      }
+    } catch (err: any) {
+      setShadowAuditError(err?.message || 'Failed to run shadow audit.');
+    } finally {
+      setShadowAuditLoading(false);
+    }
+  };
 
   const shadowAnalysis = useMemo(() => {
     const riskUsd = getRiskUsd(settings);
@@ -480,83 +525,65 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
   return (
     <div className="space-y-6 text-zinc-200">
-      {/* 1. SIMULATED DATA / CACHED WARNING BANNER (§2 P0 item 2) */}
+      {/* 1. SIMULATED DATA / CACHED WARNING BANNER */}
       {settings.dataQuality !== 'live' && (
         <div
           role="alert"
-          className="bg-rose-950/90 border border-rose-600/70 text-rose-200 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-mono font-bold shadow-lg animate-pulse"
+          className="bg-rose-950/90 border border-rose-600/70 text-rose-200 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-mono font-bold shadow-lg"
         >
           <div className="flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>
               NON-LIVE MODE — Feed quality is set to {settings.dataQuality.toUpperCase()}.
-              Autopilot blocks new entries per canTrade() Check #2.
+              canTrade() Check #2 blocks simulated position sizing.
             </span>
           </div>
           <button
             onClick={() => handleDataQualityChange('live')}
-            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] transition shadow"
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] transition shadow whitespace-nowrap shrink-0"
           >
             Switch to LIVE
           </button>
         </div>
       )}
 
-      {/* 2. GLOBAL STATUS BAR (§4.0) */}
+      {/* 2. GLOBAL STATUS BAR */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <div className="flex items-center space-x-1.5 font-bold font-mono text-white pr-2 border-r border-zinc-800">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            <span>TRULLAS TODAY</span>
+          <div className="font-display font-bold text-white pr-2.5 border-r border-zinc-800 whitespace-nowrap">
+            Pre-Market Brief
           </div>
 
-          {/* Market Session Badge */}
-          <span
-            className={`px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border ${
-              marketSession.isOpen
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
-            }`}
-          >
-            {marketSession.sessionName}
+          <span className="text-zinc-300 font-mono text-[11px] tabular-nums">
+            {marketSession.sessionName} &middot; {marketSession.isOpen ? 'NYSE Open' : 'NYSE Closed (ET)'}
           </span>
-          <span className="text-zinc-500 font-mono text-[11px]">
-            Wall St (ET) • {macroLoading ? 'Syncing Live Feeds...' : macroError ? 'Upstream Unavailable' : 'Live Telemetry'}
+          <span className="text-zinc-600" aria-hidden="true">/</span>
+          <span className="text-zinc-400 font-mono text-[11px]">
+            {macroLoading
+              ? 'Syncing macro...'
+              : macroError
+              ? 'Upstream delayed/unavailable'
+              : `Quote Feed: ${settings.dataQuality === 'live' ? 'Yahoo Delayed 10–20m' : settings.dataQuality.toUpperCase()}`}
           </span>
-
-          {/* Data Quality Badge */}
+          <span className="text-zinc-600" aria-hidden="true">/</span>
           <span
-            className={`px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border ${
-              settings.dataQuality === 'live'
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-            }`}
-          >
-            Feed: {settings.dataQuality.toUpperCase()}
-          </span>
-
-          {/* Regime Score Badge */}
-          <span
-            className={`px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border ${
+            className={`font-mono font-semibold text-[11px] ${
               regimeBand.badgeCls === 'g'
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                ? 'text-emerald-400'
                 : regimeBand.badgeCls === 'a'
-                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                ? 'text-amber-400'
+                : 'text-rose-400'
             }`}
           >
-            Regime {regimeScore} • {regimeBand.name}
+            Regime {regimeScore} ({regimeBand.name})
           </span>
-
-          {/* Bot State Badge */}
+          <span className="text-zinc-600" aria-hidden="true">/</span>
           <span
-            className={`px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border ${
-              settings.botStatus === 'armed'
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+            className={`font-mono font-semibold text-[11px] ${
+              settings.botStatus === 'armed' ? 'text-emerald-400' : 'text-rose-400'
             }`}
           >
-            Bot: {settings.botStatus.toUpperCase()}
+            Desk: {settings.botStatus.toUpperCase()}
           </span>
         </div>
 
@@ -603,12 +630,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
           <div>
-            <label className="text-zinc-400 block mb-1">
+            <label htmlFor="sim-capital-input" className="text-zinc-400 block mb-1">
               Allocated Capital (Paper / Sim):
             </label>
             <div className="relative">
               <span className="absolute left-2.5 top-2 text-zinc-500 font-bold">$</span>
               <input
+                id="sim-capital-input"
                 type="number"
                 min="100"
                 step="100"
@@ -623,11 +651,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div>
-            <label className="text-zinc-400 block mb-1">
+            <label htmlFor="max-risk-pct-input" className="text-zinc-400 block mb-1">
               Max Risk per Trade (%):
             </label>
             <div className="relative">
               <input
+                id="max-risk-pct-input"
                 type="number"
                 min="0.1"
                 max="10"
@@ -772,36 +801,46 @@ export const TodayView: React.FC<TodayViewProps> = ({
               WEAKENING
             </span>
 
-            {/* Placed ETF dots */}
+            {/* Placed ETF dots with collision nudging */}
             {spdrRrgPoints.length === 0 ? (
               <div className="h-full flex items-center justify-center text-zinc-500 text-xs">
                 {macroLoading ? 'Loading live SPDR rotation...' : macroError || 'SPDR rotation unavailable'}
               </div>
             ) : (
-              spdrRrgPoints.map((sec, sIdx) => {
-                const xPct = Math.min(90, Math.max(10, (sec.rs - 96) * 12));
-                const baseY = 100 - (sec.mom - 96) * 12;
-                const offsetY = (sIdx % 2 === 0 ? -1 : 1) * 1.6;
-                const yPct = Math.min(88, Math.max(12, baseY + offsetY));
-                const isLeading = sec.rs >= 100 && sec.mom >= 100;
-                return (
-                  <div
-                    key={sec.symbol}
-                    className="absolute transform -translate-x-1/2 -translate-y-1/2 flex items-center space-x-1 cursor-pointer group"
-                    style={{ left: `${xPct}%`, top: `${yPct}%` }}
-                    title={`${sec.name} (${sec.symbol}): RS ${sec.rs}, Mom ${sec.mom}`}
-                  >
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        isLeading ? 'bg-emerald-400 ring-2 ring-emerald-500/40' : 'bg-sky-400'
-                      }`}
-                    ></span>
-                    <span className="text-[9px] text-zinc-200 font-bold bg-zinc-950/85 px-1 rounded group-hover:text-white">
-                      {sec.symbol}
-                    </span>
-                  </div>
-                );
-              })
+              (() => {
+                const placed: Array<{ x: number; y: number }> = [];
+                return spdrRrgPoints.map((sec) => {
+                  const xPct = Math.min(90, Math.max(10, (sec.rs - 96) * 12));
+                  let yPct = Math.min(86, Math.max(14, 100 - (sec.mom - 96) * 12));
+                  for (let attempt = 0; attempt < 6; attempt++) {
+                    const overlaps = placed.some(
+                      (p) => Math.abs(p.x - xPct) < 11 && Math.abs(p.y - yPct) < 9
+                    );
+                    if (!overlaps) break;
+                    const delta = (attempt % 2 === 0 ? -1 : 1) * (5 + attempt * 3);
+                    yPct = Math.min(88, Math.max(12, yPct + delta));
+                  }
+                  placed.push({ x: xPct, y: yPct });
+                  const isLeading = sec.rs >= 100 && sec.mom >= 100;
+                  return (
+                    <div
+                      key={sec.symbol}
+                      className="absolute transform -translate-x-1/2 -translate-y-1/2 flex items-center space-x-1 cursor-pointer group"
+                      style={{ left: `${xPct}%`, top: `${yPct}%` }}
+                      title={`${sec.name} (${sec.symbol}): RS ${sec.rs}, Mom ${sec.mom}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          isLeading ? 'bg-emerald-400 ring-2 ring-emerald-500/40' : 'bg-sky-400'
+                        }`}
+                      ></span>
+                      <span className="text-[9px] text-zinc-200 font-bold bg-zinc-950/90 px-1 rounded group-hover:text-white">
+                        {sec.symbol}
+                      </span>
+                    </div>
+                  );
+                });
+              })()
             )}
           </div>
 
@@ -932,6 +971,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </div>
 
               <select
+                aria-label="Filter watchlist by setup status"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
                 className="bg-zinc-950 border border-zinc-800 text-zinc-300 text-[11px] rounded px-2 py-1"
@@ -1043,7 +1083,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           {!selectedItem ? (
             <div className="py-16 text-center space-y-2 text-zinc-500 text-xs font-mono">
               <Eye className="w-6 h-6 mx-auto text-zinc-600" />
-              <p>Select a symbol from the Watchlist or wait for Live Scanner Trullàs levels.</p>
+              <p>Select a symbol from the Watchlist or wait for Live Scanner levels.</p>
             </div>
           ) : (
             <>
@@ -1067,10 +1107,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 )}
               </div>
 
-              {/* SVG Mini Chart Visualizing Entry, SL and TP */}
+              {/* Immutable Levels Panel */}
               <div className="bg-zinc-950 rounded-lg p-2.5 border border-zinc-800 font-mono text-[11px] space-y-2">
                 <div className="flex justify-between items-center text-zinc-400 text-[10px]">
-                  <span>Trullàs Geometry (Levels Object v3)</span>
+                  <span>Immutable Geometry (Levels v3)</span>
                   <span>R:R = 1 : {selectedItem.levels.rr.toFixed(1)}</span>
                 </div>
 
@@ -1145,36 +1185,48 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
       </div>
 
-      {/* 6. REVIEW & SIGNAL QUALITY (SHADOW LEARNING) PANEL (§4.5 & §6.5) */}
+      {/* 6. SHADOW SIGNAL LEDGER & BASELINE AUDIT PANEL */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-4 shadow-md">
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-zinc-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-2.5 border-b border-zinc-800">
           <div>
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Real Trade Signal Review &amp; Quality (Master Plan v3 §6.5)
+              Shadow Signal Ledger &amp; Journal Expectancy Audit
             </h3>
             <span className="text-[11px] text-zinc-400">
-              Computed strictly from recorded closed journal trades ({selectedExitPolicy}) &bull; Net R after costs
+              Evaluated strictly net of 10 bps round-trip cost ({selectedExitPolicy}) &middot; No unverified numbers
             </span>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-zinc-400">Exit Policy:</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <label htmlFor="shadow-exit-policy" className="text-zinc-400">Exit Policy:</label>
             <select
+              id="shadow-exit-policy"
               value={selectedExitPolicy}
               onChange={(e) => setSelectedExitPolicy(e.target.value)}
-              className="bg-zinc-950 border border-zinc-800 text-zinc-200 text-xs rounded px-2.5 py-1 font-mono"
+              className="bg-zinc-950 border border-zinc-800 text-zinc-200 text-xs rounded px-2.5 py-1.5 font-mono"
             >
               <option value="X1_fixed_v1">X1 &middot; SL / TP1 / Time-Stop (Primary)</option>
               <option value="X2_trail_v1">X2 &middot; Breakeven + Trailing 2&times;ATR</option>
               <option value="X3_structure_v1">X3 &middot; Structure (MA30 / Invalidation)</option>
             </select>
+
+            <button
+              type="button"
+              onClick={runLiveShadowAudit}
+              disabled={shadowAuditLoading}
+              data-testid="run-shadow-audit-btn"
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center space-x-1.5 whitespace-nowrap shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${shadowAuditLoading ? 'animate-spin' : ''}`} />
+              <span>{shadowAuditLoading ? 'Auditing 2y Candles...' : 'Run Live 2y Baseline Audit'}</span>
+            </button>
           </div>
         </div>
 
-        {/* 6 KPI Cards (§4.5) */}
+        {/* 6 Journal KPI Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 font-mono">
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Epoch Net P&amp;L</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Journal Net P&amp;L</span>
             <span
               className={`text-lg font-black ${
                 shadowAnalysis.netPnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -1189,7 +1241,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Trades (n)</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Journal Trades (n)</span>
             <span className="text-lg font-black text-white">{shadowAnalysis.n}</span>
             <span className="text-[10px] text-amber-400 block mt-0.5">
               {shadowAnalysis.n > 0 ? `n=${shadowAnalysis.n} (${settings.activeEpochId})` : '0 closed trades'}
@@ -1197,7 +1249,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Expectancy</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Journal Expectancy</span>
             <span className={`text-lg font-black ${shadowAnalysis.meanR >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {shadowAnalysis.n > 0 ? `${shadowAnalysis.meanR >= 0 ? '+' : ''}${shadowAnalysis.meanR.toFixed(2)}R` : '—'}
             </span>
@@ -1209,7 +1261,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Profit Factor</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Profit Factor</span>
             <span className="text-lg font-black text-white">
               {shadowAnalysis.profitFactor !== null
                 ? shadowAnalysis.profitFactor.toFixed(2)
@@ -1221,7 +1273,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Win Rate</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Win Rate</span>
             <span className="text-lg font-black text-emerald-400">
               {shadowAnalysis.n > 0 ? `${shadowAnalysis.winRate.toFixed(0)}%` : '—'}
             </span>
@@ -1231,7 +1283,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 uppercase block">Risk / Trade</span>
+            <span className="text-[10px] text-zinc-400 uppercase block">Risk / Trade</span>
             <span className="text-lg font-black text-sky-400">
               ${shadowAnalysis.riskUsd.toFixed(0)}
             </span>
@@ -1241,12 +1293,105 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
         </div>
 
+        {/* Historical Live-Data Shadow Audit vs Baseline Control */}
+        {shadowAuditError && (
+          <div className="p-3 bg-rose-950/60 border border-rose-500/40 rounded-lg text-xs text-rose-300">
+            {shadowAuditError}
+          </div>
+        )}
+
+        {shadowAuditReport && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3" data-testid="shadow-audit-report">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-2">
+              <div className="text-xs font-semibold text-white">
+                Benchmark Cohort ({shadowAuditReport.symbolsAnalyzed.join(', ')}) &middot; {shadowAuditReport.totalBarsScanned.toLocaleString()} daily bars audited
+              </div>
+              <span className="text-[11px] font-mono text-zinc-400">
+                Policy: {shadowAuditReport.policyName} &middot; Slippage/Cost: {shadowAuditReport.roundTripBps} bps
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 font-mono text-xs">
+              <div className="p-2.5 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                <span className="text-[10px] text-zinc-400 block">Signals (n / n_eff)</span>
+                <strong className="text-white text-sm">
+                  {shadowAuditReport.metrics.n} / {shadowAuditReport.metrics.nEff}d
+                </strong>
+              </div>
+              <div className="p-2.5 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                <span className="text-[10px] text-zinc-400 block">Signal Net Mean R</span>
+                <strong className={`text-sm ${shadowAuditReport.metrics.meanR >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {shadowAuditReport.metrics.meanR >= 0 ? '+' : ''}{shadowAuditReport.metrics.meanR.toFixed(3)}R
+                </strong>
+                <span className="text-[10px] text-zinc-500 block">
+                  CI90 [{shadowAuditReport.metrics.ci90[0].toFixed(2)}, {shadowAuditReport.metrics.ci90[1].toFixed(2)}]
+                </span>
+              </div>
+              <div className="p-2.5 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                <span className="text-[10px] text-zinc-400 block">Baseline Mean R (n={shadowAuditReport.metrics.baselineN})</span>
+                <strong className="text-zinc-200 text-sm">
+                  {shadowAuditReport.metrics.baselineMeanR >= 0 ? '+' : ''}{shadowAuditReport.metrics.baselineMeanR.toFixed(3)}R
+                </strong>
+              </div>
+              <div className="p-2.5 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                <span className="text-[10px] text-zinc-400 block">Alpha vs Baseline</span>
+                <strong className={`text-sm ${shadowAuditReport.metrics.alphaOverBaselineR >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {shadowAuditReport.metrics.alphaOverBaselineR >= 0 ? '+' : ''}{shadowAuditReport.metrics.alphaOverBaselineR.toFixed(3)}R
+                </strong>
+              </div>
+              <div className="p-2.5 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                <span className="text-[10px] text-zinc-400 block">Win Rate &middot; PF</span>
+                <strong className="text-white text-sm">
+                  {shadowAuditReport.metrics.winRatePct}% &middot; {shadowAuditReport.metrics.profitFactor !== null ? `${shadowAuditReport.metrics.profitFactor}x` : '—'}
+                </strong>
+              </div>
+            </div>
+
+            {shadowAuditReport.recentSignals.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px] font-mono">
+                  <thead>
+                    <tr className="border-b border-zinc-800 text-zinc-400">
+                      <th className="py-1.5 pr-3">Confirmed Date</th>
+                      <th className="py-1.5 pr-3">Symbol</th>
+                      <th className="py-1.5 pr-3">Setup</th>
+                      <th className="py-1.5 pr-3 text-right">Score</th>
+                      <th className="py-1.5 pr-3">Exit</th>
+                      <th className="py-1.5 pr-3 text-right">Held</th>
+                      <th className="py-1.5 text-right">Net R</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-900">
+                    {shadowAuditReport.recentSignals.slice(0, 6).map((sig, i) => (
+                      <tr key={`${sig.symbol}-${sig.confirmedIdx}-${i}`}>
+                        <td className="py-1.5 pr-3 text-zinc-300">{sig.signalDate}</td>
+                        <td className="py-1.5 pr-3 font-bold text-white">{sig.symbol}</td>
+                        <td className="py-1.5 pr-3 text-zinc-300">{sig.type.replace(/_/g, ' ')}</td>
+                        <td className="py-1.5 pr-3 text-right text-zinc-300">{sig.qualityScore}</td>
+                        <td className="py-1.5 pr-3 text-zinc-400 uppercase">{sig.exitReason}</td>
+                        <td className="py-1.5 pr-3 text-right text-zinc-400">{sig.barsHeld}d</td>
+                        <td className={`py-1.5 text-right font-bold ${sig.rNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {sig.rNet >= 0 ? '+' : ''}{sig.rNet.toFixed(2)}R
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="text-[10px] text-zinc-400 leading-relaxed">
+              {shadowAuditReport.caveat}
+            </p>
+          </div>
+        )}
+
         <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs text-zinc-400 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
-            <Info className="w-4 h-4 text-sky-400" />
+            <Info className="w-4 h-4 text-sky-400 shrink-0" />
             <span>
-              R-multiples are scale-invariant and independent of capital size. Updating capital in
-              Settings dynamically recalculates dollar values without re-running backtests.
+              R-multiples are scale-invariant and independent of capital size. Updating Allocated Capital
+              dynamically recalculates dollar values without re-running backtests.
             </span>
           </div>
           <span className="font-mono text-zinc-500">Engine Version: {ENGINE_VERSION}</span>

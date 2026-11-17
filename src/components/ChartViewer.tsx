@@ -997,9 +997,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         {/* Left: Live Status Badge & Exchange Details */}
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-2 bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-md">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
             <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
-              {feedMeta?.isLiveFeed ? 'REAL-TIME EXCHANGE FEED' : 'LIVE FEED PENDING'}
+              {feedMeta?.isLiveFeed ? 'YAHOO DELAYED FEED (10–20M)' : 'LIVE FEED PENDING'}
             </span>
           </div>
 
@@ -1010,7 +1010,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             </span>
             <span className="text-zinc-600">&bull;</span>
             <span className="text-zinc-500">Engine:</span>
-            <span className="font-mono text-emerald-400 font-bold">Vela Charts Suite</span>
+            <span className="font-mono text-emerald-400 font-bold">StageLedger Studio</span>
           </div>
 
           <button
@@ -1201,9 +1201,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   ? 'bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/30'
                   : 'text-zinc-400 hover:text-white'
               }`}
-              title="Vela Custom Studio with Trullàs Divergences & Custom Indicators"
+              title="Single Chart Studio with 4-Pillars Divergences & Custom Indicators"
             >
-              Vela Studio (Pro)
+              Single Chart Studio
             </button>
             <button
               onClick={() => setChartMode('vela-workspace')}
@@ -1212,9 +1212,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/30'
                   : 'text-zinc-400 hover:text-white'
               }`}
-              title="LuxAlgo Vela Multi-Chart Workspace from GitHub"
+              title="Multi-Chart Grid Workspace"
             >
-              Vela Workspace (LuxAlgo)
+              Multi-Chart Grid
             </button>
             <button
               onClick={() => setShowLuxAlgoNWE(!showLuxAlgoNWE)}
@@ -1223,10 +1223,10 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30'
                   : 'text-zinc-400 hover:text-white'
               }`}
-              title="Toggle LuxAlgo Nadaraya-Watson Envelope (NWE)"
+              title="Toggle Nadaraya-Watson Kernel Envelope (NWE)"
             >
               <Sparkles className="w-3 h-3 text-indigo-300" />
-              <span>Lux NWE {showLuxAlgoNWE ? 'ON' : 'OFF'}</span>
+              <span>Kernel NWE {showLuxAlgoNWE ? 'ON' : 'OFF'}</span>
             </button>
           </div>
 
@@ -1541,8 +1541,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                     className="w-full flex-1 bg-zinc-950 text-white"
                   />
                   <div className="p-2 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-400 flex items-center justify-between">
-                    <span>Vela Multi-Chart Suite (LuxAlgo Open-Source) &bull; Layout: {velaLayout.toUpperCase()}</span>
-                    <span className="text-zinc-500 font-mono">Real-time data seeded from Yahoo v8</span>
+                    <span>Multi-Chart Grid &bull; Layout: {velaLayout.toUpperCase()}</span>
+                    <span className="text-zinc-500 font-mono">OHLCV seeded from Yahoo v8 (10–20m delayed)</span>
                   </div>
                 </div>
               )}
@@ -1584,26 +1584,6 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   </svg>
                 </div>
               )}
-
-              {/* AUTHENTIC VELA BY LUXALGO BRANDING BADGE (REPLACING ANY TRADINGVIEW MARK) */}
-              <div className="absolute bottom-2.5 left-2 z-20 flex items-center space-x-2 px-2.5 py-1 bg-zinc-950/90 border border-zinc-800 hover:border-emerald-500/50 rounded-md backdrop-blur-md shadow-lg pointer-events-auto transition select-none">
-                <div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-sky-500 flex items-center justify-center font-black text-[10px] text-zinc-950 shadow-sm">
-                  V
-                </div>
-                <div className="flex flex-col">
-                  <div className="flex items-center space-x-1">
-                    <span className="font-mono text-[10px] font-bold text-white tracking-wider">
-                      VELA CHARTS
-                    </span>
-                    <span className="text-[8px] font-bold px-1 bg-emerald-500/20 text-emerald-400 rounded">
-                      PRO
-                    </span>
-                  </div>
-                  <span className="text-[8px] text-zinc-500 font-mono">
-                    LuxAlgo Core v0.9 • WebGL2
-                  </span>
-                </div>
-              </div>
 
               {/* RULER / MEASUREMENT HUD (WHEN RULER ACTIVE) */}
               {showRulerHUD && (
@@ -1663,7 +1643,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                 <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800">
                   <div className="flex items-center space-x-2">
                     <Sliders className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-bold text-white tracking-wide">TRULLÀS BLUEPRINT</span>
+                    <span className="text-xs font-bold text-white tracking-wide">SETUP BLUEPRINT</span>
                   </div>
                   <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
                     Score: {activeSetup.qualityScore}%
@@ -1699,7 +1679,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                 {/* 3-Tranche Scaling Plan */}
                 <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80 space-y-1.5 text-[11px]">
                   <div className="font-semibold text-zinc-200 flex items-center justify-between">
-                    <span>Trullàs 3-Tranche Scaling:</span>
+                    <span>3-Tranche Scaling:</span>
                     <span className="text-emerald-400 text-[10px]">33 / 33 / 34</span>
                   </div>
                   <div className="text-zinc-400 space-y-1">
