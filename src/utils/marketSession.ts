@@ -88,6 +88,7 @@ export function getEasternTimeParts(date: Date = new Date()): {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
+    hourCycle: 'h23',
     weekday: 'short',
   });
 
@@ -98,7 +99,10 @@ export function getEasternTimeParts(date: Date = new Date()): {
     if (part.type === 'year') year = parseInt(part.value, 10);
     else if (part.type === 'month') month = parseInt(part.value, 10);
     else if (part.type === 'day') day = parseInt(part.value, 10);
-    else if (part.type === 'hour') hours = parseInt(part.value, 10);
+    else if (part.type === 'hour') {
+      const parsedHour = parseInt(part.value, 10);
+      hours = parsedHour === 24 ? 0 : parsedHour;
+    }
     else if (part.type === 'minute') minutes = parseInt(part.value, 10);
     else if (part.type === 'second') seconds = parseInt(part.value, 10);
     else if (part.type === 'weekday') weekdayStr = part.value;

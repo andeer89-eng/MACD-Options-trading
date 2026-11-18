@@ -47,6 +47,7 @@ interface AlertStreamProps {
   onClearAlerts: () => void;
   onSelectSymbolForChart: (sym: string) => void;
   onPlayChime: () => void;
+  onOpenWebhookModal?: () => void;
 }
 
 export const AlertStream: React.FC<AlertStreamProps> = ({
@@ -54,6 +55,7 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
   onClearAlerts,
   onSelectSymbolForChart,
   onPlayChime,
+  onOpenWebhookModal,
 }) => {
   const [telegramToken, setTelegramToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
@@ -172,7 +174,7 @@ export const AlertStream: React.FC<AlertStreamProps> = ({
 
           <div className="flex items-center space-x-3 shrink-0">
             <button
-              onClick={() => (window as any).setShowWebhookModal(true)}
+              onClick={() => onOpenWebhookModal?.()}
               className="flex items-center space-x-2 px-4 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-lg text-xs font-medium transition"
               title="Configure Webhook alerts"
             >

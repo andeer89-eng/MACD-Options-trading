@@ -128,9 +128,6 @@ export default function App() {
   const [alerts, setAlerts] = useState<AlertLogItem[]>([]);
   const [isAutoScanning, setIsAutoScanning] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  useEffect(() => {
-    (window as any).setShowWebhookModal = setShowWebhookModal;
-  }, []);
 
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
   const [showTelegramModal, setShowTelegramModal] = useState<boolean>(false);
@@ -573,7 +570,22 @@ export default function App() {
             )}
             {quantSubTab === 'indicators' && (
               <IndicatorLibraryView
-                onSelectIndicatorForChart={() => navigateTo('chart', 'studio')}
+                onSelectIndicatorForChart={(ind) => {
+                  try {
+                    const key = 'stageledger_active_chart_indicators';
+                    const raw = localStorage.getItem(key);
+                    const current: string[] = raw
+                      ? JSON.parse(raw)
+                      : ['supertrend-v9-pro', 'matrix-ai-pro'];
+                    if (!current.includes(ind.id)) {
+                      localStorage.setItem(key, JSON.stringify([...current, ind.id]));
+                    }
+                    window.dispatchEvent(new CustomEvent('stageledger:indicators-changed'));
+                  } catch {
+                    // ignore storage failures
+                  }
+                  navigateTo('chart', 'studio');
+                }}
               />
             )}
             {quantSubTab === 'rules' && <StrategyGuide />}
@@ -604,6 +616,7 @@ export default function App() {
                 onClearAlerts={() => setAlerts([])}
                 onSelectSymbolForChart={handleSelectSymbolForChart}
                 onPlayChime={playAlertChime}
+                onOpenWebhookModal={() => setShowWebhookModal(true)}
               />
             )}
             {opsSubTab === 'health' && <SystemHealthView />}

@@ -4,6 +4,7 @@
    ===================================================================== */
 
 import { ENGINE_VERSION } from './trullasOutcomeEngine';
+import { isMarketHoliday, isEarlyClosing } from './marketCalendar';
 
 export type DataQuality = 'live' | 'cached' | 'estimated';
 
@@ -382,6 +383,9 @@ export function isNyseMarketOpen(now: Date = new Date()): { isOpen: boolean; ses
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       weekday: 'short',
       hour: '2-digit',
       minute: '2-digit',
@@ -393,17 +397,25 @@ export function isNyseMarketOpen(now: Date = new Date()): { isOpen: boolean; ses
     });
 
     const wk = parts.weekday;
-    const mins = parseInt(parts.hour, 10) * 60 + parseInt(parts.minute, 10);
+    const dateStr = `${parts.year}-${parts.month}-${parts.day}`;
+    const hourNum = parseInt(parts.hour, 10);
+    const mins = (hourNum === 24 ? 0 : hourNum) * 60 + parseInt(parts.minute, 10);
 
     if (wk === 'Sat' || wk === 'Sun') {
       return { isOpen: false, sessionName: 'ÎNCHIS (Weekend)' };
     }
 
-    if (mins >= 570 && mins < 960) {
+    if (isMarketHoliday(dateStr)) {
+      return { isOpen: false, sessionName: 'ÎNCHIS (Holiday NYSE)' };
+    }
+
+    const closeMins = isEarlyClosing(dateStr) ? 780 : 960;
+
+    if (mins >= 570 && mins < closeMins) {
       return { isOpen: true, sessionName: 'REGULAR' };
     } else if (mins >= 240 && mins < 570) {
       return { isOpen: false, sessionName: 'PREMARKET' };
-    } else if (mins >= 960 && mins < 1200) {
+    } else if (mins >= closeMins && mins < 1200) {
       return { isOpen: false, sessionName: 'AFTERHOURS' };
     }
     return { isOpen: false, sessionName: 'ÎNCHIS' };

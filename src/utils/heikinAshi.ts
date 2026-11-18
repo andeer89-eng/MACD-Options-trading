@@ -7,6 +7,12 @@ import { Candle } from './trullasStrategy';
  * HaHigh = Max(High, HaOpen, HaClose)
  * HaLow = Min(Low, HaOpen, HaClose)
  */
+function roundToTickPrecision(value: number, refPrice: number): number {
+  const absRef = Math.abs(refPrice);
+  const decimals = absRef >= 10 ? 2 : absRef >= 0.1 ? 4 : 6;
+  return Number(value.toFixed(decimals));
+}
+
 export function calculateHeikinAshi(candles: Candle[]): Candle[] {
   if (candles.length === 0) return [];
 
@@ -16,12 +22,13 @@ export function calculateHeikinAshi(candles: Candle[]): Candle[] {
 
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i];
-    const haClose = Number(((c.open + c.high + c.low + c.close) / 4).toFixed(2));
+    const ref = c.close || c.open;
+    const haClose = roundToTickPrecision((c.open + c.high + c.low + c.close) / 4, ref);
     const haOpen = i === 0
-      ? Number(((c.open + c.close) / 2).toFixed(2))
-      : Number(((prevOpen + prevClose) / 2).toFixed(2));
-    const haHigh = Number(Math.max(c.high, haOpen, haClose).toFixed(2));
-    const haLow = Number(Math.min(c.low, haOpen, haClose).toFixed(2));
+      ? roundToTickPrecision((c.open + c.close) / 2, ref)
+      : roundToTickPrecision((prevOpen + prevClose) / 2, ref);
+    const haHigh = roundToTickPrecision(Math.max(c.high, haOpen, haClose), ref);
+    const haLow = roundToTickPrecision(Math.min(c.low, haOpen, haClose), ref);
 
     haCandles.push({
       timestamp: c.timestamp,

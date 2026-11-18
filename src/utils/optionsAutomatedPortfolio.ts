@@ -14,6 +14,7 @@ import {
 } from './tradingWarzEngine.ts';
 import { calculateBlackScholesGreeks } from './cboeOptionsEngine.ts';
 import { getTradeExecutionRegime, MarketRegimeType } from './marketSession.ts';
+import { escapeCsvCell } from './csvExport.ts';
 
 export interface OptionsPosition {
   id: string;
@@ -450,7 +451,7 @@ export function processOptionsAutonomousCycle(
 
       // Log trade record
       const closedRecord: OptionsTradeRecord = {
-        id: `rich-opt-live-${Date.now()}`,
+        id: `rich-opt-live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         date: dateStr,
         ticker: pos.ticker,
         boughtSold: 'Sold',
@@ -476,7 +477,7 @@ export function processOptionsAutonomousCycle(
       account.tradeHistory.unshift(closedRecord);
 
       newLogs.push({
-        id: `log-opt-exit-${Date.now()}-${pos.ticker}`,
+        id: `log-opt-exit-${Date.now()}-${pos.ticker}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: timeStr,
         positionId: pos.id,
         contract: pos.contract,
@@ -491,7 +492,7 @@ export function processOptionsAutonomousCycle(
 
       // Ingest into Active Memory
       activeMemory.episodes.unshift({
-        id: `opt-ep-${Date.now()}`,
+        id: `opt-ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: dateStr,
         contract: pos.contract,
         strategy: 'S&P 500 Put Harvesting & TradingWarz',
@@ -578,7 +579,7 @@ export function processOptionsAutonomousCycle(
         const contractCode = `${item.symbol} ${String(expDate.getDate()).padStart(2, '0')}${monthNames[expDate.getMonth()]}${String(expDate.getFullYear()).slice(-2)} ${strike} P`;
 
         const newPos: OptionsPosition = {
-          id: `opt-pos-${Date.now()}-${item.symbol}`,
+          id: `opt-pos-${Date.now()}-${item.symbol}-${Math.random().toString(36).slice(2, 8)}`,
           ticker: item.symbol,
           contract: contractCode,
           boughtSold: 'Sold',
@@ -615,7 +616,7 @@ export function processOptionsAutonomousCycle(
         openContracts.add(item.symbol);
 
         newLogs.push({
-          id: `log-opt-open-${Date.now()}-${item.symbol}`,
+          id: `log-opt-open-${Date.now()}-${item.symbol}-${Math.random().toString(36).slice(2, 8)}`,
           timestamp: timeStr,
           positionId: newPos.id,
           contract: contractCode,
@@ -836,32 +837,27 @@ export function exportOptionsLogsToCSV(account: OptionsPortfolioAccount): string
     'Strategy Thesis',
   ];
 
-  const escapeCell = (v: any) => {
-    if (v === undefined || v === null) return '""';
-    return `"${String(v).replace(/"/g, '""')}"`;
-  };
-
   const allTrades = [
     ...(account.tradeHistory || []),
     ...(account.legacyHistory || []),
   ];
 
   const rows = allTrades.map((t) => [
-    escapeCell(t.date),
-    escapeCell(t.ticker),
-    escapeCell(t.session || 'REGULAR'),
-    escapeCell(t.boughtSold),
-    escapeCell(t.contract),
-    escapeCell(t.expiration),
-    escapeCell(`$${t.profitDollars.toFixed(2)}`),
-    escapeCell(`${t.profitPercent}%`),
-    escapeCell(t.status),
-    escapeCell(t.outcomeReason),
-    escapeCell(t.tradingWarzPattern || 'TradingWarz Confluence'),
-    escapeCell(`$${t.goldenZoneSupportLevel}`),
-    escapeCell(t.delta),
-    escapeCell(`$${t.thetaPerDay.toFixed(2)}`),
-    escapeCell(t.whyOpenedThesis),
+    escapeCsvCell(t.date),
+    escapeCsvCell(t.ticker),
+    escapeCsvCell(t.session || 'REGULAR'),
+    escapeCsvCell(t.boughtSold),
+    escapeCsvCell(t.contract),
+    escapeCsvCell(t.expiration),
+    escapeCsvCell(`$${t.profitDollars.toFixed(2)}`),
+    escapeCsvCell(`${t.profitPercent}%`),
+    escapeCsvCell(t.status),
+    escapeCsvCell(t.outcomeReason),
+    escapeCsvCell(t.tradingWarzPattern || 'TradingWarz Confluence'),
+    escapeCsvCell(`$${t.goldenZoneSupportLevel}`),
+    escapeCsvCell(t.delta),
+    escapeCsvCell(`$${t.thetaPerDay.toFixed(2)}`),
+    escapeCsvCell(t.whyOpenedThesis),
   ]);
 
   return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');

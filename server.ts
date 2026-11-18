@@ -2,8 +2,9 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { sanitizePythonTickers, validateBacktestParams } from './src/utils/serverSecurity.ts';
 import {
   calculateIndicators,
   detectDivergences,
@@ -34,7 +35,11 @@ import {
   createUnavailableCboeOverview,
   createUnavailableTickerOptionsSummary,
 } from './src/utils/cboeOptionsEngine.ts';
-import { PineTS } from 'pinets';
+import {
+  executePineScriptIndicator,
+  buildSampleValidationCandles,
+} from './src/utils/pineScriptExecutor.ts';
+import { validatePineScriptHeader } from './src/utils/indicatorLibrary.ts';
 import {
   deduplicateSymbols,
   normalizeSymbolForYahoo,
@@ -53,7 +58,7 @@ import {
 } from './src/utils/trendSpiderUniverse.ts';
 import { CandleData } from './src/utils/trendSpiderEngine.ts';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -752,6 +757,15 @@ async function startServer() {
         minQualityScore = 55,
       } = req.body;
 
+      const validation = validateBacktestParams({
+        initialBalance,
+        riskPerTradePct,
+        minQualityScore,
+      });
+      if (!validation.ok) {
+        return res.status(400).json({ error: validation.error });
+      }
+
       const candles = await fetchYahooData(symbol, timeframe, range, 25);
       if (candles.length < 25) {
         return res.status(503).json({
@@ -763,10 +777,10 @@ async function startServer() {
         symbol,
         timeframe,
         range,
-        initialBalance: Number(initialBalance),
-        riskPerTradePct: Number(riskPerTradePct),
+        initialBalance: validation.values.initialBalance,
+        riskPerTradePct: validation.values.riskPerTradePct,
         targetMode,
-        minQualityScore: Number(minQualityScore),
+        minQualityScore: validation.values.minQualityScore,
       };
 
       const result = runBacktest(candles, config);
@@ -826,28 +840,25 @@ async function startServer() {
         pineCode = '//@version=5\nindicator("LuxAlgo NWE Confluence", overlay=true)\nplot(ta.ema(close, 20), color=color.blue)',
       } = req.body;
 
-      let transpiledPreview = '';
-      let syntaxValid = false;
-      let errorMsg: string | null = null;
-
-      try {
-        const pts = new PineTS(pineCode);
-        syntaxValid = true;
-        transpiledPreview =
-          typeof pts.transpiledCode === 'string'
-            ? pts.transpiledCode.slice(0, 500)
-            : 'PineTS runtime initialized successfully.';
-      } catch (err: any) {
-        syntaxValid = false;
-        errorMsg = err.message;
-      }
+      const header = validatePineScriptHeader(pineCode);
+      const sampleBars = buildSampleValidationCandles(60, 150);
+      const execRes = await executePineScriptIndicator(
+        { id: 'api-pinets-check', name: header.name, pineCode },
+        sampleBars,
+        { symbol, timeframe: '1d' }
+      );
 
       res.json({
         symbol,
-        syntaxValid,
+        syntaxValid: execRes.ok,
+        overlay: execRes.overlay,
+        name: execRes.name,
+        version: header.version,
         runtime: 'pinets-0.13.1',
-        transpiledPreview,
-        error: errorMsg,
+        transpiledPreview: execRes.ok
+          ? `${execRes.plots.length} plot(s), ${execRes.fills.length} fill(s), ${execRes.shapes.length} shape(s), ${execRes.boxes.length} box(es), ${execRes.tables.length} table(s)`
+          : '',
+        error: execRes.error || null,
       });
     } catch (err: any) {
       res.status(500).json({ error: 'PineTS execution failed', message: err.message });
@@ -1607,13 +1618,23 @@ async function startServer() {
     });
   });
 
-  // API 4: Execute Python script test-run and return live output
+  // API 4: Execute Python script test-run and return live output (shell-free execFile + allowlist)
   app.post('/api/run-python', async (req: Request, res: Response) => {
-    const tickers = (req.body.tickers as string[]) || ['AAPL', 'MSFT', 'BTC-USD'];
-    const cmd = `python3 trullas_scanner_247.py --tickers ${tickers.join(' ')} --once`;
+    const sanitized = sanitizePythonTickers(req.body?.tickers);
+    if (!sanitized.ok) {
+      return res.status(400).json({
+        success: false,
+        error: sanitized.error,
+        stdout: '',
+        stderr: '',
+      });
+    }
+
+    const args = ['trullas_scanner_247.py', '--tickers', ...sanitized.tickers, '--once'];
+    const cmd = `python3 ${args.join(' ')}`;
 
     try {
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 15000 });
+      const { stdout, stderr } = await execFileAsync('python3', args, { timeout: 15000 });
       res.json({
         success: true,
         command: cmd,

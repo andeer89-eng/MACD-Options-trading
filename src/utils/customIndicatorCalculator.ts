@@ -1,4 +1,5 @@
 import { Candle } from './trullasStrategy';
+import { calculateOrderFlowStrategy, OFS_COLORS } from './orderFlowStrategy';
 
 export interface CalculatedIndicatorSeries {
   id: string;
@@ -18,11 +19,24 @@ export interface CalculatedIndicatorSeries {
   summaryStatus?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 }
 
+function roundIndicatorPrice(value: number, refPrice: number): number {
+  const absRef = Math.abs(refPrice);
+  const decimals = absRef >= 10 ? 2 : absRef >= 0.1 ? 4 : 6;
+  return Number(value.toFixed(decimals));
+}
+
+function formatIndicatorPrice(value: number): string {
+  const absVal = Math.abs(value);
+  const decimals = absVal >= 10 ? 2 : absVal >= 0.1 ? 4 : 6;
+  return value.toFixed(decimals);
+}
+
 /**
  * Calculates SuperTrend v9 PRO
  * Calibrated ATR trailing volatility band
  */
 export function calculateSuperTrend(candles: Candle[], period: number = 10, multiplier: number = 3.0): CalculatedIndicatorSeries {
+  const safePeriod = Number.isFinite(period) ? Math.max(1, Math.floor(period)) : 10;
   if (candles.length === 0) {
     return {
       id: 'supertrend-v9-pro',
@@ -52,12 +66,12 @@ export function calculateSuperTrend(candles: Candle[], period: number = 10, mult
   const atr: number[] = [];
   let sum = 0;
   for (let i = 0; i < candles.length; i++) {
-    if (i < period) {
+    if (i < safePeriod) {
       sum += tr[i];
       atr.push(sum / (i + 1));
     } else {
       const prevAtr = atr[i - 1];
-      atr.push((prevAtr * (period - 1) + tr[i]) / period);
+      atr.push((prevAtr * (safePeriod - 1) + tr[i]) / safePeriod);
     }
   }
 
@@ -94,7 +108,7 @@ export function calculateSuperTrend(candles: Candle[], period: number = 10, mult
     const stValue = trend === 1 ? lowerBand : upperBand;
     supertrendPoints.push({
       time,
-      value: Number(stValue.toFixed(2)),
+      value: roundIndicatorPrice(stValue, c.close),
       color: trend === 1 ? '#10b981' : '#f43f5e',
     });
   }
@@ -109,7 +123,7 @@ export function calculateSuperTrend(candles: Candle[], period: number = 10, mult
     overlay: true,
     paneIndex: 0,
     color: lastTrend === 'BULLISH' ? '#10b981' : '#f43f5e',
-    summaryValue: `$${lastVal.toFixed(2)} (${lastTrend})`,
+    summaryValue: `$${formatIndicatorPrice(lastVal)} (${lastTrend})`,
     summaryStatus: lastTrend,
     plots: [
       {
@@ -160,8 +174,9 @@ export function calculateTrendCloudPro(candles: Candle[]): CalculatedIndicatorSe
 
   for (let i = 0; i < candles.length; i++) {
     const time = Math.floor(candles[i].timestamp / 1000);
-    fastPoints.push({ time, value: Number(fastEma[i].toFixed(2)) });
-    slowPoints.push({ time, value: Number(slowEma[i].toFixed(2)) });
+    const ref = candles[i].close;
+    fastPoints.push({ time, value: roundIndicatorPrice(fastEma[i], ref) });
+    slowPoints.push({ time, value: roundIndicatorPrice(slowEma[i], ref) });
   }
 
   const lastFast = fastEma[fastEma.length - 1];
@@ -299,11 +314,12 @@ export function calculateAGAIGAvwap(candles: Candle[]): CalculatedIndicatorSerie
     cumVol += c.volume;
     cumVolPrice += typ * c.volume;
     const vwap = cumVol > 0 ? cumVolPrice / cumVol : typ;
-    const band = Math.max(0.5, Math.abs(typ - vwap) * 1.5);
+    const minBand = Math.max(1e-6, Math.abs(typ) * 0.002);
+    const band = Math.max(minBand, Math.abs(typ - vwap) * 1.5);
 
-    vwapPoints.push({ time, value: Number(vwap.toFixed(2)) });
-    upperPoints.push({ time, value: Number((vwap + band).toFixed(2)) });
-    lowerPoints.push({ time, value: Number((vwap - band).toFixed(2)) });
+    vwapPoints.push({ time, value: roundIndicatorPrice(vwap, typ) });
+    upperPoints.push({ time, value: roundIndicatorPrice(vwap + band, typ) });
+    lowerPoints.push({ time, value: roundIndicatorPrice(vwap - band, typ) });
   }
 
   const latestVwap = vwapPoints[vwapPoints.length - 1]?.value || candles[candles.length - 1].close;
@@ -317,7 +333,7 @@ export function calculateAGAIGAvwap(candles: Candle[]): CalculatedIndicatorSerie
     overlay: true,
     paneIndex: 0,
     color: '#f59e0b',
-    summaryValue: `$${latestVwap.toFixed(2)} (${isAbove ? 'Above AVWAP' : 'Below AVWAP'})`,
+    summaryValue: `$${formatIndicatorPrice(latestVwap)} (${isAbove ? 'Above AVWAP' : 'Below AVWAP'})`,
     summaryStatus: isAbove ? 'BULLISH' : 'BEARISH',
     plots: [
       {
@@ -464,6 +480,89 @@ export function calculateBuyingChecklistPro(candles: Candle[]): CalculatedIndica
 }
 
 /**
+ * Calculates Order Flow Strategy [Auction · Trapped Traders]
+ * Summary series and core Pressure Wave / Value Area metadata
+ */
+export function calculateOrderFlowCustomIndicator(
+  candles: Candle[],
+  ltfCandles: Candle[] = [],
+  symbol: string = 'MARKET',
+  timeframe: string = '5m'
+): CalculatedIndicatorSeries {
+  if (candles.length === 0) {
+    return {
+      id: 'ofs-order-flow-strategy-v6',
+      name: 'Order Flow Strategy [OFS]',
+      isCustom: true,
+      overlay: true,
+      paneIndex: 0,
+      color: OFS_COLORS.cCyan,
+      plots: [],
+    };
+  }
+
+  const report = calculateOrderFlowStrategy(candles, ltfCandles, { symbol, timeframe });
+  const dash = report.dashboard;
+  const flowSign = dash.flowNet >= 0 ? '+' : '';
+  const status: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    dash.structure === 1 ? 'BULLISH' : dash.structure === -1 ? 'BEARISH' : 'NEUTRAL';
+
+  return {
+    id: 'ofs-order-flow-strategy-v6',
+    name: 'Order Flow Strategy [OFS]',
+    isCustom: true,
+    overlay: true,
+    paneIndex: 0,
+    color: dash.flowNet >= 0 ? OFS_COLORS.cCyan : OFS_COLORS.cPurple,
+    summaryValue: `${dash.setupStateText} · Flow ${flowSign}${Math.round(dash.flowNet * 100)}`,
+    summaryStatus: status,
+    // Visual rendering is performed pixel-synchronized on OrderFlowOverlay canvas & HUD
+    plots: [],
+  };
+}
+
+import { calculateQuantumMarketXray, QMX_COLORS } from './quantumMarketXray';
+
+/**
+ * Calculates Quantum Market X-Ray (QMX)
+ * Summary series and intelligence channel metadata
+ */
+export function calculateQuantumMarketXrayCustomIndicator(
+  candles: Candle[],
+  symbol: string = 'MARKET',
+  timeframe: string = '1d'
+): CalculatedIndicatorSeries {
+  if (candles.length === 0) {
+    return {
+      id: 'qmx-quantum-market-xray',
+      name: 'QUANTUM MARKET X-RAY (QMX)',
+      isCustom: true,
+      overlay: true,
+      paneIndex: 0,
+      color: QMX_COLORS.cyan,
+      plots: [],
+    };
+  }
+
+  const report = calculateQuantumMarketXray(candles, { symbol, timeframe });
+  const d = report.dashboard;
+  const status: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    d.marketBias === 'Bullish' ? 'BULLISH' : d.marketBias === 'Bearish' ? 'BEARISH' : 'NEUTRAL';
+
+  return {
+    id: 'qmx-quantum-market-xray',
+    name: 'QUANTUM MARKET X-RAY (QMX)',
+    isCustom: true,
+    overlay: true,
+    paneIndex: 0,
+    color: d.marketBias === 'Bullish' ? QMX_COLORS.cyan : QMX_COLORS.red,
+    summaryValue: `${d.phase} · Bull ${d.scores.bullishEvidencePct}% / Bear ${d.scores.bearishEvidencePct}%`,
+    summaryStatus: status,
+    plots: [],
+  };
+}
+
+/**
  * Dispatches calculation for a custom indicator by ID
  */
 export function calculateCustomIndicatorById(
@@ -471,6 +570,12 @@ export function calculateCustomIndicatorById(
   candles: Candle[]
 ): CalculatedIndicatorSeries | null {
   const norm = id.toLowerCase();
+  if (norm.includes('qmx') || norm.includes('quantum')) {
+    return calculateQuantumMarketXrayCustomIndicator(candles);
+  }
+  if (norm.includes('ofs') || norm.includes('order-flow-strategy')) {
+    return calculateOrderFlowCustomIndicator(candles);
+  }
   if (norm.includes('supertrend')) return calculateSuperTrend(candles);
   if (norm.includes('trendcloud')) return calculateTrendCloudPro(candles);
   if (norm.includes('matrix')) return calculateMatrixAIPro(candles);
@@ -479,4 +584,5 @@ export function calculateCustomIndicatorById(
   if (norm.includes('buying') || norm.includes('checklist')) return calculateBuyingChecklistPro(candles);
   return null;
 }
+
 

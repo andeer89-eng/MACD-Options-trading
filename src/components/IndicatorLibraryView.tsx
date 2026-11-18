@@ -26,6 +26,10 @@ import {
   importCustomPineIndicator,
   exportIndicatorsAsJSON,
 } from '../utils/indicatorLibrary';
+import {
+  executePineScriptIndicator,
+  buildSampleValidationCandles,
+} from '../utils/pineScriptExecutor';
 
 interface IndicatorLibraryViewProps {
   onSelectIndicatorForChart?: (indicator: CustomPineIndicator) => void;
@@ -61,6 +65,8 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
   const [transpileResult, setTranspileResult] = useState<{
     valid: boolean;
     preview?: string;
+    diagnostics?: string;
+    overlay?: boolean;
     error?: string;
   } | null>(null);
 
@@ -99,41 +105,65 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
     setTranspileResult(null);
 
     try {
-      const res = await fetch('/api/luxalgo/pinets-run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: 'AAPL',
-          pineCode: pasteCode,
-        }),
-      });
+      const sampleBars = buildSampleValidationCandles(80, 150);
+      const [execRes, apiRes] = await Promise.all([
+        executePineScriptIndicator(
+          {
+            id: 'dry-run-validation',
+            name: indicatorName.trim() || 'Imported Indicator',
+            pineCode: pasteCode,
+          },
+          sampleBars,
+          { symbol: 'AAPL', timeframe: '1d' }
+        ),
+        fetch('/api/luxalgo/pinets-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            symbol: 'AAPL',
+            pineCode: pasteCode,
+          }),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json.syntaxValid) {
-          setTranspileResult({
-            valid: true,
-            preview: json.transpiledPreview,
-          });
-        } else {
-          setTranspileResult({
-            valid: false,
-            error: json.error || 'Syntax validation failed',
-          });
-        }
+      if (execRes.ok) {
+        const parts = [
+          execRes.overlay ? 'Overlay (Pane 0)' : 'Sub-Pane (Pane 3)',
+          `${execRes.plots.length} plot(s)`,
+          execRes.fills.length > 0 ? `${execRes.fills.length} fill(s)` : '',
+          execRes.shapes.length > 0 ? `${execRes.shapes.length} signal(s)` : '',
+          execRes.boxes.length > 0 ? `${execRes.boxes.length} box(es)` : '',
+          execRes.lines.length > 0 ? `${execRes.lines.length} line(s)` : '',
+          execRes.tables.length > 0 ? `${execRes.tables.length} table(s)` : '',
+          execRes.hlines.length > 0 ? `${execRes.hlines.length} hline(s)` : '',
+          execRes.strategyTrades.length > 0 ? `${execRes.strategyTrades.length} trade(s)` : '',
+        ].filter(Boolean);
+
+        setTranspileResult({
+          valid: true,
+          overlay: execRes.overlay,
+          diagnostics: parts.join(' · '),
+          preview: apiRes?.transpiledPreview || execRes.summaryValue,
+        });
+      } else {
+        setTranspileResult({
+          valid: false,
+          error: execRes.error || apiRes?.error || 'PineTS execution failed',
+        });
       }
     } catch (e: any) {
       setTranspileResult({
         valid: false,
-        error: e.message || 'Validation request failed',
+        error: e?.message || 'Validation request failed',
       });
     } finally {
       setValidating(false);
     }
   };
 
-  const handleImportSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const commitImport = (andAddToChart: boolean) => {
     if (!pasteCode.trim()) {
       setValidationError('Please paste Pine Script code.');
       return;
@@ -162,6 +192,15 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
     setValidationError(null);
     setTranspileResult(null);
     setShowImportForm(false);
+
+    if (andAddToChart && onSelectIndicatorForChart) {
+      onSelectIndicatorForChart(res.indicator);
+    }
+  };
+
+  const handleImportSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    commitImport(false);
   };
 
   // Export bundle
@@ -241,7 +280,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
               <Sparkles className="w-4 h-4 text-indigo-400" />
               <h3 className="font-bold text-white text-sm">Import New Pine Script Indicator</h3>
             </div>
-            <span className="text-[11px] font-mono text-zinc-500">v5 / v6 Compatible</span>
+            <span className="text-[11px] font-mono text-zinc-500">v4 / v5 / v6 Compatible</span>
           </div>
 
           {validationError && (
@@ -299,15 +338,18 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
               rows={8}
               placeholder={`//@version=5\nindicator("My Custom Indicator", overlay=true)\nplot(ta.ema(close, 20), color=color.blue)`}
               value={pasteCode}
-              onChange={(e) => setPasteCode(e.target.value)}
+              onChange={(e) => {
+                setPasteCode(e.target.value);
+                if (validationError) setValidationError(null);
+              }}
               className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl font-mono text-xs text-indigo-300 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
           {/* Transpile Diagnostics Result */}
           {transpileResult && (
-            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-mono">
-              <div className="flex items-center space-x-2 mb-1">
+            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-mono space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                     transpileResult.valid
@@ -315,16 +357,23 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
                       : 'bg-rose-500/20 text-rose-400'
                   }`}
                 >
-                  {transpileResult.valid ? 'VALID PINETS AST' : 'PINE SCRIPT SYNTAX ERROR'}
+                  {transpileResult.valid ? 'PINETS EXECUTED OK' : 'PINE SCRIPT ERROR'}
                 </span>
-                <span className="text-zinc-400 text-[11px]">
-                  {transpileResult.valid ? 'Code ready to execute' : transpileResult.error}
+                <span className="text-zinc-300 text-[11px]">
+                  {transpileResult.valid
+                    ? transpileResult.diagnostics || 'Code ready to execute'
+                    : transpileResult.error}
                 </span>
               </div>
+              {transpileResult.valid && transpileResult.preview && (
+                <div className="text-[11px] text-zinc-500 truncate">
+                  Output: {transpileResult.preview}
+                </div>
+              )}
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             <button
               type="button"
               onClick={handleValidateAndTranspile}
@@ -332,10 +381,10 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
               className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs font-medium border border-zinc-700 transition"
             >
               <Play className="w-3.5 h-3.5 text-indigo-400" />
-              <span>{validating ? 'Transpiling...' : 'Test & Transpile with PineTS'}</span>
+              <span>{validating ? 'Running Dry Check...' : 'Test & Execute Pine Script'}</span>
             </button>
 
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
               <button
                 type="button"
                 onClick={() => setShowImportForm(false)}
@@ -345,10 +394,20 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/20 transition"
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white rounded-lg text-xs font-semibold transition"
               >
                 Save to Library
               </button>
+              {onSelectIndicatorForChart && (
+                <button
+                  type="button"
+                  data-testid="save-and-apply-pine-btn"
+                  onClick={() => commitImport(true)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-emerald-600/20 transition"
+                >
+                  Save &amp; Add to Chart
+                </button>
+              )}
             </div>
           </div>
         </form>
@@ -441,7 +500,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
               </div>
 
               {/* Code Toggle & Actions */}
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center justify-between pt-2 gap-2">
                 <button
                   onClick={() => setExpandedCodeId(isExpanded ? null : ind.id)}
                   className="text-xs text-zinc-400 hover:text-white flex items-center space-x-1 transition"
@@ -455,15 +514,30 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
                   )}
                 </button>
 
-                {!ind.isBuiltIn && (
-                  <button
-                    onClick={() => handleDelete(ind.id)}
-                    className="p-1.5 text-zinc-500 hover:text-rose-400 transition rounded hover:bg-rose-500/10"
-                    title="Delete custom indicator"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {onSelectIndicatorForChart && (
+                    <button
+                      type="button"
+                      data-testid={`add-to-chart-${ind.id}`}
+                      onClick={() => onSelectIndicatorForChart(ind)}
+                      className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 rounded-md text-xs font-semibold transition"
+                      title="Activate this indicator on Chart Studio"
+                    >
+                      <Play className="w-3 h-3" />
+                      <span>Add to Chart</span>
+                    </button>
+                  )}
+
+                  {!ind.isBuiltIn && (
+                    <button
+                      onClick={() => handleDelete(ind.id)}
+                      className="p-1.5 text-zinc-500 hover:text-rose-400 transition rounded hover:bg-rose-500/10"
+                      title="Delete custom indicator"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Expanded Pine Script Code Preview */}

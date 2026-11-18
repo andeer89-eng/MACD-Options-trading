@@ -14,6 +14,7 @@ import {
 } from './activeLearningEngine.ts';
 import { TickerOptionsSummary } from './cboeOptionsEngine.ts';
 import { getTradeExecutionRegime, MarketRegimeType } from './marketSession.ts';
+import { escapeCsvCell } from './csvExport.ts';
 
 export interface CboeDecisionConfluence {
   overallScore: number | null;
@@ -976,23 +977,18 @@ export function exportAutomatedLogsToCSV(account: PortfolioAccount): string {
     'Audit Reason & Strategy Trigger',
   ];
 
-  const escapeCell = (v: any) => {
-    if (v === undefined || v === null) return '""';
-    return `"${String(v).replace(/"/g, '""')}"`;
-  };
-
   const rows = account.tradeHistory.map((log) =>
     [
-      escapeCell(log.id),
-      escapeCell(log.timestamp),
-      escapeCell(log.positionId),
-      escapeCell(log.symbol),
-      escapeCell(log.action),
-      escapeCell(log.shares),
-      escapeCell(log.price.toFixed(2)),
-      escapeCell(log.realizedPnL !== undefined ? log.realizedPnL.toFixed(2) : ''),
-      escapeCell(log.realizedPnLPercent !== undefined ? `${log.realizedPnLPercent.toFixed(2)}%` : ''),
-      escapeCell(log.reason),
+      escapeCsvCell(log.id),
+      escapeCsvCell(log.timestamp),
+      escapeCsvCell(log.positionId),
+      escapeCsvCell(log.symbol),
+      escapeCsvCell(log.action),
+      escapeCsvCell(log.shares),
+      escapeCsvCell(log.price.toFixed(2)),
+      escapeCsvCell(log.realizedPnL !== undefined ? log.realizedPnL.toFixed(2) : ''),
+      escapeCsvCell(log.realizedPnLPercent !== undefined ? `${log.realizedPnLPercent.toFixed(2)}%` : ''),
+      escapeCsvCell(log.reason),
     ].join(',')
   );
 

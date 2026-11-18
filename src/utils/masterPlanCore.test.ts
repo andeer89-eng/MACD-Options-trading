@@ -6,6 +6,7 @@ import {
   getRiskUsd,
   calculateLevels,
   canTrade,
+  isNyseMarketOpen,
   DEFAULT_SETTINGS,
 } from './masterPlanCore.ts';
 
@@ -112,5 +113,18 @@ describe('TRULLAS Master Plan v3 Core Tests', () => {
     assert.strictEqual(gate.allow, true);
     assert.strictEqual(gate.fails.length, 0);
     assert.ok(gate.suggestedQty >= 1);
+  });
+
+  it('isNyseMarketOpen honors NYSE holidays and 1:00 PM ET early close', () => {
+    // Thanksgiving 2026 at 11:00 AM ET (16:00 UTC) must be closed
+    const thanksgivingMidday = new Date('2026-11-26T16:00:00Z');
+    const holidayStatus = isNyseMarketOpen(thanksgivingMidday);
+    assert.strictEqual(holidayStatus.isOpen, false);
+
+    // Day after Thanksgiving 2026 at 14:00 ET (19:00 UTC) must be afterhours/closed (13:00 ET early close)
+    const earlyCloseAfter = new Date('2026-11-27T19:00:00Z');
+    const earlyStatus = isNyseMarketOpen(earlyCloseAfter);
+    assert.strictEqual(earlyStatus.isOpen, false);
+    assert.strictEqual(earlyStatus.sessionName, 'AFTERHOURS');
   });
 });

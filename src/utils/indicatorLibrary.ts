@@ -25,6 +25,79 @@ export interface CustomPineIndicator {
 
 export const BUILT_IN_INDICATORS: CustomPineIndicator[] = [
   {
+    id: 'qmx-quantum-market-xray',
+    name: 'QUANTUM MARKET X-RAY (QMX)',
+    author: 'Michael_Fx_Trader (TradingView)',
+    description:
+      'Advanced Market Intelligence Overlay: Quantum Intelligence Ribbon, BSL/SSL Liquidity Zones, Liquidity Sweeps, Smart Money Trap Detector (Trapped Buyers/Sellers), Exhaustion Clouds, Vacuum Corridors, and Live HUD.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 1200000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+// -------------------------------------------------------------
+// QUANTUM MARKET X-RAY (QMX)
+// Advanced Market Intelligence Overlay | Pine Script® v6
+// -------------------------------------------------------------
+indicator("QUANTUM MARKET X-RAY (QMX)", shorttitle="QMX", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// 01 Liquidity Intelligence
+// 02 Liquidity Sweep Detector
+// 03 Smart Money Trap Detector
+// 04 Exhaustion Clouds & Target Rays (T1, T2, T3)
+// 05 Live Market Intelligence HUD
+
+atrV = ta.atr(14)
+m = ta.ema(hlc3, 21)
+up = m + atrV * 1.85
+dn = m - atrV * 1.85
+
+plot(m, "QMX Baseline", color=close >= m ? color.teal : color.maroon, linewidth=2)
+p1 = plot(up, "Upper Boundary", color=color.aqua, linewidth=1)
+p2 = plot(dn, "Lower Boundary", color=color.fuchsia, linewidth=1)
+fill(p1, p2, color=color.new(color.teal, 90))`,
+  },
+  {
+    id: 'ofs-order-flow-strategy-v6',
+    name: 'Order Flow Strategy [Auction · Trapped Traders]',
+    author: 'roan-maverick (GitHub Open-Source)',
+    description:
+      'Auction market Value Area (VAH/POC/VAL glow), Order Flow Pressure Wave, Discount/Premium 0.705-0.886 zones, BSL/SSL liquidity sweeps, 6-row candle footprints with 400% imbalances, absorption + second-failure entries, and live HUD.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 1100000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Order Flow Strategy [Auction · Order Flow · Trapped Traders]", shorttitle="OFS", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// Step 1 · Value Area (70% volume profile + POC + VAH + VAL)
+// Step 2 · Location (Impulse Leg + 0.705 / 0.788 / 0.886 Discount / Premium Zone)
+// Step 3 · Order Flow Confirmation (Lower-TF Delta, Candle POC, Absorption, 1st Shift, 2nd Failure)
+// Visuals · Pressure Wave (Cyan Buyers vs Purple Sellers), 6-Row Footprint, BSL/SSL Liquidity Sweeps, Inefficiency FVG, Impulse Candles, HUD
+
+swingLen = input.int(5, "Swing strength (bars each side)")
+fibA = input.float(0.705, "Zone level 1 (entry)")
+fibB = input.float(0.788, "Zone level 2 (midline)")
+fibC = input.float(0.886, "Zone level 3 (invalidation)")
+absDelta = input.float(15, "Absorption: net aggression at least (%)")
+shiftDelta = input.float(10, "Dominance shift: net aggression at least (%)")
+
+atrV = ta.atr(14)
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+barDelta = close > open ? volume : close < open ? -volume : 0.0
+deltaPct = volume > 0 ? (barDelta / volume) * 100 : 0.0
+
+wMid = ta.ema(hl2, 21)
+plot(wMid, "Order Flow Core", color=deltaPct >= 0 ? color.aqua : color.purple, linewidth=2)`,
+  },
+  {
     id: 'lux-nwe-v5',
     name: 'LuxAlgo Nadaraya-Watson Envelope (NWE)',
     author: 'LuxAlgo (Alex Grover)',
@@ -331,7 +404,7 @@ plot(delta, "APEX Confluence Delta", color=delta > 0 ? color.green : color.red, 
     description: 'Dynamic multi-period EMA cloud (12 & 34) displaying bullish trend expansion and squeeze compression zones.',
     category: 'Reversal',
     version: 'v6',
-    overlay: false,
+    overlay: true,
     enabled: true,
     isBuiltIn: false,
     importedAt: Date.now() - 170000,
@@ -371,7 +444,7 @@ plot(avwap - std, "AGAIG Lower Zone (-1.5σ)", color=color.green)`,
     description: 'Advanced ATR trailing volatility bands with adaptive sensitivity for swing trading and trend persistence.',
     category: 'Trend',
     version: 'v6',
-    overlay: false,
+    overlay: true,
     enabled: true,
     isBuiltIn: false,
     importedAt: Date.now() - 150000,
@@ -387,7 +460,127 @@ plot(close > ta.ema(close, 20) ? low - atr : high + atr, "SuperTrend Band", colo
 const STORAGE_KEY = 'trullas_custom_pine_indicators_v1';
 
 /**
+ * Extracts arguments string inside balanced parentheses starting at `openParenIdx`.
+ */
+function extractBalancedParenArgs(code: string, openParenIdx: number): string | null {
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = openParenIdx; i < code.length; i++) {
+    const ch = code[i];
+    const next = code[i + 1];
+    const prev = code[i - 1];
+
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (prev === '*' && ch === '/') inBlockComment = false;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'" && prev !== '\\') inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"' && prev !== '\\') inDouble = false;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      continue;
+    }
+
+    if (ch === '(') {
+      depth++;
+    } else if (ch === ')') {
+      depth--;
+      if (depth === 0) {
+        return code.slice(openParenIdx + 1, i);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Strips // and /* *\/ comments outside of string literals so regexes inside declarations stay clean.
+ */
+function stripCommentsPreservingStrings(src: string): string {
+  let out = '';
+  let inSingle = false;
+  let inDouble = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    const next = src[i + 1];
+    const prev = src[i - 1];
+
+    if (inLineComment) {
+      if (ch === '\n') {
+        inLineComment = false;
+        out += ch;
+      }
+      continue;
+    }
+    if (inBlockComment) {
+      if (prev === '*' && ch === '/') inBlockComment = false;
+      continue;
+    }
+    if (inSingle) {
+      out += ch;
+      if (ch === "'" && prev !== '\\') inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      out += ch;
+      if (ch === '"' && prev !== '\\') inDouble = false;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+    if (ch === "'") inSingle = true;
+    else if (ch === '"') inDouble = true;
+
+    out += ch;
+  }
+  return out;
+}
+
+/**
  * Validates and extracts metadata from raw Pine Script code.
+ * Supports v4/v5/v6 indicator(...), strategy(...), study(...), and library(...) declarations,
+ * including multi-line calls, named `title = "..."` parameters, and nested parentheses.
  */
 export function validatePineScriptHeader(code: string): {
   valid: boolean;
@@ -406,9 +599,12 @@ export function validatePineScriptHeader(code: string): {
   else if (code.includes('//@version=4')) version = 'v4';
   else if (code.includes('//@version=5')) version = 'v5';
 
-  // Declaration statement check (indicator(...) or strategy(...))
-  const indicatorMatch = code.match(/(?:indicator|strategy)\s*\(\s*(?:"([^"]+)"|'([^']+)')([^)]*)\)/);
-  if (!indicatorMatch) {
+  // Scan code ignoring comments & strings to locate the declaration keyword
+  const stripped = stripCommentsPreservingStrings(code);
+  const declRegex = /\b(?:indicator|strategy|study|library)\s*\(/g;
+  const match = declRegex.exec(stripped);
+
+  if (!match) {
     return {
       valid: false,
       name: 'Custom Indicator',
@@ -418,13 +614,36 @@ export function validatePineScriptHeader(code: string): {
     };
   }
 
-  const name = indicatorMatch[1] || indicatorMatch[2] || 'Custom Pine Indicator';
-  const args = indicatorMatch[3] || '';
-  const overlay = args.includes('overlay=true') || (!args.includes('overlay=false') && !args.includes('overlay'));
+  const openParenIdx = match.index + match[0].length - 1;
+  const rawArgs = extractBalancedParenArgs(stripped, openParenIdx);
+  if (rawArgs === null) {
+    return {
+      valid: false,
+      name: 'Custom Indicator',
+      overlay: true,
+      version,
+      error: 'Unclosed indicator(...) or strategy(...) declaration statement',
+    };
+  }
+
+  // Extract name from explicit title=... parameter or first string literal argument
+  const namedTitleMatch = rawArgs.match(/\btitle\s*=\s*(?:"([^"]*)"|'([^']*)')/);
+  const firstStringMatch = rawArgs.match(/(?:"([^"]*)"|'([^']*)')/);
+  const extractedName =
+    namedTitleMatch?.[1] ??
+    namedTitleMatch?.[2] ??
+    firstStringMatch?.[1] ??
+    firstStringMatch?.[2] ??
+    'Custom Pine Indicator';
+
+  const overlayMatch = rawArgs.match(/\boverlay\s*=\s*(true|false)\b/i);
+  const overlay = overlayMatch
+    ? overlayMatch[1].toLowerCase() === 'true'
+    : !/\boverlay\b/i.test(rawArgs);
 
   return {
     valid: true,
-    name,
+    name: extractedName.trim() || 'Custom Pine Indicator',
     overlay,
     version,
   };
@@ -444,14 +663,24 @@ export function loadAllIndicators(): CustomPineIndicator[] {
       return allDefaults;
     }
     const parsed = JSON.parse(raw) as CustomPineIndicator[];
-    const existingIds = new Set(parsed.map((p) => p.id));
+    const defaultById = new Map(allDefaults.map((d) => [d.id, d]));
+    let repaired = false;
+    const normalizedParsed = parsed.map((item) => {
+      const def = defaultById.get(item.id);
+      if (def && item.overlay !== def.overlay) {
+        repaired = true;
+        return { ...item, overlay: def.overlay };
+      }
+      return item;
+    });
+    const existingIds = new Set(normalizedParsed.map((p) => p.id));
     const missingDefaults = allDefaults.filter((d) => !existingIds.has(d.id));
-    if (missingDefaults.length > 0) {
-      const merged = [...parsed, ...missingDefaults];
+    if (missingDefaults.length > 0 || repaired) {
+      const merged = [...missingDefaults, ...normalizedParsed];
       localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       return merged;
     }
-    return parsed;
+    return normalizedParsed;
   } catch (e) {
     console.error('Failed to parse stored indicators:', e);
     return allDefaults;
@@ -459,12 +688,13 @@ export function loadAllIndicators(): CustomPineIndicator[] {
 }
 
 /**
- * Save indicators list to localStorage.
+ * Save indicators list to localStorage and notify active chart views.
  */
 export function saveAllIndicators(list: CustomPineIndicator[]): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    window.dispatchEvent(new CustomEvent('stageledger:indicators-changed'));
   } catch (e) {
     console.error('Failed to save indicators to localStorage:', e);
   }
@@ -515,7 +745,7 @@ export function exportIndicatorsAsJSON(indicators: CustomPineIndicator[]): strin
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      generator: 'Trullas MACD 24/7 PineTS Library',
+      generator: 'StageLedger PineTS Indicator Library',
       count: indicators.length,
       indicators,
     },

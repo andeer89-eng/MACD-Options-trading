@@ -10,17 +10,29 @@ export function detectChartPatterns(
   candles: { high: number; low: number; close: number }[],
   lookback: number = 60
 ): ChartPattern[] {
-  if (candles.length < lookback) return [];
+  const safeLookback = Math.floor(lookback);
+  if (safeLookback < 5 || candles.length < safeLookback) return [];
 
   const patterns: ChartPattern[] = [];
   const n = candles.length;
-  
-  // Find swing points (peaks and troughs)
+  const startOffset = n - safeLookback;
+
+  // Find swing points (peaks and troughs) strictly within the trailing lookback window
   const swings: { index: number; type: 'PEAK' | 'TROUGH'; price: number }[] = [];
-  for (let i = 2; i < n - 2; i++) {
-    if (candles[i].high > candles[i - 1].high && candles[i].high > candles[i - 2].high && candles[i].high > candles[i + 1].high && candles[i].high > candles[i + 2].high) {
+  for (let i = startOffset + 2; i < n - 2; i++) {
+    if (
+      candles[i].high > candles[i - 1].high &&
+      candles[i].high > candles[i - 2].high &&
+      candles[i].high > candles[i + 1].high &&
+      candles[i].high > candles[i + 2].high
+    ) {
       swings.push({ index: i, type: 'PEAK', price: candles[i].high });
-    } else if (candles[i].low < candles[i - 1].low && candles[i].low < candles[i - 2].low && candles[i].low < candles[i + 1].low && candles[i].low < candles[i + 2].low) {
+    } else if (
+      candles[i].low < candles[i - 1].low &&
+      candles[i].low < candles[i - 2].low &&
+      candles[i].low < candles[i + 1].low &&
+      candles[i].low < candles[i + 2].low
+    ) {
       swings.push({ index: i, type: 'TROUGH', price: candles[i].low });
     }
   }
@@ -31,6 +43,10 @@ export function detectChartPatterns(
     const s2 = swings[i - 1];
     const s3 = swings[i];
 
+    if (!Number.isFinite(s1.price) || !Number.isFinite(s3.price) || s1.price <= 0) {
+      continue;
+    }
+
     // Double Bottom: Trough - Peak - Trough (similar price)
     if (s1.type === 'TROUGH' && s2.type === 'PEAK' && s3.type === 'TROUGH') {
       const priceDiff = Math.abs(s1.price - s3.price) / s1.price;
@@ -38,27 +54,27 @@ export function detectChartPatterns(
         patterns.push({
           name: 'DOUBLE_BOTTOM',
           type: 'BULLISH',
-          confidence: Math.max(50, 100 - priceDiff * 1000),
+          confidence: Math.min(100, Math.max(50, 100 - priceDiff * 1000)),
           startIndex: s1.index,
           endIndex: s3.index,
         });
       }
     }
-    
+
     // Double Top: Peak - Trough - Peak (similar price)
     if (s1.type === 'PEAK' && s2.type === 'TROUGH' && s3.type === 'PEAK') {
-        const priceDiff = Math.abs(s1.price - s3.price) / s1.price;
-        if (priceDiff < 0.03) {
-          patterns.push({
-            name: 'DOUBLE_TOP',
-            type: 'BEARISH',
-            confidence: Math.max(50, 100 - priceDiff * 1000),
-            startIndex: s1.index,
-            endIndex: s3.index,
-          });
-        }
+      const priceDiff = Math.abs(s1.price - s3.price) / s1.price;
+      if (priceDiff < 0.03) {
+        patterns.push({
+          name: 'DOUBLE_TOP',
+          type: 'BEARISH',
+          confidence: Math.min(100, Math.max(50, 100 - priceDiff * 1000)),
+          startIndex: s1.index,
+          endIndex: s3.index,
+        });
       }
+    }
   }
-  
+
   return patterns;
 }
