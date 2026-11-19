@@ -7,6 +7,7 @@ import {
   toggleWatchlistPin,
   archiveInactiveWatchlistItems,
   isValidStatusTransition,
+  normalizeThesisLine,
   DailyWatchlistItem,
 } from './dailyWatchlistStore';
 
@@ -134,5 +135,67 @@ describe('TRULLAS Daily Watchlist Persistence (Item 7 Acceptance Tests)', () => 
     transitionWatchlistStatus('CAT', 'EXPIRED');
     const activeOnly = archiveInactiveWatchlistItems();
     assert.strictEqual(activeOnly.some((i) => i.symbol === 'CAT'), false);
+  });
+
+  it('normalizes legacy mixed Romanian thesis lines to pure English', () => {
+    assert.strictEqual(
+      normalizeThesisLine('BULLISH TRIPLE pe 1d (Scor 100)'),
+      'BULLISH TRIPLE on 1d (Score 100)'
+    );
+    assert.strictEqual(
+      normalizeThesisLine('Divergență RSI confirmată'),
+      'Confirmed RSI divergence'
+    );
+    assert.strictEqual(
+      normalizeThesisLine('Epuizare volum confirmată'),
+      'Confirmed volume exhaustion'
+    );
+    assert.strictEqual(
+      normalizeThesisLine('ATR 2.82% • Preț live $64.55'),
+      'ATR 2.82% • Live price $64.55'
+    );
+  });
+
+  it('merges remote Firestore watchlist state without wiping richer local analytical telemetry', async () => {
+    const { mergeDailyWatchlists } = await import('./dailyWatchlistStore');
+    const localRich: DailyWatchlistItem[] = [
+      {
+        ...FIXTURE_WATCHLIST[0],
+        symbol: 'NVDA',
+        status: 'NEW',
+        isPinned: false,
+        why: ['BULLISH TRIPLE on 1d (Score 95)', 'Confirmed RSI divergence'],
+        entryZone: [130, 132],
+        scores: [25, 25, 25, 20],
+      },
+      {
+        ...FIXTURE_WATCHLIST[1],
+        symbol: 'LOCAL_ONLY',
+      },
+    ];
+    const remoteSlim: DailyWatchlistItem[] = [
+      {
+        ...FIXTURE_WATCHLIST[0],
+        symbol: 'NVDA',
+        status: 'WATCHING',
+        isPinned: true,
+        why: [],
+        scores: [0, 0, 0, 0],
+        entryZone: [129, 133],
+      },
+    ];
+
+    const merged = mergeDailyWatchlists(localRich, remoteSlim);
+    assert.strictEqual(merged.length, 2);
+    const nvda = merged.find((i) => i.symbol === 'NVDA');
+    assert.strictEqual(nvda?.status, 'WATCHING', 'Remote status update applies');
+    assert.strictEqual(nvda?.isPinned, true, 'Remote pin state applies');
+    assert.deepStrictEqual(
+      nvda?.why,
+      ['BULLISH TRIPLE on 1d (Score 95)', 'Confirmed RSI divergence'],
+      'Local thesis lines are preserved when remote has empty why[]'
+    );
+    assert.deepStrictEqual(nvda?.scores, [25, 25, 25, 20], 'Local pillar scores are preserved');
+    assert.ok(merged.some((i) => i.symbol === 'LOCAL_ONLY'), 'Un-synced local watchlist items remain');
   });
 });

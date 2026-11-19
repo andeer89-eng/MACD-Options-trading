@@ -137,6 +137,49 @@ export interface OptionsPortfolioStats {
 
 const STORAGE_KEY = 'rich_sp500_options_portfolio_v1';
 
+let optionsIdSeq = 0;
+
+function makeUniquePortfolioId(prefix: string): string {
+  optionsIdSeq += 1;
+  return `${prefix}-${Date.now()}-${optionsIdSeq}`;
+}
+
+function deduplicateEntityIds<T extends { id?: string }>(
+  items: T[],
+  fallbackPrefix: string,
+  sharedSeen?: Set<string>
+): { items: T[]; changed: boolean } {
+  const seen = sharedSeen ?? new Set<string>();
+  let changed = false;
+  const normalized = items.map((item, idx) => {
+    if (!item || typeof item !== 'object') {
+      changed = true;
+      return item;
+    }
+    const rawId =
+      typeof item.id === 'string' && item.id.trim().length > 0
+        ? item.id
+        : `${fallbackPrefix}-${idx + 1}`;
+    if (seen.has(rawId)) {
+      let candidate = `${rawId}-dup-${idx + 1}`;
+      let suffix = 2;
+      while (seen.has(candidate)) {
+        candidate = `${rawId}-dup-${idx + 1}-${suffix}`;
+        suffix += 1;
+      }
+      seen.add(candidate);
+      changed = true;
+      return { ...item, id: candidate };
+    }
+    if (rawId !== item.id) {
+      changed = true;
+    }
+    seen.add(rawId);
+    return rawId === item.id ? item : { ...item, id: rawId };
+  });
+  return { items: normalized, changed };
+}
+
 /**
  * Synthesizes comprehensive epistemic memory episodes from historical options trade records
  * Generates verbal critique, reinforcement weights, and rule learning for all 192 trades
@@ -397,12 +440,16 @@ export function processOptionsAutonomousCycle(
   let updatedCash = account.cash;
   let updatedRealizedIncome = account.totalRealizedIncome;
   const updatedPositions: OptionsPosition[] = [];
+  const nextTradeHistory: OptionsTradeRecord[] = [...(account.tradeHistory || [])];
   const newLogs: OptionsTradeLog[] = [];
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
   const timeStr = `${dateStr} ${now.toTimeString().slice(0, 5)}`;
 
-  let activeMemory: OptionsActiveMemoryState = { ...account.activeMemory };
+  let activeMemory: OptionsActiveMemoryState = {
+    ...account.activeMemory,
+    episodes: [...(account.activeMemory?.episodes || [])],
+  };
 
   // 1. UPDATE EXISTING OPEN OPTIONS & EVALUATE EXITS
   for (const pos of account.positions) {
@@ -451,7 +498,7 @@ export function processOptionsAutonomousCycle(
 
       // Log trade record
       const closedRecord: OptionsTradeRecord = {
-        id: `rich-opt-live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: makeUniquePortfolioId('rich-opt-live'),
         date: dateStr,
         ticker: pos.ticker,
         boughtSold: 'Sold',
@@ -474,10 +521,10 @@ export function processOptionsAutonomousCycle(
         session: exitRegime,
       };
 
-      account.tradeHistory.unshift(closedRecord);
+      nextTradeHistory.unshift(closedRecord);
 
       newLogs.push({
-        id: `log-opt-exit-${Date.now()}-${pos.ticker}-${Math.random().toString(36).slice(2, 8)}`,
+        id: makeUniquePortfolioId(`log-opt-exit-${pos.ticker}`),
         timestamp: timeStr,
         positionId: pos.id,
         contract: pos.contract,
@@ -492,7 +539,7 @@ export function processOptionsAutonomousCycle(
 
       // Ingest into Active Memory
       activeMemory.episodes.unshift({
-        id: `opt-ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: makeUniquePortfolioId('opt-ep'),
         timestamp: dateStr,
         contract: pos.contract,
         strategy: 'S&P 500 Put Harvesting & TradingWarz',
@@ -579,7 +626,7 @@ export function processOptionsAutonomousCycle(
         const contractCode = `${item.symbol} ${String(expDate.getDate()).padStart(2, '0')}${monthNames[expDate.getMonth()]}${String(expDate.getFullYear()).slice(-2)} ${strike} P`;
 
         const newPos: OptionsPosition = {
-          id: `opt-pos-${Date.now()}-${item.symbol}-${Math.random().toString(36).slice(2, 8)}`,
+          id: makeUniquePortfolioId(`opt-pos-${item.symbol}`),
           ticker: item.symbol,
           contract: contractCode,
           boughtSold: 'Sold',
@@ -616,7 +663,7 @@ export function processOptionsAutonomousCycle(
         openContracts.add(item.symbol);
 
         newLogs.push({
-          id: `log-opt-open-${Date.now()}-${item.symbol}-${Math.random().toString(36).slice(2, 8)}`,
+          id: makeUniquePortfolioId(`log-opt-open-${item.symbol}`),
           timestamp: timeStr,
           positionId: newPos.id,
           contract: contractCode,
@@ -642,6 +689,7 @@ export function processOptionsAutonomousCycle(
     unrealizedPnL: Number(updatedUnrealized.toFixed(2)),
     dailyThetaIncome: Number(updatedDailyTheta.toFixed(2)),
     positions: updatedPositions,
+    tradeHistory: nextTradeHistory,
     sessionLogs: [...newLogs, ...account.sessionLogs],
     lastUpdated: now.toISOString(),
     activeMemory,
@@ -673,7 +721,7 @@ export function manualCloseOptionsPosition(
   const timeStr = `${dateStr} ${now.toTimeString().slice(0, 5)}`;
 
   const log: OptionsTradeLog = {
-    id: `log-manual-${Date.now()}-${target.ticker}`,
+    id: makeUniquePortfolioId(`log-manual-${target.ticker}`),
     timestamp: timeStr,
     positionId: target.id,
     contract: target.contract,
@@ -686,7 +734,7 @@ export function manualCloseOptionsPosition(
   };
 
   const closedRecord: OptionsTradeRecord = {
-    id: `rich-opt-manual-${Date.now()}`,
+    id: makeUniquePortfolioId('rich-opt-manual'),
     date: dateStr,
     ticker: target.ticker,
     boughtSold: 'Sold',
@@ -749,10 +797,23 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
             dirty = true;
           }
 
-          if (Array.isArray(parsed.tradeHistory) && parsed.tradeHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
+          if (!Array.isArray(parsed.positions)) {
+            parsed.positions = [];
+            dirty = true;
+          }
+
+          if (!Array.isArray(parsed.tradeHistory)) {
+            parsed.tradeHistory = [];
+            dirty = true;
+          } else if (parsed.tradeHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
             parsed.tradeHistory = parsed.tradeHistory.filter(
               (t: any) => !String(t?.id || '').startsWith('rich-opt-log-')
             );
+            dirty = true;
+          }
+
+          if (!Array.isArray(parsed.sessionLogs)) {
+            parsed.sessionLogs = [];
             dirty = true;
           }
 
@@ -769,6 +830,37 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
 
           if (!parsed.activeMemory) {
             parsed.activeMemory = initDefaultOptionsPortfolio(parsed.startingBalance || 2000).activeMemory;
+            dirty = true;
+          } else if (!Array.isArray(parsed.activeMemory.episodes)) {
+            parsed.activeMemory.episodes = [];
+            dirty = true;
+          }
+
+          // Deduplicate any persisted colliding IDs across active positions, trade history, legacy, logs, and episodes
+          const activeJournalSeen = new Set<string>();
+          const dedupPositions = deduplicateEntityIds(parsed.positions, 'opt-pos', activeJournalSeen);
+          if (dedupPositions.changed) {
+            parsed.positions = dedupPositions.items;
+            dirty = true;
+          }
+          const dedupHistory = deduplicateEntityIds(parsed.tradeHistory, 'rich-opt-live', activeJournalSeen);
+          if (dedupHistory.changed) {
+            parsed.tradeHistory = dedupHistory.items;
+            dirty = true;
+          }
+          const dedupLegacy = deduplicateEntityIds(parsed.legacyHistory, 'rich-opt-legacy');
+          if (dedupLegacy.changed) {
+            parsed.legacyHistory = dedupLegacy.items;
+            dirty = true;
+          }
+          const dedupLogs = deduplicateEntityIds(parsed.sessionLogs, 'log-opt');
+          if (dedupLogs.changed) {
+            parsed.sessionLogs = dedupLogs.items;
+            dirty = true;
+          }
+          const dedupEpisodes = deduplicateEntityIds(parsed.activeMemory.episodes, 'opt-ep');
+          if (dedupEpisodes.changed) {
+            parsed.activeMemory.episodes = dedupEpisodes.items;
             dirty = true;
           }
 

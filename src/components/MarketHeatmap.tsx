@@ -638,9 +638,15 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
 
         <div className="bg-zinc-900/60 border border-zinc-800/80 p-3 rounded-xl">
           <span className="text-[10px] text-zinc-500 uppercase block font-sans font-semibold">Net Order Delta Flow</span>
-          <span className={`text-base sm:text-lg font-bold block mt-1 ${summaryHUD.netMarketDeltaMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {summaryHUD.netMarketDeltaMillions >= 0 ? '+' : ''}${summaryHUD.netMarketDeltaMillions}M
-          </span>
+          {summaryHUD.hasNetDeltaFeed ? (
+            <span className={`text-base sm:text-lg font-bold block mt-1 ${summaryHUD.netMarketDeltaMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {summaryHUD.netMarketDeltaMillions >= 0 ? '+' : ''}${summaryHUD.netMarketDeltaMillions}M
+            </span>
+          ) : (
+            <span className="text-base sm:text-lg font-bold block mt-1 text-zinc-500">
+              Requires L2
+            </span>
+          )}
           <span className="text-[10px] text-zinc-400 block font-sans">Aggressive Buy vs Sell</span>
         </div>
 
@@ -746,9 +752,13 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-zinc-400">
                     <div>
                       <span className="text-zinc-500 block">Net Order Delta:</span>
-                      <span className={`font-bold ${sec.netDeltaMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {sec.netDeltaMillions >= 0 ? '+' : ''}${sec.netDeltaMillions}M
-                      </span>
+                      {sec.hasNetDeltaFeed ? (
+                        <span className={`font-bold ${sec.netDeltaMillions >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {sec.netDeltaMillions >= 0 ? '+' : ''}${sec.netDeltaMillions}M
+                        </span>
+                      ) : (
+                        <span className="font-bold text-zinc-500">Requires L2</span>
+                      )}
                     </div>
                     <div>
                       <span className="text-zinc-500 block">Breadth Ratio:</span>
@@ -757,7 +767,7 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
                   </div>
 
                   {/* Top Ticker Chips Preview */}
-                  <div className="flex items-center space-x-1.5 pt-1">
+                  <div className="flex items-center flex-wrap gap-1.5 pt-1">
                     <span className="text-[10px] text-zinc-500 font-sans">Top Movers:</span>
                     {sec.topTickers.map((t) => (
                       <span

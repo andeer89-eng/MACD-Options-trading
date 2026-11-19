@@ -89,6 +89,7 @@ export interface HeatmapSummaryHUD {
   advancerDeclinerRatio: number;
   totalVolumeTurnoverBillions: number;
   netMarketDeltaMillions: number;
+  hasNetDeltaFeed: boolean;
   topGainerSector: { name: string; changePercent: number };
   topDeclinerSector: { name: string; changePercent: number };
   activeAnomaliesCount: number;
@@ -177,6 +178,7 @@ export function calculateHeatmapSummary(items: HeatmapItem[], activeTimeframe: T
   let unchanged = 0;
   let totalVolM = 0;
   let totalDeltaM = 0;
+  let hasNetDeltaFeed = false;
   let anomalies = 0;
 
   const sectorPerformance: Record<string, { totalChg: number; count: number }> = {};
@@ -188,7 +190,10 @@ export function calculateHeatmapSummary(items: HeatmapItem[], activeTimeframe: T
     else unchanged++;
 
     if (item.volume24hMillions !== null) totalVolM += item.volume24hMillions;
-    if (item.netDeltaFlowMillions !== null) totalDeltaM += item.netDeltaFlowMillions;
+    if (item.netDeltaFlowMillions !== null) {
+      totalDeltaM += item.netDeltaFlowMillions;
+      hasNetDeltaFeed = true;
+    }
     if (item.anomalyAlert) anomalies++;
 
     if (!sectorPerformance[item.sector]) {
@@ -237,6 +242,7 @@ export function calculateHeatmapSummary(items: HeatmapItem[], activeTimeframe: T
     advancerDeclinerRatio: adRatio,
     totalVolumeTurnoverBillions: Number((totalVolM / 1000).toFixed(2)),
     netMarketDeltaMillions: Number(totalDeltaM.toFixed(1)),
+    hasNetDeltaFeed,
     topGainerSector: { name: topGainerName, changePercent: Number(topGainerVal.toFixed(2)) },
     topDeclinerSector: { name: topDeclinerName, changePercent: Number(topDeclinerVal.toFixed(2)) },
     activeAnomaliesCount: anomalies,
@@ -407,6 +413,7 @@ export function getSectorMacroGroups(
   advancersCount: number;
   declinersCount: number;
   netDeltaMillions: number;
+  hasNetDeltaFeed: boolean;
   items: HeatmapItem[];
 }[] {
   const sectorMap: Record<string, HeatmapItem[]> = {};
@@ -424,6 +431,7 @@ export function getSectorMacroGroups(
     advancersCount: number;
     declinersCount: number;
     netDeltaMillions: number;
+    hasNetDeltaFeed: boolean;
     items: HeatmapItem[];
   }[] = [];
 
@@ -431,6 +439,7 @@ export function getSectorMacroGroups(
     const weight = grpItems.reduce((acc, it) => acc + (it.marketCapMillions ?? 25000), 0);
     const totalChg = grpItems.reduce((acc, it) => acc + (it.timeframeChanges[activeTimeframe] || 0), 0);
     const avgChg = Number((totalChg / Math.max(1, grpItems.length)).toFixed(2));
+    const hasNetDeltaFeed = grpItems.some((it) => it.netDeltaFlowMillions !== null);
     const netDelta = grpItems.reduce((acc, it) => acc + (it.netDeltaFlowMillions ?? 0), 0);
 
     let adv = 0;
@@ -456,6 +465,7 @@ export function getSectorMacroGroups(
       advancersCount: adv,
       declinersCount: dec,
       netDeltaMillions: Number(netDelta.toFixed(1)),
+      hasNetDeltaFeed,
       items: grpItems,
     });
   });

@@ -134,6 +134,8 @@ export default function App() {
   const [showWebhookModal, setShowWebhookModal] = useState<boolean>(false);
 
   const prevSetupIds = useRef<Set<string>>(new Set());
+  const isScanningRef = useRef<boolean>(false);
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   // Unified router supporting both the 8 concentrated hubs and legacy deep-link tab IDs
   const navigateTo = (target: string, subTab?: string) => {
@@ -241,10 +243,12 @@ export default function App() {
     }
   };
 
-  // Web Audio Synth for Alert Chime (zero mp3 dependencies)
+  // Web Audio Synth for Alert Chime (closes AudioContext after playback to prevent leak)
   const playAlertChime = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -258,23 +262,39 @@ export default function App() {
       osc.connect(gain);
       gain.connect(ctx.destination);
 
+      let closed = false;
+      const closeCtx = () => {
+        if (closed) return;
+        closed = true;
+        ctx.close().catch(() => {});
+      };
+      osc.onended = closeCtx;
+      setTimeout(closeCtx, 500);
+
       osc.start();
       osc.stop(ctx.currentTime + 0.35);
-    } catch (e) {
+    } catch {
       // AudioContext policy fallback
     }
   };
 
-  // Scan Function
+  // Scan Function (ref-guarded against concurrent overlap)
   const runScan = async (tickersToScan: string[] = watchlist, tf: string = timeframe) => {
-    if (scanning) return;
+    if (isScanningRef.current) return;
+    isScanningRef.current = true;
     setScanning(true);
+
+    scanAbortRef.current?.abort();
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
+
     try {
       const uniqueTickers = deduplicateSymbols(tickersToScan);
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickers: uniqueTickers, timeframe: tf }),
+        signal: controller.signal,
       });
       if (res.ok) {
         const data = await res.json();
@@ -345,10 +365,22 @@ export default function App() {
             }
           }
         }
+        if (prevSetupIds.current.size > 1500) {
+          const activeSet = new Set<string>();
+          for (const item of data.results || []) {
+            for (const s of item.setups || []) {
+              if (s.id) activeSet.add(s.id);
+            }
+          }
+          prevSetupIds.current = activeSet;
+        }
       }
-    } catch (err) {
-      console.error('Scan error:', err);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Scan error:', err);
+      }
     } finally {
+      isScanningRef.current = false;
       setScanning(false);
     }
   };

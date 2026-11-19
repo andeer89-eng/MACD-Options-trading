@@ -77,7 +77,7 @@ describe('TRULLAS Master Plan v3 Core Tests', () => {
     assert.strictEqual(gate.allow, false);
     const sizeFail = gate.fails.find((f) => f.shortName === 'size_min');
     assert.ok(sizeFail);
-    assert.ok(sizeFail.detail.includes('Stop prea larg'));
+    assert.ok(sizeFail.detail.includes('Stop too wide'));
   });
 
   it('canTrade allows valid setup when all 10 checks pass', () => {
@@ -126,5 +126,27 @@ describe('TRULLAS Master Plan v3 Core Tests', () => {
     const earlyStatus = isNyseMarketOpen(earlyCloseAfter);
     assert.strictEqual(earlyStatus.isOpen, false);
     assert.strictEqual(earlyStatus.sessionName, 'AFTERHOURS');
+  });
+
+  it('canTrade gate checks emit English shortNames and details', () => {
+    const levels = calculateLevels({
+      symbol: 'AAPL',
+      direction: 'long',
+      currentPrice: 100,
+      atr14: 2.0,
+      recentBars: [{ o: 100, h: 101, l: 99, c: 100 }],
+      dataQuality: 'cached',
+    });
+    const gate = canTrade({
+      symbol: 'AAPL',
+      direction: 'long',
+      setupScore: 80,
+      levels,
+      currentPrice: 100,
+      marketOpenOverride: false,
+      customSettings: { ...DEFAULT_SETTINGS, dataQuality: 'cached' },
+    });
+    assert.strictEqual(gate.checks[1].shortName, 'data_feed');
+    assert.strictEqual(gate.checks[0].name, 'NYSE Calendar Open');
   });
 });

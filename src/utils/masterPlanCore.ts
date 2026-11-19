@@ -11,7 +11,7 @@ export type DataQuality = 'live' | 'cached' | 'estimated';
 export type BotStateMode = 'paper' | 'live';
 export type BotStateStatus = 'armed' | 'paused' | 'killed';
 
-export type RegimeBandName = 'Risk-off' | 'Neutral' | 'Risk-on' | 'Extins';
+export type RegimeBandName = 'Risk-off' | 'Neutral' | 'Risk-on' | 'Extended';
 
 export interface RegimeBand {
   name: RegimeBandName;
@@ -31,7 +31,7 @@ export const REGIME_BANDS: RegimeBand[] = [
     maxScore: 30,
     sizeMultiplier: 0,
     minSetupScore: 75,
-    policyText: 'Fără intrări noi long; setup-urile long sunt blocate de regim; short doar la scor ≥ 75',
+    policyText: 'No new long entries; long setups blocked by regime; short only at score ≥ 75',
     color: '#f87171',
     badgeCls: 'r',
   },
@@ -41,7 +41,7 @@ export const REGIME_BANDS: RegimeBand[] = [
     maxScore: 60,
     sizeMultiplier: 0.5,
     minSetupScore: 75,
-    policyText: 'Sizing ×0,5 · Scor setup ≥ 75',
+    policyText: 'Sizing ×0.5 · Setup score ≥ 75',
     color: '#fbbf24',
     badgeCls: 'a',
   },
@@ -51,17 +51,17 @@ export const REGIME_BANDS: RegimeBand[] = [
     maxScore: 85,
     sizeMultiplier: 1.0,
     minSetupScore: 60,
-    policyText: 'Sizing ×1,0 · Scor setup ≥ 60',
+    policyText: 'Sizing ×1.0 · Setup score ≥ 60',
     color: '#4ade80',
     badgeCls: 'g',
   },
   {
-    name: 'Extins',
+    name: 'Extended',
     minScore: 85,
     maxScore: 101,
     sizeMultiplier: 0.75,
     minSetupScore: 70,
-    policyText: 'Sizing ×0,75 · Scor ≥ 70 · Stop-uri strânse (risc de reversal)',
+    policyText: 'Sizing ×0.75 · Score ≥ 70 · Tight stops (reversal risk)',
     color: '#a78bfa',
     badgeCls: 'v',
   },
@@ -402,11 +402,11 @@ export function isNyseMarketOpen(now: Date = new Date()): { isOpen: boolean; ses
     const mins = (hourNum === 24 ? 0 : hourNum) * 60 + parseInt(parts.minute, 10);
 
     if (wk === 'Sat' || wk === 'Sun') {
-      return { isOpen: false, sessionName: 'ÎNCHIS (Weekend)' };
+      return { isOpen: false, sessionName: 'CLOSED (Weekend)' };
     }
 
     if (isMarketHoliday(dateStr)) {
-      return { isOpen: false, sessionName: 'ÎNCHIS (Holiday NYSE)' };
+      return { isOpen: false, sessionName: 'CLOSED (NYSE Holiday)' };
     }
 
     const closeMins = isEarlyClosing(dateStr) ? 780 : 960;
@@ -418,9 +418,9 @@ export function isNyseMarketOpen(now: Date = new Date()): { isOpen: boolean; ses
     } else if (mins >= closeMins && mins < 1200) {
       return { isOpen: false, sessionName: 'AFTERHOURS' };
     }
-    return { isOpen: false, sessionName: 'ÎNCHIS' };
+    return { isOpen: false, sessionName: 'CLOSED' };
   } catch {
-    return { isOpen: false, sessionName: 'ÎNCHIS (Session Unverified)' };
+    return { isOpen: false, sessionName: 'CLOSED (Session Unverified)' };
   }
 }
 
@@ -428,70 +428,70 @@ export function canTrade(ctx: CanTradeContext): GateResult {
   const settings = ctx.customSettings || currentSettings;
   const checks: GateCheck[] = [];
 
-  // Check 1: Calendar NYSE deschis
+  // Check 1: NYSE Calendar Open
   const marketSession = isNyseMarketOpen();
   const sessionOk = ctx.marketOpenOverride !== undefined ? ctx.marketOpenOverride : marketSession.isOpen;
   checks.push({
     number: 1,
-    name: 'Calendar NYSE deschis',
+    name: 'NYSE Calendar Open',
     shortName: 'calendar',
     ok: sessionOk,
-    detail: sessionOk ? `${marketSession.sessionName} (Deschis)` : `${marketSession.sessionName} (Piață închisă)`,
+    detail: sessionOk ? `${marketSession.sessionName} (Open)` : `${marketSession.sessionName} (Market Closed)`,
   });
 
-  // Check 2: Date LIVE și proaspete
+  // Check 2: Live and fresh market data
   const isDataLive = settings.dataQuality === 'live' && ctx.levels.dataQuality === 'live';
   checks.push({
     number: 2,
-    name: 'Date LIVE și proaspete',
-    shortName: 'date',
+    name: 'Live & Fresh Market Data',
+    shortName: 'data_feed',
     ok: isDataLive,
     detail: isDataLive ? 'LIVE' : settings.dataQuality.toUpperCase(),
   });
 
-  // Check 3: Kill switch armat + stare bot ≠ paused/killed
+  // Check 3: Kill switch armed & bot state ≠ paused/killed
   const isBotArmed = settings.botStatus === 'armed';
   checks.push({
     number: 3,
-    name: 'Kill switch armat & Stare Bot',
+    name: 'Kill Switch Armed & Bot State',
     shortName: 'bot_state',
     ok: isBotArmed,
-    detail: settings.botStatus === 'armed' ? 'ARMAT' : settings.botStatus === 'paused' ? 'PAUZĂ' : 'KILLED',
+    detail: settings.botStatus === 'armed' ? 'ARMED' : settings.botStatus === 'paused' ? 'PAUSED' : 'KILLED',
   });
 
-  // Check 4: Pierdere zilnică sub limită
+  // Check 4: Daily loss within limit
   const dailyLoss = ctx.dailyLossPct || 0;
   const isLossOk = Math.abs(dailyLoss) < settings.dailyLossLimitPct;
   checks.push({
     number: 4,
-    name: 'Pierdere zilnică sub limită',
+    name: 'Daily Loss Within Limit',
     shortName: 'daily_loss',
     ok: isLossOk,
-    detail: `${dailyLoss.toFixed(1)}% / limită ${settings.dailyLossLimitPct.toFixed(1)}%`,
+    detail: `${dailyLoss.toFixed(1)}% / limit ${settings.dailyLossLimitPct.toFixed(1)}%`,
   });
 
-  // Check 5: Expunere pe sector sub plafon
+  // Check 5: Sector exposure within cap
   const sectorExp = ctx.currentSectorExposurePct || 0;
   const isSectorOk = sectorExp <= settings.maxSectorExposurePct;
   checks.push({
     number: 5,
-    name: 'Expunere sector sub plafon',
+    name: 'Sector Exposure Within Cap',
     shortName: 'sector_exposure',
     ok: isSectorOk,
-    detail: `${sectorExp.toFixed(1)}% / plafon ${settings.maxSectorExposurePct.toFixed(1)}% (${ctx.sector || 'N/A'})`,
+    detail: `${sectorExp.toFixed(1)}% / cap ${settings.maxSectorExposurePct.toFixed(1)}% (${ctx.sector || 'N/A'})`,
   });
 
-  // Check 6: Strategia nu e în pauză
+  // Check 6: Strategy is active (not tripwire-paused)
   const isStratActive = ctx.strategyState !== 'paused';
   checks.push({
     number: 6,
-    name: 'Strategie activă',
+    name: 'Active Strategy',
     shortName: 'strategy',
     ok: isStratActive,
-    detail: isStratActive ? 'Activă' : 'În pauză (tripwire)',
+    detail: isStratActive ? 'Active' : 'Paused (tripwire)',
   });
 
-  // Check 9 (Calculated early for Sizing check 7): Politica de regim
+  // Check 9 (Calculated early for Sizing check 7): Regime Policy
   const regScore = ctx.regimeScore !== undefined ? ctx.regimeScore : 70;
   const band = getRegimeBand(regScore);
   const isDirectionAllowed = !(band.name === 'Risk-off' && ctx.direction === 'long');
@@ -499,7 +499,7 @@ export function canTrade(ctx: CanTradeContext): GateResult {
   const isRegimeOk = isDirectionAllowed && isScoreAboveThreshold && band.sizeMultiplier > 0;
   const sizeMultiplier = isRegimeOk ? band.sizeMultiplier : 0;
 
-  // Check 7: Regula de mărime minimă (din capitalul curent din Settings!)
+  // Check 7: Minimum position size rule (from current Settings capital)
   const allocatedCapital = settings.simCapitalUsd;
   const maxRiskPerTrade = (allocatedCapital * settings.maxRiskPerTradePct) / 100;
   const unitRisk = ctx.levels.riskPerUnit;
@@ -510,62 +510,62 @@ export function canTrade(ctx: CanTradeContext): GateResult {
 
   if (ctx.levels.stopTooWide) {
     sizeOk = false;
-    sizeDetail = '0 buc. (Stop prea larg > 3×ATR)';
+    sizeDetail = '0 shares (Stop too wide > 3×ATR)';
   } else if (unitRisk <= 0) {
     sizeOk = false;
-    sizeDetail = '0 buc. (Risc unitar invalid)';
+    sizeDetail = '0 shares (Invalid unit risk)';
   } else {
     suggestedQty = Math.floor((maxRiskPerTrade * (sizeMultiplier || 1.0)) / unitRisk);
     if (suggestedQty >= 1) {
       sizeOk = true;
-      sizeDetail = `${suggestedQty} buc. (Risc total $${(suggestedQty * unitRisk).toFixed(2)} ≤ max $${maxRiskPerTrade.toFixed(2)})`;
+      sizeDetail = `${suggestedQty} ${suggestedQty === 1 ? 'share' : 'shares'} (Total risk $${(suggestedQty * unitRisk).toFixed(2)} ≤ max $${maxRiskPerTrade.toFixed(2)})`;
     } else {
       sizeOk = false;
-      sizeDetail = `1 lot riscă $${unitRisk.toFixed(2)} > max $${maxRiskPerTrade.toFixed(2)} (${settings.maxRiskPerTradePct}% din $${allocatedCapital}) → skip:size`;
+      sizeDetail = `1 share risks $${unitRisk.toFixed(2)} > max $${maxRiskPerTrade.toFixed(2)} (${settings.maxRiskPerTradePct}% of $${allocatedCapital}) → skip:size`;
     }
   }
 
   checks.push({
     number: 7,
-    name: 'Regula de mărime minimă (1 lot ≤ risc alocat)',
+    name: 'Minimum Position Size (1 share ≤ risk limit)',
     shortName: 'size_min',
     ok: sizeOk,
     detail: sizeDetail,
   });
 
-  // Check 8: Lichiditate opțiuni
+  // Check 8: Options liquidity
   const isOptions = ctx.isOptions || false;
   const optOk = !isOptions || (ctx.optionsLiquidityOk ?? true);
   checks.push({
     number: 8,
-    name: 'Lichiditate opțiuni',
+    name: 'Options Liquidity',
     shortName: 'options_liq',
     ok: optOk,
-    detail: isOptions ? (optOk ? 'OI ≥ 100, spread ≤ 10%' : 'Ilichid') : 'n/a — Acțiuni',
+    detail: isOptions ? (optOk ? 'OI ≥ 100, spread ≤ 10%' : 'Illiquid') : 'n/a — Equities',
   });
 
-  // Append Check 9 (Politica de regim)
+  // Append Check 9 (Regime Policy)
   checks.push({
     number: 9,
-    name: 'Politică de regim (Regime Band)',
+    name: 'Regime Policy (Regime Band)',
     shortName: 'regime_policy',
     ok: isRegimeOk,
     detail: `${band.name} (${regScore}): ${
       !isDirectionAllowed
-        ? 'Long blocat în Risk-off'
-        : `Scor ${ctx.setupScore} ${isScoreAboveThreshold ? '≥' : '<'} ${band.minSetupScore}`
+        ? 'Long blocked in Risk-off'
+        : `Score ${ctx.setupScore} ${isScoreAboveThreshold ? '≥' : '<'} ${band.minSetupScore}`
     }`,
   });
 
-  // Check 10: Heartbeat worker în limită (< 10 min)
+  // Check 10: Worker heartbeat within limit (< 10 min)
   const hbMin = ctx.workerHeartbeatMinutesAgo || 3;
   const isHbOk = hbMin < 10;
   checks.push({
     number: 10,
-    name: 'Heartbeat worker',
+    name: 'Worker Heartbeat',
     shortName: 'heartbeat',
     ok: isHbOk,
-    detail: `${hbMin} min / limită 10 min`,
+    detail: `${hbMin} min / limit 10 min`,
   });
 
   const fails = checks.filter((c) => !c.ok);

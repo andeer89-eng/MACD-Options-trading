@@ -66,6 +66,15 @@ function sanitizeDocId(symbol: string): string {
   return clean.slice(0, 128) || 'ITEM';
 }
 
+export function normalizeThesisLine(line: string): string {
+  return String(line || '')
+    .replace(/Divergen(?:ță|ta)\s+RSI\s+confirmat(?:ă|a)/gi, 'Confirmed RSI divergence')
+    .replace(/Epuizare\s+volum\s+confirmat(?:ă|a)/gi, 'Confirmed volume exhaustion')
+    .replace(/Pre(?:ț|t)\s+live/gi, 'Live price')
+    .replace(/\bpe\s+(1[mhwd]|5m|15m|4h|1wk)\b/gi, 'on $1')
+    .replace(/\(Scor\s+(\d+)\)/gi, '(Score $1)');
+}
+
 export async function loadDailyWatchlistFromFirestore(): Promise<DailyWatchlistItem[]> {
   const user = auth.currentUser;
   if (!user) return [];
@@ -110,6 +119,47 @@ export async function loadDailyWatchlistFromFirestore(): Promise<DailyWatchlistI
     handleFirestoreError(error, OperationType.LIST, path);
     return [];
   }
+}
+
+export function mergeDailyWatchlists(
+  localItems: DailyWatchlistItem[],
+  remoteItems: DailyWatchlistItem[]
+): DailyWatchlistItem[] {
+  const localBySym = new Map<string, DailyWatchlistItem>();
+  for (const item of localItems) {
+    localBySym.set(item.symbol.toUpperCase().trim(), item);
+  }
+
+  const mergedBySym = new Map<string, DailyWatchlistItem>(localBySym);
+  for (const remote of remoteItems) {
+    const sym = remote.symbol.toUpperCase().trim();
+    const local = localBySym.get(sym);
+    if (!local) {
+      mergedBySym.set(sym, { ...remote, symbol: sym });
+    } else {
+      const hasRemoteScores = Array.isArray(remote.scores) && remote.scores.some((s) => s > 0);
+      mergedBySym.set(sym, {
+        ...local,
+        symbol: sym,
+        status: remote.status || local.status,
+        isPinned: remote.isPinned ?? local.isPinned,
+        setup: remote.setup || local.setup,
+        totalScore: remote.totalScore > 0 ? remote.totalScore : local.totalScore,
+        currentPrice: remote.currentPrice > 0 ? remote.currentPrice : local.currentPrice,
+        atr: remote.atr > 0 ? remote.atr : local.atr,
+        why: remote.why && remote.why.length > 0 ? remote.why.map(normalizeThesisLine) : local.why,
+        scores: hasRemoteScores ? remote.scores : local.scores,
+        levels: remote.levels ?? local.levels,
+        entryZone:
+          local.entryZone && local.entryZone[0] > 0 ? local.entryZone : remote.entryZone,
+        updatedAt: remote.updatedAt || local.updatedAt,
+      });
+    }
+  }
+
+  const combined = Array.from(mergedBySym.values());
+  combined.sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+  return combined.map((it, idx) => ({ ...it, rank: idx + 1 }));
 }
 
 export async function createWatchlistItemInFirestore(item: DailyWatchlistItem): Promise<void> {
@@ -200,6 +250,7 @@ export function saveDailyWatchlist(items: DailyWatchlistItem[]): DailyWatchlistI
       deduped.push({
         ...item,
         symbol: sym,
+        why: Array.isArray(item.why) ? item.why.map(normalizeThesisLine) : [],
         updatedAt: item.updatedAt || new Date().toISOString(),
       });
     }
@@ -244,7 +295,10 @@ export function loadDailyWatchlist(): DailyWatchlistItem[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          inMemoryWatchlist = parsed;
+          inMemoryWatchlist = parsed.map((item: DailyWatchlistItem) => ({
+            ...item,
+            why: Array.isArray(item.why) ? item.why.map(normalizeThesisLine) : [],
+          }));
           return [...inMemoryWatchlist];
         }
       }

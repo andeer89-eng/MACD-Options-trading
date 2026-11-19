@@ -163,3 +163,22 @@ test('exportJournalToCSV handles commas, quotes, and empty entries gracefully', 
   const csv = exportJournalToCSV([trickyEntry]);
   assert.ok(csv.includes('""quotes""'), 'Quotes should be doubled for CSV compliance');
 });
+
+import { mergeJournalEntries } from './tradeJournal.ts';
+
+test('mergeJournalEntries unions remote entries with unseen local entries without data loss', () => {
+  const localOnly: JournalEntry = {
+    ...TEST_FIXTURE_ENTRIES[3],
+    id: 'local-only-99',
+    symbol: 'META',
+  };
+  const merged = mergeJournalEntries([TEST_FIXTURE_ENTRIES[0], localOnly], [
+    { ...TEST_FIXTURE_ENTRIES[0], notes: 'Updated in cloud' },
+    TEST_FIXTURE_ENTRIES[1],
+  ]);
+
+  assert.equal(merged.length, 3);
+  assert.ok(merged.some((e) => e.id === 'local-only-99'), 'Local-only entry must be preserved');
+  assert.equal(merged.find((e) => e.id === 'test-1')?.notes, 'Updated in cloud', 'Remote record wins for matching IDs');
+  assert.ok(merged.some((e) => e.id === 'test-2'), 'Remote-only entry is included');
+});

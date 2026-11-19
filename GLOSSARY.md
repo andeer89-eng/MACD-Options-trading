@@ -16,7 +16,7 @@ Shared domain language across the trading desk, quantitative research, charting 
 ## Regime, Stage & Pre-Trade Gatekeeping
 
 - **Weinstein Stage (`Stage 1–4`)**: Stan Weinstein's 4-phase weekly trend cycle anchored to the 30-week moving average and relative strength against S&P 500: *Stage 1 Basing*, *Stage 2 Advancing*, *Stage 3 Topping*, *Stage 4 Declining*.
-- **Market Regime Score (`0–100`)**: Composite pre-market risk thermometer weighted from S&P 500 trend stage, sector breadth, VIX term structure, CBOE Put/Call ratio, and SPDR sector participation. Maps to four bands: *Risk-off*, *Neutral*, *Risk-on*, and *Extins*.
+- **Market Regime Score (`0–100`)**: Composite pre-market risk thermometer weighted from S&P 500 trend stage, sector breadth, VIX term structure, CBOE Put/Call ratio, and SPDR sector participation. Maps to four bands: *Risk-off*, *Neutral*, *Risk-on*, and *Extended*.
 - **Global Gate (`canTrade()`)**: A deterministic 10-check pre-trade risk gate evaluating market session calendar, feed freshness, kill-switch status, daily loss limit, sector concentration cap, active strategy status, minimum position size, options liquidity, regime band policy, and worker heartbeat.
 - **Setup vs. Watchlist Item vs. Position vs. Journal Entry**:
   - **Setup**: A quantitative chart pattern detected on historical bars with entry geometry.

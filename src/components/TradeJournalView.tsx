@@ -39,6 +39,7 @@ import {
   loadJournalEntries,
   saveJournalEntries,
   loadJournalEntriesFromFirestore,
+  mergeJournalEntries,
   createJournalEntryInFirestore,
   updateJournalEntryInFirestore,
   deleteJournalEntryFromFirestore,
@@ -255,8 +256,9 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         .then((remote) => {
           if (!active) return;
           if (remote.length > 0) {
-            setEntries(remote);
-            saveJournalEntries(remote);
+            const merged = mergeJournalEntries(localEntries, remote);
+            setEntries(merged);
+            saveJournalEntries(merged);
           }
         })
         .catch((err) => console.warn('Failed to load Firestore journal entries:', err));

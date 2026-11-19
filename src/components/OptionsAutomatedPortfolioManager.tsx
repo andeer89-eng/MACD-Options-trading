@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Bot,
   Zap,
@@ -101,6 +101,12 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   }, []);
 
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const accountRef = useRef<OptionsPortfolioAccount>(account);
+  const autoCycleInFlightRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
 
   const fetchLiveOptionsCandidates = async () => {
     const targets = [
@@ -141,16 +147,31 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     if (!account.isAutoPilotActive) return;
 
     if (nextScanCountdown === 60) {
+      if (autoCycleInFlightRef.current) return;
+      autoCycleInFlightRef.current = true;
       let active = true;
-      fetchLiveOptionsCandidates().then((marketCandidates) => {
-        if (!active || marketCandidates.length === 0) return;
-        const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates, true);
-        if (actionsTaken.length > 0) {
-          setAccount(updatedAccount);
-          setCycleFeedbackMessage(`Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s) from live feeds.`);
-          setTimeout(() => setCycleFeedbackMessage(null), 5000);
-        }
-      });
+      fetchLiveOptionsCandidates()
+        .then((marketCandidates) => {
+          if (!active || marketCandidates.length === 0) return;
+          const latestAccount = accountRef.current;
+          if (!latestAccount.isAutoPilotActive) return;
+          const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(
+            latestAccount,
+            marketCandidates,
+            true
+          );
+          if (actionsTaken.length > 0) {
+            accountRef.current = updatedAccount;
+            setAccount(updatedAccount);
+            setCycleFeedbackMessage(
+              `Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s) from live feeds.`
+            );
+            setTimeout(() => setCycleFeedbackMessage(null), 5000);
+          }
+        })
+        .finally(() => {
+          autoCycleInFlightRef.current = false;
+        });
       return () => {
         active = false;
       };
@@ -204,7 +225,20 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       whyOpenedThesis: pos.whyOpenedThesis,
       session: pos.executionSession || 'REGULAR',
     }));
-    return [...openRecords, ...(account.tradeHistory || [])];
+    const seen = new Set<string>();
+    return [...openRecords, ...(account.tradeHistory || [])].map((rec, idx) => {
+      const baseId = rec.id || `opt-journal-${idx + 1}`;
+      if (!seen.has(baseId)) {
+        seen.add(baseId);
+        return rec.id === baseId ? rec : { ...rec, id: baseId };
+      }
+      let uniqueId = `${baseId}-row-${idx + 1}`;
+      while (seen.has(uniqueId)) {
+        uniqueId = `${uniqueId}-x`;
+      }
+      seen.add(uniqueId);
+      return { ...rec, id: uniqueId };
+    });
   }, [account.positions, account.tradeHistory]);
 
   // Filter active trade history records ($2k era)
@@ -330,7 +364,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         return;
       }
 
-      const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(account, marketCandidates);
+      const latestAccount = accountRef.current;
+      const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(latestAccount, marketCandidates);
+      accountRef.current = updatedAccount;
       setAccount(updatedAccount);
 
       if (actionsTaken.length > 0) {

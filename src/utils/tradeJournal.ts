@@ -266,6 +266,21 @@ export function saveJournalEntries(entries: JournalEntry[]): void {
   }
 }
 
+export function mergeJournalEntries(
+  localEntries: JournalEntry[],
+  remoteEntries: JournalEntry[]
+): JournalEntry[] {
+  const byId = new Map<string, JournalEntry>();
+  for (const item of localEntries) {
+    byId.set(item.id, item);
+  }
+  for (const remote of remoteEntries) {
+    const existing = byId.get(remote.id);
+    byId.set(remote.id, existing ? { ...existing, ...remote } : remote);
+  }
+  return Array.from(byId.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
 export function calculateJournalStats(entries: JournalEntry[]): JournalStats {
   const totalTrades = entries.length;
   const openTrades = entries.filter((e) => e.status === 'OPEN').length;

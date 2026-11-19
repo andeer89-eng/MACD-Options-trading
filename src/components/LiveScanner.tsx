@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   RefreshCw,
@@ -103,7 +103,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   const [selectedStageFilter, setSelectedStageFilter] = useState<
     'ALL' | 'STAGE_1' | 'STAGE_2' | 'STAGE_3' | 'STAGE_4'
   >('ALL');
-  const [selectedSP500Preset, setSelectedSP500Preset] = useState<string>('Top 50 Mega-Caps');
+  const [selectedSP500Preset, setSelectedSP500Preset] = useState<string>('Full S&P 500 Universe (503)');
   const [selectedPreScanGicsSector, setSelectedPreScanGicsSector] = useState<string>('All Sectors');
   const [newTickerInput, setNewTickerInput] = useState('');
 
@@ -220,8 +220,38 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     (item) => (item.atrPercent !== undefined ? item.atrPercent : 2.0) < minAtrPercent
   ).length;
 
+  const [visibleCount, setVisibleCount] = useState<number>(24);
+
+  const enrichedBySymbol = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        conf: ReturnType<typeof evaluateCandidate360Confluence>;
+        stageSummary: ReturnType<typeof computeStageSummaryFromCandles>;
+        weighting: ReturnType<typeof evaluateSignalWeighting> | null;
+      }
+    >();
+    for (const item of results) {
+      if (!item || !item.symbol || map.has(item.symbol)) continue;
+      const mainSetup = item.setups[0];
+      const isBull = mainSetup?.type.includes('BULLISH');
+      const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
+      const conf = evaluateCandidate360Confluence(
+        item.symbol,
+        item.candles,
+        isBull ? 'BULLISH' : 'BEARISH'
+      );
+      const weighting =
+        mainSetup && Array.isArray(item.candles) && item.candles.length >= 20
+          ? evaluateSignalWeighting(mainSetup, item.candles)
+          : null;
+      map.set(item.symbol, { conf, stageSummary, weighting });
+    }
+    return map;
+  }, [results]);
+
   // Filter live results directly without triggering duplicate backend scans on every filter click
-  const filteredResults = React.useMemo(() => {
+  const filteredResults = useMemo(() => {
     const seen = new Set<string>();
     const deduped: ScanResultItem[] = [];
     for (const item of results) {
@@ -252,7 +282,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       }
 
       if (selectedStageFilter !== 'ALL') {
-        const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
+        const stageSummary = enrichedBySymbol.get(item.symbol)?.stageSummary;
         const stageMap: Record<string, string> = {
           STAGE_1: 'STAGE_1_BASING',
           STAGE_2: 'STAGE_2_ADVANCING',
@@ -268,6 +298,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     });
   }, [
     results,
+    enrichedBySymbol,
     minAtrPercent,
     atrFilterActive,
     showStagnantSymbols,
@@ -275,6 +306,23 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     selectedSectorFilter,
     selectedStageFilter,
   ]);
+
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [
+    filterType,
+    selectedSectorFilter,
+    selectedStageFilter,
+    atrFilterActive,
+    minAtrPercent,
+    showStagnantSymbols,
+    results.length,
+  ]);
+
+  const visibleResults = useMemo(
+    () => filteredResults.slice(0, visibleCount),
+    [filteredResults, visibleCount]
+  );
 
   const totalTripleCount = results.filter((r) => r.hasTripleDivergence).length;
   const totalBullish = results.filter((r) =>
@@ -811,7 +859,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         </div>
 
         <div className="text-xs text-zinc-500 font-mono">
-          Showing {filteredResults.length} matches (Excluding stagnant: {atrFilterActive && !showStagnantSymbols ? 'YES' : 'NO'})
+          Showing {visibleResults.length} of {filteredResults.length} matches (Excluding stagnant: {atrFilterActive && !showStagnantSymbols ? 'YES' : 'NO'})
         </div>
       </div>
 
@@ -824,19 +872,17 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               : 'No live setups matched current filters. Click Scan or broaden filters above.'}
           </div>
         )}
-        {filteredResults.map((item) => {
+        {visibleResults.map((item) => {
           const mainSetup = item.setups[0];
           const hasSetup = Boolean(mainSetup);
           const isBull = mainSetup?.type.includes('BULLISH');
           const atrPct = item.atrPercent !== undefined ? item.atrPercent : 0;
           const isStagnant = atrPct < minAtrPercent;
           const scanItemKey = `${item.symbol}-${item.timeframe || timeframe}`;
-          const conf = evaluateCandidate360Confluence(item.symbol, item.candles, isBull ? 'BULLISH' : 'BEARISH');
-          const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
-          const weighting =
-            mainSetup && Array.isArray(item.candles) && item.candles.length >= 20
-              ? evaluateSignalWeighting(mainSetup, item.candles)
-              : null;
+          const enriched = enrichedBySymbol.get(item.symbol);
+          const conf = enriched?.conf;
+          const stageSummary = enriched?.stageSummary;
+          const weighting = enriched?.weighting ?? null;
 
           return (
             <div
@@ -1134,6 +1180,17 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             </div>
           );
         })}
+        {filteredResults.length > visibleResults.length && (
+          <div className="pt-2 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((prev) => prev + 24)}
+              className="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-mono font-bold transition"
+            >
+              Show 24 More ({filteredResults.length - visibleResults.length} remaining)
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

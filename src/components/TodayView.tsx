@@ -48,16 +48,21 @@ import type { Candle } from '../utils/trullasStrategy';
 import {
   DailyWatchlistItem,
   loadDailyWatchlist,
+  saveDailyWatchlist,
   subscribeDailyWatchlist,
   loadDailyWatchlistFromFirestore,
+  mergeDailyWatchlists,
+  normalizeThesisLine,
 } from '../utils/dailyWatchlistStore';
 import {
   JournalEntry,
   loadJournalEntries,
   loadJournalEntriesFromFirestore,
+  mergeJournalEntries,
 } from '../utils/tradeJournal';
 import { GicsSectorPerformance } from '../utils/sectorMetrics';
 import { calculateStageAnalysis } from '../utils/trendSpiderEngine';
+import { computeLevelLadderGeometry } from '../utils/levelGeometry';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
 import { useAuth } from '../lib/AuthProvider';
 
@@ -157,11 +162,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
         : 0;
 
     return [
-      { key: 'Trend S&P 500 (Stage Weinstein)', weight: 25, value: sp500Trend, ready: spyStageScore !== null },
-      { key: 'Breadth (% Sectoare Pozitive)', weight: 25, value: breadth, ready: liveSectors.length > 0 },
+      { key: 'S&P 500 Trend (Weinstein Stage)', weight: 25, value: sp500Trend, ready: spyStageScore !== null },
+      { key: 'Market Breadth (% Positive Sectors)', weight: 25, value: breadth, ready: liveSectors.length > 0 },
       { key: 'VIX + Term Structure', weight: 20, value: vixScore, ready: typeof vix === 'number' },
       { key: 'Put/Call Ratio (CBOE)', weight: 15, value: pcScore, ready: typeof pc === 'number' },
-      { key: 'Participare Sectorială (SPDR)', weight: 15, value: sectorPart, ready: liveSectors.length > 0 },
+      { key: 'Sector Participation (SPDR)', weight: 15, value: sectorPart, ready: liveSectors.length > 0 },
     ];
   }, [spyStageScore, liveSectors, cboeOverview]);
 
@@ -243,10 +248,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
       }
 
       if (!anyOk) {
-        setMacroError('Feed-urile live macro (Yahoo Finance / CBOE) sunt momentan indisponibile.');
+        setMacroError('Live macro feeds (Yahoo Finance / CBOE) are currently unavailable.');
       }
     } catch (err: any) {
-      setMacroError(err?.message || 'Eroare la încărcarea telemetriei live macro.');
+      setMacroError(err?.message || 'Failed to load live macro telemetry.');
     } finally {
       setMacroLoading(false);
     }
@@ -273,16 +278,24 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
   useEffect(() => {
     if (!user) return;
+    let active = true;
     loadDailyWatchlistFromFirestore()
       .then((items) => {
-        if (items.length > 0) setSavedWatchlist(items);
+        if (!active || items.length === 0) return;
+        const merged = mergeDailyWatchlists(loadDailyWatchlist(), items);
+        saveDailyWatchlist(merged);
+        setSavedWatchlist(merged);
       })
       .catch(() => {});
     loadJournalEntriesFromFirestore()
       .then((entries) => {
-        setJournalEntries(entries);
+        if (!active || entries.length === 0) return;
+        setJournalEntries(mergeJournalEntries(loadJournalEntries(), entries));
       })
       .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   // Handlers for Capital and Risk manual settings inputs (§1)
@@ -362,11 +375,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
       const why: string[] = [];
       if (mainSetup) {
-        why.push(`${mainSetup.type.replace(/_/g, ' ')} pe ${mainSetup.timeframe} (Scor ${score})`);
-        if (mainSetup.confluenceChecks?.rsiDivergence) why.push('Divergență RSI confirmată');
-        if (mainSetup.confluenceChecks?.volumeExhaustion) why.push('Epuizare volum confirmată');
+        why.push(`${mainSetup.type.replace(/_/g, ' ')} on ${mainSetup.timeframe} (Score ${score})`);
+        if (mainSetup.confluenceChecks?.rsiDivergence) why.push('Confirmed RSI divergence');
+        if (mainSetup.confluenceChecks?.volumeExhaustion) why.push('Confirmed volume exhaustion');
       }
-      why.push(`ATR ${(Number(r.atrPercent) || 0).toFixed(2)}% • Preț live $${currentPrice.toFixed(2)}`);
+      why.push(`ATR ${(Number(r.atrPercent) || 0).toFixed(2)}% • Live price $${currentPrice.toFixed(2)}`);
 
       bySymbol.set(sym, {
         s: sym,
@@ -421,7 +434,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
         atr,
         status: w.status,
         score: w.totalScore,
-        why: w.why.length > 0 ? w.why : [`Saved watchlist item (${w.status})`],
+        why: w.why.length > 0 ? w.why.map(normalizeThesisLine) : [`Saved watchlist item (${w.status})`],
         levels,
         gate,
       });
@@ -943,7 +956,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
       </div>
 
       {/* 5. WATCHLIST & LEVEL PREVIEW SPLIT VIEW (§4.1 & §4.2) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Watchlist Table (7 cols) */}
         <div className="lg:col-span-7 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-zinc-800">
@@ -982,9 +995,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[580px] pr-1">
             <table className="w-full text-left text-xs font-mono">
-              <thead>
+              <thead className="sticky top-0 bg-zinc-900 z-10">
                 <tr className="border-b border-zinc-800 text-[10px] text-zinc-500 uppercase tracking-wider">
                   <th className="py-2 px-2.5">Symbol</th>
                   <th className="py-2 px-2">Setup</th>
@@ -1079,109 +1092,238 @@ export const TodayView: React.FC<TodayViewProps> = ({
         </div>
 
         {/* Selected Symbol Detail & SVG Levels Preview (5 cols) */}
-        <div className="lg:col-span-5 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md flex flex-col justify-between">
+        <div
+          data-testid="levels-diagnostics-panel"
+          className="lg:col-span-5 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md lg:sticky lg:top-20"
+        >
           {!selectedItem ? (
             <div className="py-16 text-center space-y-2 text-zinc-500 text-xs font-mono">
               <Eye className="w-6 h-6 mx-auto text-zinc-600" />
               <p>Select a symbol from the Watchlist or wait for Live Scanner levels.</p>
             </div>
-          ) : (
-            <>
-              <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-                <div className="flex items-center space-x-2">
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Levels &amp; Diagnostics: {selectedItem.s}
-                  </h3>
-                  <span className="text-[10px] text-zinc-400 font-mono">
-                    {selectedItem.sec}
+          ) : (() => {
+            const ladder = computeLevelLadderGeometry(selectedItem.levels, selectedItem.p);
+            const isShort = selectedItem.dir === 'short';
+            return (
+              <>
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-800 gap-2">
+                  <div className="flex items-center flex-wrap gap-2 min-w-0">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                      Levels &amp; Diagnostics: {selectedItem.s}
+                    </h3>
+                    <span className="text-[10px] text-zinc-400 font-mono truncate">
+                      {selectedItem.sec}
+                    </span>
+                  </div>
+                  {onOpenChart && (
+                    <button
+                      onClick={() => onOpenChart(selectedItem.s)}
+                      className="text-xs text-sky-400 hover:text-sky-300 flex items-center space-x-1 shrink-0"
+                    >
+                      <span>Open in Chart</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Setup Summary Telemetry Strip */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className={`px-2 py-0.5 rounded font-bold border ${
+                        isShort
+                          ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                          : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      }`}
+                    >
+                      {isShort ? 'SHORT' : 'LONG'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200">
+                      {selectedItem.setup}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400 font-bold">
+                      Score {selectedItem.score}
+                    </span>
+                  </div>
+                  <span className="text-zinc-400 tabular-nums">
+                    Spot <strong className="text-white">${selectedItem.p.toFixed(2)}</strong> &middot; ATR ${selectedItem.atr.toFixed(2)}
                   </span>
                 </div>
-                {onOpenChart && (
-                  <button
-                    onClick={() => onOpenChart(selectedItem.s)}
-                    className="text-xs text-sky-400 hover:text-sky-300 flex items-center space-x-1"
+
+                {/* SVG Price Ladder Geometry Preview */}
+                <div className="bg-zinc-950 rounded-lg p-2.5 border border-zinc-800 space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                    <span>Level Ladder ({isShort ? 'TP2 ← Entry → SL' : 'SL ← Entry → TP2'})</span>
+                    <span>Spot ${selectedItem.p.toFixed(2)}</span>
+                  </div>
+                  <svg
+                    viewBox="0 0 100 26"
+                    className="w-full h-11 overflow-visible"
+                    role="img"
+                    aria-label={`${selectedItem.s} risk and target price ladder`}
                   >
-                    <span>Open in Chart</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-
-              {/* Immutable Levels Panel */}
-              <div className="bg-zinc-950 rounded-lg p-2.5 border border-zinc-800 font-mono text-[11px] space-y-2">
-                <div className="flex justify-between items-center text-zinc-400 text-[10px]">
-                  <span>Immutable Geometry (Levels v3)</span>
-                  <span>R:R = 1 : {selectedItem.levels.rr.toFixed(1)}</span>
+                    {/* Base axis */}
+                    <line x1="2" y1="13" x2="98" y2="13" stroke="#27272a" strokeWidth="1.2" strokeLinecap="round" />
+                    {/* Entry Zone shaded band */}
+                    <rect
+                      x={ladder.entryLeftPct}
+                      y="7"
+                      width={ladder.entryWidthPct}
+                      height="12"
+                      rx="1.5"
+                      fill="#0ea5e9"
+                      fillOpacity="0.24"
+                      stroke="#38bdf8"
+                      strokeWidth="0.6"
+                    />
+                    {/* Invalidation marker */}
+                    <line
+                      x1={ladder.invalidationPct}
+                      y1="5"
+                      x2={ladder.invalidationPct}
+                      y2="21"
+                      stroke="#f59e0b"
+                      strokeWidth="0.7"
+                      strokeDasharray="1.2,1.2"
+                    />
+                    {/* Stop Loss marker */}
+                    <line x1={ladder.stopPct} y1="5" x2={ladder.stopPct} y2="21" stroke="#fb7185" strokeWidth="1.2" />
+                    <text x={ladder.stopPct} y="4" textAnchor="middle" fill="#fb7185" fontSize="3.4" fontFamily="monospace" fontWeight="bold">
+                      SL
+                    </text>
+                    {/* TP1 marker */}
+                    <line x1={ladder.tp1Pct} y1="5" x2={ladder.tp1Pct} y2="21" stroke="#34d399" strokeWidth="1.2" />
+                    <text x={ladder.tp1Pct} y="4" textAnchor="middle" fill="#34d399" fontSize="3.4" fontFamily="monospace" fontWeight="bold">
+                      TP1
+                    </text>
+                    {/* TP2 marker */}
+                    {ladder.tp2Pct !== null && (
+                      <>
+                        <line x1={ladder.tp2Pct} y1="6" x2={ladder.tp2Pct} y2="20" stroke="#fbbf24" strokeWidth="1.0" />
+                        <text x={ladder.tp2Pct} y="24.8" textAnchor="middle" fill="#fbbf24" fontSize="3.2" fontFamily="monospace" fontWeight="bold">
+                          TP2
+                        </text>
+                      </>
+                    )}
+                    {/* Current spot price dot */}
+                    <circle cx={ladder.currentPct} cy="13" r="2.2" fill="#ffffff" stroke="#38bdf8" strokeWidth="0.8" />
+                    <text x={ladder.currentPct} y="24.8" textAnchor="middle" fill="#e4e4e7" fontSize="3.2" fontFamily="monospace">
+                      ENTRY
+                    </text>
+                  </svg>
                 </div>
 
-                <div className="space-y-1.5">
-                  <div className="flex justify-between py-1 border-b border-zinc-800/80">
-                    <span className="text-zinc-400">TP2 (Target 2):</span>
-                    <span className="text-amber-400 font-bold">
-                      ${selectedItem.levels.targets[1]?.price.toFixed(2)}
-                    </span>
+                {/* Immutable Levels Panel */}
+                <div className="bg-zinc-950 rounded-lg p-2.5 border border-zinc-800 font-mono text-[11px] space-y-2">
+                  <div className="flex justify-between items-center text-zinc-400 text-[10px]">
+                    <span>Immutable Geometry (Levels v3)</span>
+                    <span>R:R = 1 : {selectedItem.levels.rr.toFixed(1)}</span>
                   </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/80">
-                    <span className="text-zinc-400">TP1 (Target 1):</span>
-                    <span className="text-emerald-400 font-bold">
-                      ${selectedItem.levels.targets[0]?.price.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/80">
-                    <span className="text-zinc-400">Entry Zone (Trigger):</span>
-                    <span className="text-sky-400 font-bold">
-                      ${selectedItem.levels.entryZone.lo.toFixed(2)} – $
-                      {selectedItem.levels.entryZone.hi.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/80">
-                    <span className="text-zinc-400">Stop Loss:</span>
-                    <span className="text-rose-400 font-bold">
-                      ${selectedItem.levels.stop.price.toFixed(2)} (
-                      {selectedItem.levels.stop.basis})
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-zinc-800/80">
-                    <span className="text-zinc-400">Unit Risk (1 share):</span>
-                    <span className="text-white font-bold">
-                      ${selectedItem.levels.riskPerUnit.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-zinc-400">Bot Allocated Size:</span>
-                    <span className="text-emerald-400 font-bold">
-                      {selectedItem.gate.suggestedQty} shares ($
-                      {(selectedItem.gate.suggestedQty * selectedItem.levels.riskPerUnit).toFixed(2)}{' '}
-                      risk)
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Reasons & Invalidation Rule */}
-              <div className="space-y-2 text-xs">
-                <div>
-                  <span className="text-zinc-400 block font-bold text-[10px] uppercase mb-1">
-                    Confluence &amp; Thesis:
-                  </span>
-                  <ul className="list-disc list-inside text-zinc-300 space-y-0.5 text-[11px]">
-                    {selectedItem.why.map((w, i) => (
-                      <li key={i}>{w}</li>
-                    ))}
-                  </ul>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between py-1 border-b border-zinc-800/80">
+                      <span className="text-zinc-400">TP2 (Target 2):</span>
+                      <span className="text-amber-400 font-bold">
+                        {selectedItem.levels.targets[1]
+                          ? `$${selectedItem.levels.targets[1].price.toFixed(2)} (${selectedItem.levels.targets[1].rMultiple}R)`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-zinc-800/80">
+                      <span className="text-zinc-400">TP1 (Target 1):</span>
+                      <span className="text-emerald-400 font-bold">
+                        {selectedItem.levels.targets[0]
+                          ? `$${selectedItem.levels.targets[0].price.toFixed(2)} (${selectedItem.levels.targets[0].rMultiple}R)`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-zinc-800/80">
+                      <span className="text-zinc-400">Entry Zone (Trigger):</span>
+                      <span className="text-sky-400 font-bold">
+                        ${selectedItem.levels.entryZone.lo.toFixed(2)} – $
+                        {selectedItem.levels.entryZone.hi.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-zinc-800/80">
+                      <span className="text-zinc-400">Stop Loss:</span>
+                      <span className="text-rose-400 font-bold">
+                        ${selectedItem.levels.stop.price.toFixed(2)} (
+                        {selectedItem.levels.stop.basis})
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-zinc-800/80">
+                      <span className="text-zinc-400">Unit Risk (1 share):</span>
+                      <span className="text-white font-bold">
+                        ${selectedItem.levels.riskPerUnit.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-400">Bot Allocated Size:</span>
+                      <span
+                        className={`font-bold ${
+                          selectedItem.gate.allow ? 'text-emerald-400' : 'text-zinc-400'
+                        }`}
+                      >
+                        {selectedItem.gate.suggestedQty} shares ($
+                        {(selectedItem.gate.suggestedQty * selectedItem.levels.riskPerUnit).toFixed(2)}{' '}
+                        risk)
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-zinc-400 block font-bold text-[10px] uppercase mb-0.5">
-                    Invalidation Rule:
-                  </span>
-                  <span className="text-amber-400 text-[11px] font-mono">
-                    {selectedItem.levels.invalidation.rule} ($
-                    {selectedItem.levels.invalidation.price.toFixed(2)})
-                  </span>
+
+                {/* Gate Diagnostics & Execution Blockers */}
+                <div
+                  className={`rounded-lg p-2.5 border text-[11px] font-mono ${
+                    selectedItem.gate.allow
+                      ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-950/25 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold mb-1">
+                    <span>canTrade() Gate Diagnostics</span>
+                    <span>{selectedItem.gate.allow ? 'ALL 10 CHECKS PASSED' : `${selectedItem.gate.fails.length} BLOCKER(S)`}</span>
+                  </div>
+                  {selectedItem.gate.allow ? (
+                    <p className="text-[10px] text-emerald-200/80">
+                      Approved for {selectedItem.gate.suggestedQty} share(s) within risk budget.
+                    </p>
+                  ) : (
+                    <ul className="space-y-0.5 text-[10px] text-rose-200/90">
+                      {selectedItem.gate.fails.map((f) => (
+                        <li key={f.number}>
+                          #{f.number} {f.name}: {f.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
-              </div>
-            </>
-          )}
+
+                {/* Reasons & Invalidation Rule */}
+                <div className="space-y-2 text-xs">
+                  <div>
+                    <span className="text-zinc-400 block font-bold text-[10px] uppercase mb-1">
+                      Confluence &amp; Thesis:
+                    </span>
+                    <ul className="list-disc list-inside text-zinc-300 space-y-0.5 text-[11px]">
+                      {selectedItem.why.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <span className="text-zinc-400 block font-bold text-[10px] uppercase mb-0.5">
+                      Invalidation Rule:
+                    </span>
+                    <span className="text-amber-400 text-[11px] font-mono">
+                      {selectedItem.levels.invalidation.rule} ($
+                      {selectedItem.levels.invalidation.price.toFixed(2)})
+                    </span>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

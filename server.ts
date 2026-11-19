@@ -5,6 +5,7 @@ import fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { sanitizePythonTickers, validateBacktestParams } from './src/utils/serverSecurity.ts';
+import { BoundedTtlCache } from './src/utils/ttlCache.ts';
 import {
   calculateIndicators,
   detectDivergences,
@@ -99,8 +100,12 @@ let cacheMissesTotal = 0;
 let consecutiveSuccessfulScans = 0;
 let lastScanTimestampIso: string | null = null;
 
-const lastFeedMetaMap = new Map<string, any>();
-const candleCache = new Map<string, { timestamp: number; candles: Candle[] }>();
+const lastFeedMetaMap = new BoundedTtlCache<string, any>({ maxEntries: 600, ttlMs: 300_000 });
+const candleCache = new BoundedTtlCache<string, { timestamp: number; candles: Candle[] }>({
+  maxEntries: 600,
+  ttlMs: 120_000,
+});
+const secCache = new BoundedTtlCache<string, any>({ maxEntries: 300, ttlMs: 300_000 });
 
 /**
  * Pure RSI-14 helper for spark close-only arrays
@@ -407,10 +412,10 @@ function normalizeSymbolForCboe(symbol: string): string {
   return s;
 }
 
-const cboeChainCache = new Map<
+const cboeChainCache = new BoundedTtlCache<
   string,
   { timestamp: number; rawOptions: RawCboeOptionRecord[]; currentPrice: number | null }
->();
+>({ maxEntries: 200, ttlMs: 60_000 });
 
 async function fetchCboeRawChain(
   symbol: string,
@@ -422,8 +427,8 @@ async function fetchCboeRawChain(
   }
 
   const now = Date.now();
-  const cached = cboeChainCache.get(cboeSym);
-  if (!forceRefresh && cached && now - cached.timestamp < 60_000) {
+  const cached = !forceRefresh ? cboeChainCache.get(cboeSym) : undefined;
+  if (cached) {
     return { rawOptions: cached.rawOptions, currentPrice: cached.currentPrice };
   }
 
@@ -458,6 +463,9 @@ async function fetchCboeRawChain(
  */
 async function fetchSECFilings(symbol: string) {
   const cleanSym = symbol.replace('-USD', '').replace('=X', '').replace('=F', '').toUpperCase();
+  const cachedSec = secCache.get(cleanSym);
+  if (cachedSec) return cachedSec;
+
   const cik = SEC_CIK_MAP[cleanSym];
 
   if (!cik) {
@@ -505,13 +513,15 @@ async function fetchSECFilings(symbol: string) {
       });
     }
 
-    return {
+    const resultPayload = {
       symbol: cleanSym,
       cik,
       entityName: data.name || cleanSym,
       available: true,
       filings,
     };
+    secCache.set(cleanSym, resultPayload);
+    return resultPayload;
   } catch (err) {
     return {
       symbol: cleanSym,
@@ -527,17 +537,19 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // API 1: Candles & Indicators for a single symbol (100% live upstream)
+  // API 1: Candles & Indicators for a single symbol (100% live upstream, parallel Yahoo + SEC)
   app.get('/api/candles', async (req: Request, res: Response) => {
     totalApiRequestsCount++;
     const symbol = (req.query.symbol as string) || 'AAPL';
     const timeframe = (req.query.timeframe as string) || '1d';
     const range = (req.query.range as string) || '3mo';
 
-    const candles = await fetchYahooData(symbol, timeframe, range, 5);
+    const [candles, sec] = await Promise.all([
+      fetchYahooData(symbol, timeframe, range, 5),
+      fetchSECFilings(symbol),
+    ]);
     const indicatorPoints = candles.length > 0 ? calculateIndicators(candles) : [];
     const divergences = indicatorPoints.length > 0 ? detectDivergences(symbol, timeframe, indicatorPoints) : [];
-    const sec = await fetchSECFilings(symbol);
 
     const feedMeta = lastFeedMetaMap.get(symbol.toUpperCase()) || {
       isLiveFeed: candles.length > 0,
@@ -1105,8 +1117,11 @@ async function startServer() {
     }
   });
 
-  // In-memory cache for live S&P 500 + Crypto heatmap (60s TTL)
-  const heatmapCache = new Map<string, { timestamp: number; items: HeatmapItem[] }>();
+  // Bounded in-memory cache for live S&P 500 + Crypto heatmap (60s TTL)
+  const heatmapCache = new BoundedTtlCache<string, { timestamp: number; items: HeatmapItem[] }>({
+    maxEntries: 12,
+    ttlMs: 60_000,
+  });
 
   // API 2.992: Multi-dimensional Live Market State Heatmap Endpoint
   app.get('/api/heatmap', async (req: Request, res: Response) => {
@@ -1119,8 +1134,8 @@ async function startServer() {
       const now = Date.now();
 
       let items: HeatmapItem[] | undefined;
-      const cached = heatmapCache.get(cacheKey);
-      if (!force && cached && now - cached.timestamp < 60_000) {
+      const cached = !force ? heatmapCache.get(cacheKey) : undefined;
+      if (cached) {
         items = cached.items;
         cacheHitsTotal++;
       }
@@ -1368,6 +1383,17 @@ async function startServer() {
         minQualityScore = 55,
       } = req.body;
 
+      const paramValidation = validateBacktestParams({
+        initialBalance,
+        riskPerTradePct,
+        minQualityScore,
+      });
+      if (!paramValidation.ok) {
+        return res.status(400).json({ error: paramValidation.error });
+      }
+      const allowedTargetModes = ['tranches', 'tp1', 'tp2'] as const;
+      const cleanTargetMode = allowedTargetModes.includes(targetMode) ? targetMode : 'tranches';
+
       const candles = await fetchYahooData(symbol, timeframe, range, 25);
       if (candles.length < 25) {
         return res.status(503).json({
@@ -1379,10 +1405,10 @@ async function startServer() {
         symbol,
         timeframe,
         range,
-        initialBalance: Number(initialBalance),
-        riskPerTradePct: Number(riskPerTradePct),
-        targetMode,
-        minQualityScore: Number(minQualityScore),
+        initialBalance: paramValidation.values.initialBalance,
+        riskPerTradePct: paramValidation.values.riskPerTradePct,
+        targetMode: cleanTargetMode,
+        minQualityScore: paramValidation.values.minQualityScore,
       };
 
       const optimizationReport = optimizeStrategyParameters(candles, config);
@@ -1604,10 +1630,12 @@ async function startServer() {
 
   // API 3.7: Clear In-Memory Caches
   app.post('/api/system-health/clear-cache', (_req: Request, res: Response) => {
-    const count = candleCache.size + heatmapCache.size + cboeChainCache.size;
+    const count = candleCache.size + heatmapCache.size + cboeChainCache.size + secCache.size;
     candleCache.clear();
     heatmapCache.clear();
     cboeChainCache.clear();
+    secCache.clear();
+    lastFeedMetaMap.clear();
     cachedSectors = null;
     cachedCboeData = null;
     cachedStageScan = null;

@@ -146,12 +146,17 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
     executeBacktest();
   }, []);
 
-  // Trigger optimization when optimizer tab is activated
+  // Clear stale optimization report whenever backtest config parameters change
+  useEffect(() => {
+    setOptimizationReport(null);
+  }, [symbol, timeframe, range, initialBalance, riskPerTradePct]);
+
+  // Trigger optimization when optimizer tab is active and report needs refresh
   useEffect(() => {
     if (activeTab === 'optimizer' && !optimizationReport && !optimizing) {
       runStrategyOptimization();
     }
-  }, [activeTab]);
+  }, [activeTab, optimizationReport]);
 
   const filteredTrades = result?.trades.filter((t) => {
     if (tradeFilter === 'ALL') return true;

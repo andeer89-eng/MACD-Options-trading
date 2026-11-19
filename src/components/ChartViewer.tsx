@@ -192,6 +192,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const savedLogicalRangeRef = useRef<{ from: number; to: number } | null>(null);
   const lastViewportKeyRef = useRef<string>('');
   const activeDrawToolRef = useRef<string | null>(activeDrawTool);
+  const chartReqIdRef = useRef<number>(0);
+  const chartAbortRef = useRef<AbortController | null>(null);
   const [chartApi, setChartApi] = useState<IChartApi | null>(null);
   const [mainSeriesApi, setMainSeriesApi] = useState<ISeriesApi<any> | null>(null);
   const [ofsToggles, setOfsToggles] = useState<OfsVisualToggles>(DEFAULT_OFS_TOGGLES);
@@ -382,24 +384,34 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          loadChartData(true);
-          return 15;
-        }
-        return prev - 1;
-      });
+      setCountdown((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [autoRefresh, symbol, timeframe]);
+  }, [autoRefresh, symbol, timeframe, chartRange]);
+
+  useEffect(() => {
+    if (!autoRefresh || countdown > 0) return;
+    setCountdown(15);
+    loadChartData(true);
+  }, [autoRefresh, countdown, symbol, timeframe, chartRange]);
 
   // Escape / F / Alt+R keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const targetTag = (e.target as HTMLElement)?.tagName;
-      if (['INPUT', 'TEXTAREA'].includes(targetTag)) return;
+      const target = e.target as HTMLElement | null;
+      const targetTag = target?.tagName;
+      if (targetTag && ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetTag)) return;
+      if (target?.isContentEditable) return;
 
       if (e.key === 'Escape') {
+        if (showIndicatorModal) {
+          setShowIndicatorModal(false);
+          return;
+        }
+        if (showDataAuthModal) {
+          setShowDataAuthModal(false);
+          return;
+        }
         if (activeDrawToolRef.current !== 'crosshair') {
           setActiveDrawTool('crosshair');
           return;
@@ -407,8 +419,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         if (isExpanded) {
           setIsExpanded(false);
         }
+        return;
       }
-      if (e.key === 'f' || e.key === 'F') {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
         setIsExpanded((prev) => !prev);
       }
       if (e.altKey && (e.key === 'r' || e.key === 'R')) {
@@ -422,7 +435,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded]);
+  }, [isExpanded, showIndicatorModal, showDataAuthModal]);
 
   // Load data whenever symbol, timeframe, or chartRange changes
   useEffect(() => {
@@ -430,7 +443,18 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     setCountdown(15);
   }, [symbol, timeframe, chartRange]);
 
+  useEffect(() => {
+    return () => {
+      chartAbortRef.current?.abort();
+    };
+  }, []);
+
   const loadChartData = async (isBackground = false) => {
+    const reqId = ++chartReqIdRef.current;
+    chartAbortRef.current?.abort();
+    const controller = new AbortController();
+    chartAbortRef.current = controller;
+
     if (!isBackground) setLoading(true);
     try {
       const rangeByTimeframe: Record<string, string> = {
@@ -443,10 +467,13 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       const reqRange = chartRange || rangeByTimeframe[timeframe] || '1y';
 
       const res = await fetch(
-        `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&range=${reqRange}`
+        `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&range=${reqRange}`,
+        { signal: controller.signal }
       );
+      if (reqId !== chartReqIdRef.current) return;
       if (res.ok) {
         const data = await res.json();
+        if (reqId !== chartReqIdRef.current) return;
         setCandles(data.candles || []);
         setIndicatorPoints(data.indicatorPoints || []);
         setDivergences(data.divergences || []);
@@ -465,24 +492,29 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
         try {
           const ltfRes = await fetch(
-            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`
+            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`,
+            { signal: controller.signal }
           );
+          if (reqId !== chartReqIdRef.current) return;
           if (ltfRes.ok) {
             const ltfJson = await ltfRes.json();
+            if (reqId !== chartReqIdRef.current) return;
             setLtfCandles(Array.isArray(ltfJson.candles) ? ltfJson.candles : []);
           } else {
             setLtfCandles([]);
           }
-        } catch {
-          setLtfCandles([]);
+        } catch (err) {
+          if ((err as Error)?.name === 'AbortError') return;
+          if (reqId === chartReqIdRef.current) setLtfCandles([]);
         }
       } else {
         setLtfCandles([]);
       }
     } catch (e) {
+      if ((e as Error)?.name === 'AbortError') return;
       console.error('Failed to load chart data', e);
     } finally {
-      if (!isBackground) setLoading(false);
+      if (!isBackground && reqId === chartReqIdRef.current) setLoading(false);
     }
   };
 
@@ -492,21 +524,26 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       setLtfCandles([]);
       return;
     }
+    const controller = new AbortController();
     let cancelled = false;
     const ltfTf = timeframe === '1h' ? '5m' : '1m';
     const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
-    fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`)
+    fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`, {
+      signal: controller.signal,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
         if (!cancelled) {
           setLtfCandles(Array.isArray(json?.candles) ? json.candles : []);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if ((err as Error)?.name === 'AbortError') return;
         if (!cancelled) setLtfCandles([]);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [isOfsActive, symbol, timeframe]);
 
@@ -1312,7 +1349,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
     // Preserve user's visible logical scroll/zoom range across background data polls & overlay changes
     const viewportKey = `${symbol}:${timeframe}:${chartMode}`;
-    chart.timeScale().applyOptions({ rightOffset: isOfsActive || isQmxActive ? 6 : 4 });
+    chart.timeScale().applyOptions({
+      rightOffset: isSuperTrendActive ? 18 : isOfsActive || isQmxActive ? 6 : 4,
+    });
     let trackRangeReady = false;
 
     if (lastViewportKeyRef.current === viewportKey && savedLogicalRangeRef.current) {
@@ -2809,8 +2848,16 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
       {/* 5. INDICATORS PICKER MODAL (fx Indicators, Metrics & Strategies) */}
       {showIndicatorModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowIndicatorModal(false)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+          >
             {/* Modal Header */}
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between gap-3">
               <div className="flex items-center space-x-2">
@@ -3039,12 +3086,20 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
       {/* 6. DATA AUTHENTICITY & VERIFICATION MODAL */}
       {showDataAuthModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowDataAuthModal(false)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl"
+          >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center space-x-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-base">Autenticitate Date de Piață (Live Data)</h3>
+                <h3 className="font-bold text-white text-base">Market Data Authenticity (Live Feed)</h3>
               </div>
               <button
                 onClick={() => setShowDataAuthModal(false)}
@@ -3060,8 +3115,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                 <strong className="text-emerald-300 block mb-1">
                   100% Real Institutional Exchange Feeds:
                 </strong>
-                Datele pe care le vezi în scaner și grafice sunt extrase în timp real din bursele oficiale
-                (NASDAQ, NYSE, CBOE, CME, Binance) prin gateway-ul Yahoo Finance v8 REST API.
+                Data displayed in the scanner and charts is streamed from official exchanges
+                (NASDAQ, NYSE, CBOE, CME, Binance) via the Yahoo Finance v8 REST API gateway.
               </div>
 
               <div className="space-y-2 bg-zinc-950 p-3 rounded-lg border border-zinc-800 font-mono text-[11px]">
@@ -3074,7 +3129,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   <span className="text-white font-bold">{feedMeta?.exchange || 'NASDAQ'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-zinc-500">Monedă de Decontare:</span>
+                  <span className="text-zinc-500">Settlement Currency:</span>
                   <span className="text-white font-bold">{feedMeta?.currency || 'USD'}</span>
                 </div>
                 <div className="flex justify-between">
@@ -3082,15 +3137,15 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   <span className="text-zinc-300">{feedMeta?.serverTimeUtc || new Date().toISOString()}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-zinc-500">Frecvență Refresh:</span>
-                  <span className="text-emerald-400 font-bold">La fiecare 15 secunde (Auto)</span>
+                  <span className="text-zinc-500">Refresh Interval:</span>
+                  <span className="text-emerald-400 font-bold">Every 15 seconds (Auto)</span>
                 </div>
               </div>
 
               <p className="text-zinc-400 text-[11px]">
-                Fiecare lumânare conține prețurile oficiale de Open, High, Low, Close și volumul autentic
-                tranzacționat. Când bursa americană este închisă (weekend sau peste noapte), sistemul afișează
-                ultimul preț oficial de închidere (Closing Bell) și menține ceasurile sincronizate cu ora Bucureștiului și New York-ului.
+                Every candlestick contains official Open, High, Low, Close prices and verified
+                traded volume. When US equity markets are closed (weekends or overnight), the platform displays
+                the official closing bell price and keeps the Bucharest and New York clocks synchronized.
               </p>
             </div>
 
@@ -3099,7 +3154,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                 onClick={() => setShowDataAuthModal(false)}
                 className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs rounded-lg transition"
               >
-                Am înțeles
+                Got it
               </button>
             </div>
           </div>

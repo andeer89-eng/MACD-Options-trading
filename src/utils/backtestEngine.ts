@@ -40,6 +40,10 @@ export interface BacktestConfig {
   riskPerTradePct: number; // e.g. 1.0 = 1%
   targetMode: 'tranches' | 'tp1' | 'tp2';
   minQualityScore: number;
+  rsiFilter?: {
+    oversold: number;
+    overbought: number;
+  };
 }
 
 export interface SimulatedTrade {
@@ -177,7 +181,23 @@ export function runBacktest(
     // Check if any setups have their 3rd point at this bar (or confirmed with lookback 3 at bar i - 3)
     const confirmedSetups = allSetups.filter((s) => {
       const p3 = s.points[s.points.length - 1];
-      return p3 && p3.index === i - 3 && s.qualityScore >= minQualityScore;
+      if (!p3 || p3.index !== i - 3 || s.qualityScore < minQualityScore) return false;
+      if (config.rsiFilter && s.points.length > 0) {
+        const isBull = s.type.startsWith('BULLISH');
+        const pointRsis = s.points
+          .map((pt) => indicators[pt.index]?.rsi)
+          .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+        if (pointRsis.length > 0) {
+          if (isBull) {
+            const minRsi = Math.min(...pointRsis);
+            if (minRsi > config.rsiFilter.oversold + 12) return false;
+          } else {
+            const maxRsi = Math.max(...pointRsis);
+            if (maxRsi < config.rsiFilter.overbought - 12) return false;
+          }
+        }
+      }
+      return true;
     });
 
     for (const setup of confirmedSetups) {

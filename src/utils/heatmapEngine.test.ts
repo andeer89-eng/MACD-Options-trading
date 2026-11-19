@@ -134,4 +134,16 @@ describe('Market Heatmap State Engine Unit Tests', () => {
     assert.strictEqual(getCustomTag('KO', 'Consumer Staples'), 'Defensive Yield');
     assert.strictEqual(getCustomTag('GME', 'Consumer Discretionary'), 'High Short Interest');
   });
+
+  test('reports hasNetDeltaFeed=false when L2 delta flow is null across all constituents', () => {
+    const noDeltaItems = FIXTURE_ITEMS.map((item) => ({ ...item, netDeltaFlowMillions: null }));
+    const hud = calculateHeatmapSummary(noDeltaItems, '1D');
+    const macro = getSectorMacroGroups(noDeltaItems, '1D');
+
+    assert.strictEqual(hud.hasNetDeltaFeed, false);
+    assert.strictEqual(macro.every((m) => m.hasNetDeltaFeed === false), true);
+
+    const liveHud = calculateHeatmapSummary(FIXTURE_ITEMS, '1D');
+    assert.strictEqual(liveHud.hasNetDeltaFeed, true);
+  });
 });
