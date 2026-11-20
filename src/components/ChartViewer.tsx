@@ -13,6 +13,7 @@ import {
   PriceScaleMode,
   createSeriesMarkers,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
 } from 'lightweight-charts';
 import {
@@ -31,7 +32,6 @@ import {
   Info,
   Sparkles,
   RotateCcw,
-  Check,
   X,
   Activity,
   Clock,
@@ -42,17 +42,12 @@ import {
   Target,
   Ruler,
   Trash2,
-  Search,
   Grid,
   Columns,
   Square,
   BarChart2,
   LineChart,
   CheckSquare,
-  Plus,
-  Code2,
-  AlertTriangle,
-  Play,
 } from 'lucide-react';
 import { Candle, IndicatorPoint, DivergenceSetup } from '../utils/trullasStrategy';
 import { calculateNadarayaWatsonEnvelope } from '../utils/luxalgoIndicators';
@@ -71,7 +66,6 @@ import {
 } from '../utils/customIndicatorCalculator';
 import {
   executePineScriptIndicator,
-  buildSampleValidationCandles,
   type PineExecutionResult,
 } from '../utils/pineScriptExecutor';
 import { PineScriptOverlay } from './PineScriptOverlay';
@@ -92,6 +86,8 @@ import {
 } from './QuantumMarketXrayOverlay';
 import {
   OverlayHudKind,
+  resolveFibPriceLineLabel,
+  resolveSetupPriceLineLabels,
   resolveVisibleHudDock,
 } from '../utils/chartOverlayPrimitives';
 import { calculateSuperTrendPro, SuperTrendProReport } from '../utils/superTrendPro';
@@ -100,22 +96,13 @@ import {
   SuperTrendVisualToggles,
   DEFAULT_SUPERTREND_TOGGLES,
 } from './SuperTrendProOverlay';
+import { useChartData } from '../hooks/useChartData';
+import { useChartShortcuts } from '../hooks/useChartShortcuts';
+import { IndicatorsPickerModal, DataAuthenticityModal } from './chart/ChartModals';
 
 interface ChartViewerProps {
   initialSymbol?: string;
   onOpenCalculator?: (setup: DivergenceSetup) => void;
-}
-
-interface FeedMetadata {
-  isLiveFeed: boolean;
-  source: string;
-  exchange: string;
-  currency: string;
-  regularMarketPrice?: number;
-  chartPreviousClose?: number;
-  exchangeTimezone: string;
-  lastCandleTimestamp?: number;
-  serverTimeUtc: string;
 }
 
 export type CandleStyleType = 'candles' | 'heikin-ashi' | 'hollow' | 'line' | 'area';
@@ -127,13 +114,6 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const [symbol, setSymbol] = useState(initialSymbol);
   const [timeframe, setTimeframe] = useState('1d');
   const [chartRange, setChartRange] = useState('1y');
-  const [loading, setLoading] = useState(false);
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [indicatorPoints, setIndicatorPoints] = useState<IndicatorPoint[]>([]);
-  const [divergences, setDivergences] = useState<DivergenceSetup[]>([]);
-  const [secData, setSecData] = useState<any>(null);
-  const [feedMeta, setFeedMeta] = useState<FeedMetadata | null>(null);
-  const [activeSetup, setActiveSetup] = useState<DivergenceSetup | null>(null);
 
   // Fullscreen / Expanded View State
   const [isExpanded, setIsExpanded] = useState(false);
@@ -169,14 +149,11 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     }
     return ['supertrend-v9-pro', 'matrix-ai-pro'];
   });
-  const [ltfCandles, setLtfCandles] = useState<Candle[]>([]);
 
   // Live Bucharest & ET Clocks
   const [bucharestTime, setBucharestTime] = useState('');
   const [marketTime, setMarketTime] = useState('');
   const [showDataAuthModal, setShowDataAuthModal] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [countdown, setCountdown] = useState(15);
 
   // Drawing Toolbar Active Tool & User Placed Drawings
   const [activeDrawTool, setActiveDrawTool] = useState<string | null>('crosshair');
@@ -189,11 +166,17 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const velaWorkspaceRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<IChartApi | null>(null);
   const mainPriceSeriesRef = useRef<ISeriesApi<any> | null>(null);
+  const setupPriceLinesRef = useRef<{
+    trigger: IPriceLine;
+    tp1: IPriceLine;
+    tp2: IPriceLine;
+    sl: IPriceLine;
+    setup: DivergenceSetup;
+  } | null>(null);
+  const fibPriceLinesRef = useRef<Array<{ line: IPriceLine; name: string; price: number }>>([]);
   const savedLogicalRangeRef = useRef<{ from: number; to: number } | null>(null);
   const lastViewportKeyRef = useRef<string>('');
   const activeDrawToolRef = useRef<string | null>(activeDrawTool);
-  const chartReqIdRef = useRef<number>(0);
-  const chartAbortRef = useRef<AbortController | null>(null);
   const [chartApi, setChartApi] = useState<IChartApi | null>(null);
   const [mainSeriesApi, setMainSeriesApi] = useState<ISeriesApi<any> | null>(null);
   const [ofsToggles, setOfsToggles] = useState<OfsVisualToggles>(DEFAULT_OFS_TOGGLES);
@@ -238,6 +221,21 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     (id) => id.toLowerCase().includes('ofs') || id.toLowerCase().includes('order-flow-strategy')
   );
 
+  const {
+    loading,
+    candles,
+    indicatorPoints,
+    divergences,
+    secData,
+    feedMeta,
+    activeSetup,
+    ltfCandles,
+    autoRefresh,
+    setAutoRefresh,
+    countdown,
+    loadChartData,
+  } = useChartData({ symbol, timeframe, chartRange, isOfsActive });
+
   const isQmxActive = activeCustomIndicatorIds.some((id) => {
     const norm = id.toLowerCase();
     if (norm.includes('qmx') || norm.includes('quantum')) return true;
@@ -251,6 +249,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const isSuperTrendActive = activeCustomIndicatorIds.some((id) =>
     id.toLowerCase().includes('supertrend')
   );
+  const hasSuperTrendRightHud =
+    isSuperTrendActive && (superTrendToggles.table || superTrendToggles.legend);
 
   // Sync if initialSymbol prop changes
   useEffect(() => {
@@ -290,6 +290,14 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     }
     return out;
   }, [candles]);
+
+  const hasRightEdgeSetupPriceLines = useMemo(() => {
+    if (showFibOverlay) return true;
+    if (!activeSetup || uniqueChartCandles.length === 0) return false;
+    const lastClose = uniqueChartCandles[uniqueChartCandles.length - 1]?.close ?? 0;
+    if (lastClose <= 0) return false;
+    return Math.abs(activeSetup.triggerPrice - lastClose) / lastClose <= 0.18;
+  }, [activeSetup, uniqueChartCandles, showFibOverlay]);
 
   const isFlagshipCustomId = (id: string) => {
     const norm = id.toLowerCase();
@@ -380,172 +388,19 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Auto-refresh timer (every 15s)
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      setCountdown((prev) => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, symbol, timeframe, chartRange]);
-
-  useEffect(() => {
-    if (!autoRefresh || countdown > 0) return;
-    setCountdown(15);
-    loadChartData(true);
-  }, [autoRefresh, countdown, symbol, timeframe, chartRange]);
-
   // Escape / F / Alt+R keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const targetTag = target?.tagName;
-      if (targetTag && ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetTag)) return;
-      if (target?.isContentEditable) return;
-
-      if (e.key === 'Escape') {
-        if (showIndicatorModal) {
-          setShowIndicatorModal(false);
-          return;
-        }
-        if (showDataAuthModal) {
-          setShowDataAuthModal(false);
-          return;
-        }
-        if (activeDrawToolRef.current !== 'crosshair') {
-          setActiveDrawTool('crosshair');
-          return;
-        }
-        if (isExpanded) {
-          setIsExpanded(false);
-        }
-        return;
-      }
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-        setIsExpanded((prev) => !prev);
-      }
-      if (e.altKey && (e.key === 'r' || e.key === 'R')) {
-        e.preventDefault();
-        if (chartInstanceRef.current) {
-          chartInstanceRef.current.timeScale().fitContent();
-          chartInstanceRef.current.priceScale('right').applyOptions({ autoScale: true });
-          setAutoScale(true);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, showIndicatorModal, showDataAuthModal]);
-
-  // Load data whenever symbol, timeframe, or chartRange changes
-  useEffect(() => {
-    loadChartData();
-    setCountdown(15);
-  }, [symbol, timeframe, chartRange]);
-
-  useEffect(() => {
-    return () => {
-      chartAbortRef.current?.abort();
-    };
-  }, []);
-
-  const loadChartData = async (isBackground = false) => {
-    const reqId = ++chartReqIdRef.current;
-    chartAbortRef.current?.abort();
-    const controller = new AbortController();
-    chartAbortRef.current = controller;
-
-    if (!isBackground) setLoading(true);
-    try {
-      const rangeByTimeframe: Record<string, string> = {
-        '1m': '5d',
-        '5m': '1mo',
-        '15m': '1mo',
-        '1h': '6mo',
-        '1d': '1y',
-      };
-      const reqRange = chartRange || rangeByTimeframe[timeframe] || '1y';
-
-      const res = await fetch(
-        `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&range=${reqRange}`,
-        { signal: controller.signal }
-      );
-      if (reqId !== chartReqIdRef.current) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (reqId !== chartReqIdRef.current) return;
-        setCandles(data.candles || []);
-        setIndicatorPoints(data.indicatorPoints || []);
-        setDivergences(data.divergences || []);
-        setSecData(data.sec || null);
-        setFeedMeta(data.feedMeta || null);
-        if (data.divergences && data.divergences.length > 0) {
-          setActiveSetup(data.divergences[0]);
-        } else {
-          setActiveSetup(null);
-        }
-      }
-
-      // Fetch real Lower-Timeframe (LTF) bars when OFS is active on intraday charts
-      if (isOfsActive && (timeframe === '5m' || timeframe === '15m' || timeframe === '1h')) {
-        const ltfTf = timeframe === '1h' ? '5m' : '1m';
-        const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
-        try {
-          const ltfRes = await fetch(
-            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`,
-            { signal: controller.signal }
-          );
-          if (reqId !== chartReqIdRef.current) return;
-          if (ltfRes.ok) {
-            const ltfJson = await ltfRes.json();
-            if (reqId !== chartReqIdRef.current) return;
-            setLtfCandles(Array.isArray(ltfJson.candles) ? ltfJson.candles : []);
-          } else {
-            setLtfCandles([]);
-          }
-        } catch (err) {
-          if ((err as Error)?.name === 'AbortError') return;
-          if (reqId === chartReqIdRef.current) setLtfCandles([]);
-        }
-      } else {
-        setLtfCandles([]);
-      }
-    } catch (e) {
-      if ((e as Error)?.name === 'AbortError') return;
-      console.error('Failed to load chart data', e);
-    } finally {
-      if (!isBackground && reqId === chartReqIdRef.current) setLoading(false);
-    }
-  };
-
-  // Load LTF bars immediately when OFS is toggled ON while viewing an intraday chart
-  useEffect(() => {
-    if (!isOfsActive || !(timeframe === '5m' || timeframe === '15m' || timeframe === '1h')) {
-      setLtfCandles([]);
-      return;
-    }
-    const controller = new AbortController();
-    let cancelled = false;
-    const ltfTf = timeframe === '1h' ? '5m' : '1m';
-    const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
-    fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`, {
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (!cancelled) {
-          setLtfCandles(Array.isArray(json?.candles) ? json.candles : []);
-        }
-      })
-      .catch((err) => {
-        if ((err as Error)?.name === 'AbortError') return;
-        if (!cancelled) setLtfCandles([]);
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [isOfsActive, symbol, timeframe]);
+  useChartShortcuts({
+    showIndicatorModal,
+    setShowIndicatorModal,
+    showDataAuthModal,
+    setShowDataAuthModal,
+    activeDrawToolRef,
+    setActiveDrawTool,
+    isExpanded,
+    setIsExpanded,
+    chartInstanceRef,
+    setAutoScale,
+  });
 
   // Toggle Custom Indicator
   const toggleIndicator = (id: string) => {
@@ -829,6 +684,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     );
 
     // 3. Setup Overlays: Fibonacci Retracement PriceLines & Divergence Markers
+    setupPriceLinesRef.current = null;
     const lastClosePrice = effectiveCandles[effectiveCandles.length - 1]?.close ?? 0;
     const setupNearCurrentPrice =
       activeSetup &&
@@ -836,41 +692,57 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       Math.abs(activeSetup.triggerPrice - lastClosePrice) / lastClosePrice <= 0.18;
 
     if (activeSetup && setupNearCurrentPrice) {
-      mainSeries.createPriceLine({
+      const labels = resolveSetupPriceLineLabels({
+        triggerPrice: activeSetup.triggerPrice,
+        tp1: activeSetup.targets.tp1,
+        tp2: activeSetup.targets.tp2,
+        stopLoss: activeSetup.stopLoss,
+        compact: hasSuperTrendRightHud,
+      });
+
+      const triggerLine = mainSeries.createPriceLine({
         price: activeSetup.triggerPrice,
         color: '#10b981',
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `TRIGGER 23.6% ($${activeSetup.triggerPrice.toFixed(2)})`,
+        title: labels.trigger,
       });
 
-      mainSeries.createPriceLine({
+      const tp1Line = mainSeries.createPriceLine({
         price: activeSetup.targets.tp1,
         color: '#38bdf8',
         lineWidth: 1,
         lineStyle: LineStyle.Dotted,
         axisLabelVisible: true,
-        title: `TP1 38.2% ($${activeSetup.targets.tp1.toFixed(2)})`,
+        title: labels.tp1,
       });
 
-      mainSeries.createPriceLine({
+      const tp2Line = mainSeries.createPriceLine({
         price: activeSetup.targets.tp2,
         color: '#f59e0b',
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `TP2 GOLDEN 61.8% ($${activeSetup.targets.tp2.toFixed(2)})`,
+        title: labels.tp2,
       });
 
-      mainSeries.createPriceLine({
+      const slLine = mainSeries.createPriceLine({
         price: activeSetup.stopLoss,
         color: '#f43f5e',
         lineWidth: 2,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
-        title: `STOP LOSS ($${activeSetup.stopLoss.toFixed(2)})`,
+        title: labels.stopLoss,
       });
+
+      setupPriceLinesRef.current = {
+        trigger: triggerLine,
+        tp1: tp1Line,
+        tp2: tp2Line,
+        sl: slLine,
+        setup: activeSetup,
+      };
 
       const isBull = activeSetup.type.includes('BULLISH');
       const markers: any[] = [];
@@ -934,6 +806,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     }
 
     // 4. Fibonacci Retracement Grid Overlay (if toggled)
+    fibPriceLinesRef.current = [];
     if (showFibOverlay && effectiveCandles.length > 0) {
       const highs = effectiveCandles.map((c) => c.high);
       const lows = effectiveCandles.map((c) => c.low);
@@ -953,14 +826,15 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
       for (const fib of fibLevels) {
         const p = minL + diff * fib.ratio;
-        mainSeries.createPriceLine({
+        const line = mainSeries.createPriceLine({
           price: p,
           color: fib.color,
           lineWidth: fib.ratio === 0.618 ? 2 : 1,
           lineStyle: LineStyle.Dotted,
           axisLabelVisible: true,
-          title: `${fib.name} ($${p.toFixed(2)})`,
+          title: resolveFibPriceLineLabel(fib.name, p, hasSuperTrendRightHud),
         });
+        fibPriceLinesRef.current.push({ line, name: fib.name, price: p });
       }
     }
 
@@ -1417,6 +1291,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       }
       setChartApi(null);
       setMainSeriesApi(null);
+      setupPriceLinesRef.current = null;
+      fibPriceLinesRef.current = [];
       if (chartInstanceRef.current) {
         chartInstanceRef.current.remove();
         chartInstanceRef.current = null;
@@ -1434,6 +1310,40 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     candleStyle,
     showFibOverlay,
   ]);
+
+  // Dynamically update setup & Fib price-line titles when SuperTrend HUD visibility toggles without rebuilding chart
+  useEffect(() => {
+    const refs = setupPriceLinesRef.current;
+    if (refs) {
+      const labels = resolveSetupPriceLineLabels({
+        triggerPrice: refs.setup.triggerPrice,
+        tp1: refs.setup.targets.tp1,
+        tp2: refs.setup.targets.tp2,
+        stopLoss: refs.setup.stopLoss,
+        compact: hasSuperTrendRightHud,
+      });
+      try {
+        refs.trigger.applyOptions({ title: labels.trigger });
+        refs.tp1.applyOptions({ title: labels.tp1 });
+        refs.tp2.applyOptions({ title: labels.tp2 });
+        refs.sl.applyOptions({ title: labels.stopLoss });
+      } catch {
+        // ignore if chart already disposed
+      }
+    }
+
+    if (fibPriceLinesRef.current.length > 0) {
+      for (const entry of fibPriceLinesRef.current) {
+        try {
+          entry.line.applyOptions({
+            title: resolveFibPriceLineLabel(entry.name, entry.price, hasSuperTrendRightHud),
+          });
+        } catch {
+          // ignore if chart already disposed
+        }
+      }
+    }
+  }, [hasSuperTrendRightHud]);
 
   // Apply price scale mode (LIN / LOG / %) & autoScale dynamically without recreating chart or resetting scroll
   useEffect(() => {
@@ -1712,10 +1622,25 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     setInlinePineError(null);
     setInlinePineStatus(null);
     try {
-      const testCandles =
-        uniqueChartCandles.length >= 25
-          ? uniqueChartCandles
-          : buildSampleValidationCandles(80, 150);
+      let testCandles = uniqueChartCandles;
+      if (testCandles.length < 25) {
+        const resCandles = await fetch(
+          `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&range=6mo`
+        );
+        if (resCandles.ok) {
+          const payload = await resCandles.json();
+          if (Array.isArray(payload?.candles)) {
+            testCandles = payload.candles;
+          }
+        }
+      }
+      if (testCandles.length < 25) {
+        setInlinePineStatus({
+          valid: false,
+          message: 'At least 25 live market candles are required to validate Pine Script.',
+        });
+        return;
+      }
       const res = await executePineScriptIndicator(
         {
           id: 'inline-preview',
@@ -2547,6 +2472,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                         onToggleLayer={(key) =>
                           setSuperTrendToggles((prev) => ({ ...prev, [key]: !prev[key] }))
                         }
+                        reservePriceLabelLane={hasRightEdgeSetupPriceLines}
                         toolbarTopClass={
                           isOfsActive && ofsReport && isQmxActive && qmxReport
                             ? 'top-16'
@@ -2846,320 +2772,39 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         )}
       </div>
 
-      {/* 5. INDICATORS PICKER MODAL (fx Indicators, Metrics & Strategies) */}
-      {showIndicatorModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setShowIndicatorModal(false)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
-          >
-            {/* Modal Header */}
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between gap-3">
-              <div className="flex items-center space-x-2">
-                <span className="font-serif italic text-lg font-bold text-emerald-400">fx</span>
-                <h3 className="font-bold text-white text-base">Indicators, Metrics & Strategies</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  data-testid="toggle-inline-pine-importer"
-                  onClick={() => setShowInlineImporter((prev) => !prev)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
-                    showInlineImporter
-                      ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
-                      : 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500/40'
-                  }`}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{showInlineImporter ? 'Close Importer' : 'Import Pine Script'}</span>
-                </button>
-                <button
-                  onClick={() => setShowIndicatorModal(false)}
-                  aria-label="Close Indicators Modal"
-                  className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Inline Pine Script v4/v5/v6 Importer Drawer */}
-            {showInlineImporter && (
-              <form
-                onSubmit={handleImportInlinePine}
-                className="p-4 border-b border-indigo-500/30 bg-zinc-950/95 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
-                    <Code2 className="w-3.5 h-3.5" />
-                    Paste TradingView Pine Script (v4 / v5 / v6)
-                  </span>
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    Executes live on chart via PineTS
-                  </span>
-                </div>
-
-                {inlinePineError && (
-                  <div className="p-2 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{inlinePineError}</span>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                  <input
-                    type="text"
-                    placeholder="Title (optional — auto-detected from script)"
-                    value={inlinePineName}
-                    onChange={(e) => setInlinePineName(e.target.value)}
-                    className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
-                  />
-                  <select
-                    value={inlinePineCategory}
-                    onChange={(e) => setInlinePineCategory(e.target.value as IndicatorCategory)}
-                    className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="Trend">Trend &amp; Momentum</option>
-                    <option value="Oscillator">Oscillator</option>
-                    <option value="Reversal">Reversal &amp; Exhaustion</option>
-                    <option value="SMC">Smart Money Concepts</option>
-                    <option value="Volatility">Volatility &amp; ATR</option>
-                    <option value="Volume">Volume &amp; Flow</option>
-                  </select>
-                </div>
-
-                <textarea
-                  rows={5}
-                  data-testid="inline-pine-textarea"
-                  placeholder={`//@version=6\nindicator("My Custom Cloud", overlay=true)\nfast = ta.ema(close, 9)\nslow = ta.ema(close, 21)\np1 = plot(fast, "Fast", color=fast > slow ? color.emerald : color.rose)\np2 = plot(slow, "Slow", color=color.sky)\nfill(p1, p2, color=fast > slow ? color.new(color.green, 82) : color.new(color.red, 82))`}
-                  value={inlinePineCode}
-                  onChange={(e) => {
-                    setInlinePineCode(e.target.value);
-                    if (inlinePineError) setInlinePineError(null);
-                  }}
-                  className="w-full p-2.5 bg-zinc-900 border border-zinc-800 rounded-lg font-mono text-xs text-indigo-300 focus:outline-none focus:border-indigo-500"
-                />
-
-                {inlinePineStatus && (
-                  <div
-                    className={`p-2 rounded text-[11px] font-mono border ${
-                      inlinePineStatus.valid
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                        : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                    }`}
-                  >
-                    {inlinePineStatus.valid ? 'READY: ' : 'ERROR: '}
-                    {inlinePineStatus.message}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    data-testid="inline-pine-test-btn"
-                    onClick={handleTestInlinePine}
-                    disabled={inlinePineTesting || !inlinePineCode.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-medium border border-zinc-700 transition disabled:opacity-50"
-                  >
-                    <Play className="w-3 h-3 text-indigo-400" />
-                    <span>{inlinePineTesting ? 'Testing...' : 'Test Script'}</span>
-                  </button>
-                  <button
-                    type="submit"
-                    data-testid="inline-pine-apply-btn"
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition"
-                  >
-                    Import &amp; Apply to Chart
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Search & Category Filter */}
-            <div className="p-4 border-b border-zinc-800 space-y-3 bg-zinc-950/50">
-              <div className="relative">
-                <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  placeholder="Search indicators by name or keyword..."
-                  value={indicatorSearch}
-                  onChange={(e) => setIndicatorSearch(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 font-mono"
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {['All', 'Trend', 'Oscillator', 'Volatility', 'SMC', 'Reversal', 'Volume'].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${
-                      selectedCategory === cat
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                        : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Indicator List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2 divide-y divide-zinc-800/50">
-              {filteredIndicators.map((ind) => {
-                const isActive = activeCustomIndicatorIds.includes(ind.id);
-                return (
-                  <div
-                    key={ind.id}
-                    className="pt-2.5 first:pt-0 flex items-start justify-between gap-4 p-2 rounded-lg hover:bg-zinc-800/40 transition"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-white text-sm">{ind.name}</span>
-                        {!ind.isBuiltIn ? (
-                          <span className="px-1.5 py-0.5 text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded font-mono font-bold">
-                            [Custom]
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/40 rounded font-mono">
-                            Built-in
-                          </span>
-                        )}
-                        <span className="text-[10px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded font-mono">
-                          {ind.category}
-                        </span>
-                        <span className="text-[10px] text-zinc-500">
-                          {ind.overlay ? 'Overlay' : 'Sub-Pane'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-400 leading-snug">{ind.description}</p>
-                      <div className="text-[10px] text-zinc-500 font-mono">By {ind.author}</div>
-                    </div>
-
-                    <button
-                      onClick={() => toggleIndicator(ind.id)}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition whitespace-nowrap flex items-center space-x-1 ${
-                        isActive
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                      }`}
-                    >
-                      {isActive ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-rose-300" />
-                          <span>Active (Remove)</span>
-                        </>
-                      ) : (
-                        <span>+ Add to Chart</span>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-
-              {filteredIndicators.length === 0 && (
-                <div className="p-8 text-center text-zinc-500 text-sm">
-                  No indicators found matching "{indicatorSearch}"
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-3.5 border-t border-zinc-800 bg-zinc-950 flex items-center justify-between text-xs text-zinc-400">
-              <span>{activeCustomIndicatorIds.length} custom indicators active on chart</span>
-              <button
-                onClick={() => setShowIndicatorModal(false)}
-                className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-medium transition"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 5. INDICATORS PICKER MODAL */}
+      <IndicatorsPickerModal
+        isOpen={showIndicatorModal}
+        onClose={() => setShowIndicatorModal(false)}
+        showInlineImporter={showInlineImporter}
+        setShowInlineImporter={setShowInlineImporter}
+        inlinePineCode={inlinePineCode}
+        setInlinePineCode={setInlinePineCode}
+        inlinePineName={inlinePineName}
+        setInlinePineName={setInlinePineName}
+        inlinePineCategory={inlinePineCategory}
+        setInlinePineCategory={setInlinePineCategory}
+        inlinePineTesting={inlinePineTesting}
+        inlinePineError={inlinePineError}
+        setInlinePineError={setInlinePineError}
+        inlinePineStatus={inlinePineStatus}
+        onTestInlinePine={handleTestInlinePine}
+        onImportInlinePine={handleImportInlinePine}
+        indicatorSearch={indicatorSearch}
+        setIndicatorSearch={setIndicatorSearch}
+        selectedCategory={selectedCategory}
+        setSelectedCategory={setSelectedCategory}
+        filteredIndicators={filteredIndicators}
+        activeCustomIndicatorIds={activeCustomIndicatorIds}
+        onToggleIndicator={toggleIndicator}
+      />
 
       {/* 6. DATA AUTHENTICITY & VERIFICATION MODAL */}
-      {showDataAuthModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setShowDataAuthModal(false)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div className="flex items-center space-x-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-base">Market Data Authenticity (Live Feed)</h3>
-              </div>
-              <button
-                onClick={() => setShowDataAuthModal(false)}
-                aria-label="Close Data Authenticity Modal"
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-zinc-300 leading-relaxed">
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                <strong className="text-emerald-300 block mb-1">
-                  100% Real Institutional Exchange Feeds:
-                </strong>
-                Data displayed in the scanner and charts is streamed from official exchanges
-                (NASDAQ, NYSE, CBOE, CME, Binance) via the Yahoo Finance v8 REST API gateway.
-              </div>
-
-              <div className="space-y-2 bg-zinc-950 p-3 rounded-lg border border-zinc-800 font-mono text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">API Endpoint:</span>
-                  <span className="text-zinc-300">query1.finance.yahoo.com/v8/finance/chart</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Venue / Exchange:</span>
-                  <span className="text-white font-bold">{feedMeta?.exchange || 'NASDAQ'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Settlement Currency:</span>
-                  <span className="text-white font-bold">{feedMeta?.currency || 'USD'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Server UTC:</span>
-                  <span className="text-zinc-300">{feedMeta?.serverTimeUtc || new Date().toISOString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Refresh Interval:</span>
-                  <span className="text-emerald-400 font-bold">Every 15 seconds (Auto)</span>
-                </div>
-              </div>
-
-              <p className="text-zinc-400 text-[11px]">
-                Every candlestick contains official Open, High, Low, Close prices and verified
-                traded volume. When US equity markets are closed (weekends or overnight), the platform displays
-                the official closing bell price and keeps the Bucharest and New York clocks synchronized.
-              </p>
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <button
-                onClick={() => setShowDataAuthModal(false)}
-                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs rounded-lg transition"
-              >
-                Got it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DataAuthenticityModal
+        isOpen={showDataAuthModal}
+        onClose={() => setShowDataAuthModal(false)}
+        feedMeta={feedMeta}
+      />
     </div>
   );
 };

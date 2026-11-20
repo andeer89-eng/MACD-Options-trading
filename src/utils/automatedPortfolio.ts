@@ -1,5 +1,5 @@
 /**
- * Pure Logic Engine for the Automated Virtual Portfolio Manager
+ * Pure Logic Engine for the Automated Alpaca Paper Equity Engine
  * Follows David Trullàs 4-Pillars Trading Strategy with zero synthetic seed positions,
  * zero fabricated Sharpe/Drawdown floors, and real CBOE confluence when live chain data is passed.
  */
@@ -129,7 +129,7 @@ export function initDefaultPortfolio(initialCapital: number = 10000): PortfolioA
 }
 
 function computeEquityMetricsFromHistory(account: PortfolioAccount) {
-  const startingBalance = account.startingBalance || 10000;
+  const startingBalance = Math.max(0, Number.isFinite(account.startingBalance) ? account.startingBalance : 0);
   const currentInvested = account.positions.reduce(
     (sum, pos) => sum + pos.currentShares * pos.currentPrice,
     0
@@ -163,7 +163,9 @@ function computeEquityMetricsFromHistory(account: PortfolioAccount) {
   if (Math.abs(curDdPct) > Math.abs(maxDrawdownPercent)) maxDrawdownPercent = curDdPct;
 
   const exitLogs = account.tradeHistory.filter((l) => l.realizedPnL !== undefined && l.realizedPnL !== 0);
-  const tradeReturnsPct = exitLogs.map((l) => l.realizedPnLPercent ?? (l.realizedPnL! / startingBalance) * 100);
+  const tradeReturnsPct = exitLogs.map(
+    (l) => l.realizedPnLPercent ?? (startingBalance > 0 ? (l.realizedPnL! / startingBalance) * 100 : 0)
+  );
 
   let annualizedVolatility = 0;
   let downsideVolatility = 0;
@@ -183,7 +185,7 @@ function computeEquityMetricsFromHistory(account: PortfolioAccount) {
       downsideVolatility = Math.sqrt(downVar) * Math.sqrt(252);
     }
 
-    const totalReturnPct = ((currentEquity - startingBalance) / startingBalance) * 100;
+    const totalReturnPct = startingBalance > 0 ? ((currentEquity - startingBalance) / startingBalance) * 100 : 0;
     const excessReturn = totalReturnPct - 4.5;
     if (annualizedVolatility > 0) {
       sharpeRatio = Number((excessReturn / annualizedVolatility).toFixed(2));
@@ -362,7 +364,7 @@ export function calculateAdvancedAnalytics(
 ): AdvancedPerformanceAnalytics {
   const stats = calculatePortfolioStats(account);
   const m = computeEquityMetricsFromHistory(account);
-  const startingBalance = account.startingBalance || 10000;
+  const startingBalance = Math.max(0, Number.isFinite(account.startingBalance) ? account.startingBalance : 0);
   const currentEquity = stats.currentEquity;
   const totalReturnDollars = stats.totalReturnDollars;
   const totalReturnPercent = stats.totalReturnPercent;
@@ -385,7 +387,7 @@ export function calculateAdvancedAnalytics(
       peakEquity: startingBalance,
       drawdownPercent: 0,
       drawdownDollars: 0,
-      event: `Initial $${startingBalance.toLocaleString()} Virtual Portfolio Provisioned`,
+      event: `Initial $${startingBalance.toLocaleString()} Account Baseline`,
     },
   ];
 

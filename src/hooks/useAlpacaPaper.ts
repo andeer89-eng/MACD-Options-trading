@@ -1,0 +1,269 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { AlpacaOverviewDTO, JournalSyncResult } from '../utils/alpacaJournalSync';
+import { mapAlpacaOrdersToJournalEntries } from '../utils/alpacaJournalSync';
+import {
+  JournalEntry,
+  loadJournalEntries,
+  saveJournalEntries,
+  createJournalEntryInFirestore,
+  updateJournalEntryInFirestore,
+} from '../utils/tradeJournal';
+import { auth } from '../lib/firebase';
+
+export interface AlpacaOptionContractDTO {
+  id: string;
+  symbol: string;
+  name: string;
+  underlying_symbol: string;
+  expiration_date: string;
+  type: 'put' | 'call';
+  strike_price: number;
+  close_price: number | null;
+  open_interest: number | null;
+  tradable: boolean;
+}
+
+export interface AlpacaOrderInput {
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  type?: 'market' | 'limit' | 'stop' | 'stop_limit';
+  time_in_force?: 'day' | 'gtc';
+  limit_price?: number;
+  stop_price?: number;
+  client_order_id?: string;
+}
+
+export function syncAlpacaOverviewToLocalJournal(overview: AlpacaOverviewDTO): JournalSyncResult {
+  const existing = loadJournalEntries();
+  if (!overview.configured || !overview.account) {
+    return {
+      entries: existing,
+      addedCount: 0,
+      updatedCount: 0,
+      totalAlpacaEntries: existing.filter((e) => e.tags.includes('Alpaca Paper')).length,
+    };
+  }
+
+  const prevById = new Map<string, JournalEntry>(existing.map((e) => [e.id, e]));
+  const result = mapAlpacaOrdersToJournalEntries(overview.orders, overview.positions, existing);
+
+  if (result.addedCount > 0 || result.updatedCount > 0) {
+    saveJournalEntries(result.entries);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('trullas-journal-updated', {
+          detail: {
+            addedCount: result.addedCount,
+            updatedCount: result.updatedCount,
+            totalAlpacaEntries: result.totalAlpacaEntries,
+          },
+        })
+      );
+    }
+
+    if (auth.currentUser) {
+      for (const entry of result.entries) {
+        if (!entry.tags.includes('Alpaca Paper')) continue;
+        const prev = prevById.get(entry.id);
+        if (!prev) {
+          createJournalEntryInFirestore(entry).catch((err) =>
+            console.warn('Firestore Alpaca sync create skipped:', err)
+          );
+        } else if (
+          prev.status !== entry.status ||
+          prev.exitPrice !== entry.exitPrice ||
+          prev.realizedPnL !== entry.realizedPnL ||
+          prev.tags.length !== entry.tags.length
+        ) {
+          updateJournalEntryInFirestore(entry.id, {
+            status: entry.status,
+            exitPrice: entry.exitPrice,
+            exitDate: entry.exitDate,
+            realizedPnL: entry.realizedPnL,
+            pnlPercent: entry.pnlPercent,
+            notes: entry.notes,
+            tags: entry.tags,
+            executionRating: entry.executionRating,
+          }).catch((err) => console.warn('Firestore Alpaca sync update skipped:', err));
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+export async function fetchAlpacaOptionContracts(params: {
+  underlying: string;
+  type?: 'put' | 'call';
+  minDte?: number;
+  maxDte?: number;
+  maxStrike?: number;
+  minStrike?: number;
+  limit?: number;
+}): Promise<{ ok: boolean; contracts: AlpacaOptionContractDTO[]; error?: string }> {
+  const qs = new URLSearchParams({
+    underlying: params.underlying,
+    type: params.type || 'put',
+  });
+  if (params.minDte !== undefined) qs.set('minDte', String(params.minDte));
+  if (params.maxDte !== undefined) qs.set('maxDte', String(params.maxDte));
+  if (params.maxStrike !== undefined) qs.set('maxStrike', String(params.maxStrike));
+  if (params.minStrike !== undefined) qs.set('minStrike', String(params.minStrike));
+  if (params.limit !== undefined) qs.set('limit', String(params.limit));
+
+  const res = await fetch(`/api/alpaca/options/contracts?${qs.toString()}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      contracts: [],
+      error: data?.error || `HTTP ${res.status}`,
+    };
+  }
+  return {
+    ok: true,
+    contracts: Array.isArray(data?.contracts) ? data.contracts : [],
+  };
+}
+
+export function useAlpacaPaper(options: { pollMs?: number } = {}) {
+  const pollMs = options.pollMs ?? 30000;
+  const [overview, setOverview] = useState<AlpacaOverviewDTO | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastSyncSummary, setLastSyncSummary] = useState<{
+    addedCount: number;
+    updatedCount: number;
+    totalAlpacaEntries: number;
+    syncedAt: string;
+  } | null>(null);
+
+  const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const refresh = useCallback(async (): Promise<AlpacaOverviewDTO | null> => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const res = await fetch('/api/alpaca/overview', { signal: controller.signal });
+      const data = (await res.json()) as AlpacaOverviewDTO;
+      if (!mountedRef.current || controller.signal.aborted) return null;
+
+      setOverview(data);
+      setError(data.error || null);
+
+      if (data.configured && data.account) {
+        const sync = syncAlpacaOverviewToLocalJournal(data);
+        setLastSyncSummary({
+          addedCount: sync.addedCount,
+          updatedCount: sync.updatedCount,
+          totalAlpacaEntries: sync.totalAlpacaEntries,
+          syncedAt: new Date().toISOString(),
+        });
+      }
+      return data;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return null;
+      if (mountedRef.current) {
+        setError(err?.message || 'Unable to connect to Alpaca Paper proxy.');
+      }
+      return null;
+    } finally {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!overview?.configured || pollMs <= 0) return;
+    const id = setInterval(() => {
+      refresh();
+    }, pollMs);
+    return () => clearInterval(id);
+  }, [overview?.configured, pollMs, refresh]);
+
+  const submitOrder = useCallback(
+    async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
+      const res = await fetch('/api/alpaca/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: data?.error || `Alpaca order rejected (HTTP ${res.status})` };
+      }
+      await refresh();
+      return { ok: true, order: data.order };
+    },
+    [refresh]
+  );
+
+  const closePosition = useCallback(
+    async (
+      symbol: string,
+      opts?: { qty?: number; percentage?: number }
+    ): Promise<{ ok: boolean; order?: any; error?: string }> => {
+      const qs = new URLSearchParams();
+      if (opts?.qty !== undefined && opts.qty > 0) qs.set('qty', String(opts.qty));
+      else if (opts?.percentage !== undefined && opts.percentage > 0 && opts.percentage < 100) {
+        qs.set('percentage', String(opts.percentage));
+      }
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      const res = await fetch(`/api/alpaca/positions/${encodeURIComponent(symbol)}${suffix}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: data?.error || `Alpaca close rejected (HTTP ${res.status})` };
+      }
+      await refresh();
+      return { ok: true, order: data.order };
+    },
+    [refresh]
+  );
+
+  const cancelOrder = useCallback(
+    async (orderId: string): Promise<{ ok: boolean; error?: string }> => {
+      const res = await fetch(`/api/alpaca/orders/${encodeURIComponent(orderId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: data?.error || `Cancel rejected (HTTP ${res.status})` };
+      }
+      await refresh();
+      return { ok: true };
+    },
+    [refresh]
+  );
+
+  return {
+    overview,
+    loading,
+    error,
+    lastSyncSummary,
+    refresh,
+    submitOrder,
+    closePosition,
+    cancelOrder,
+  };
+}

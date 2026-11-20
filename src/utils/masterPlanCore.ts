@@ -5,6 +5,8 @@
 
 import { ENGINE_VERSION } from './trullasOutcomeEngine';
 import { isMarketHoliday, isEarlyClosing } from './marketCalendar';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 export type DataQuality = 'live' | 'cached' | 'estimated';
 
@@ -85,7 +87,7 @@ export interface MasterPlanSettings {
   maxSectorExposurePct: number;// default: 30.0%
   dataQuality: DataQuality;    // 'live' | 'cached' | 'estimated'
   botStatus: BotStateStatus;   // 'armed' | 'paused' | 'killed'
-  activeEpochId: string;       // default: 'epoch-2k-virtual'
+  activeEpochId: string;       // default: 'alpaca-paper'
 }
 
 const STORAGE_KEYS = {
@@ -107,8 +109,109 @@ export const DEFAULT_SETTINGS: MasterPlanSettings = {
   maxSectorExposurePct: 30.0,
   dataQuality: 'live',
   botStatus: 'armed',
-  activeEpochId: 'epoch-2k-virtual',
+  activeEpochId: 'alpaca-paper',
 };
+
+const VALID_BOT_STATUSES = new Set<BotStateStatus>(['armed', 'paused', 'killed']);
+const VALID_DATA_QUALITIES = new Set<DataQuality>(['live', 'cached', 'estimated']);
+
+export function clampSettingsBounds(input: Partial<MasterPlanSettings>): MasterPlanSettings {
+  const capNum = Number(input.simCapitalUsd);
+  const simCapitalUsd =
+    Number.isFinite(capNum) && capNum >= 0
+      ? Math.min(100_000_000, capNum)
+      : DEFAULT_SETTINGS.simCapitalUsd;
+
+  const riskNum = Number(input.maxRiskPerTradePct);
+  const maxRiskPerTradePct =
+    Number.isFinite(riskNum) && riskNum > 0
+      ? Math.min(100, riskNum)
+      : DEFAULT_SETTINGS.maxRiskPerTradePct;
+
+  const dailyLossNum = Number(input.dailyLossLimitPct);
+  const dailyLossLimitPct =
+    Number.isFinite(dailyLossNum) && dailyLossNum > 0
+      ? Math.min(100, dailyLossNum)
+      : DEFAULT_SETTINGS.dailyLossLimitPct;
+
+  const sectorExpNum = Number(input.maxSectorExposurePct);
+  const maxSectorExposurePct =
+    Number.isFinite(sectorExpNum)
+      ? Math.min(100, Math.max(0, sectorExpNum))
+      : DEFAULT_SETTINGS.maxSectorExposurePct;
+
+  const botStatus = VALID_BOT_STATUSES.has(input.botStatus as BotStateStatus)
+    ? (input.botStatus as BotStateStatus)
+    : DEFAULT_SETTINGS.botStatus;
+
+  const dataQuality = VALID_DATA_QUALITIES.has(input.dataQuality as DataQuality)
+    ? (input.dataQuality as DataQuality)
+    : DEFAULT_SETTINGS.dataQuality;
+
+  const rawEpoch = typeof input.activeEpochId === 'string' ? input.activeEpochId.trim() : '';
+  const activeEpochId = (rawEpoch || DEFAULT_SETTINGS.activeEpochId).slice(0, 64);
+
+  return {
+    simCapitalUsd,
+    maxRiskPerTradePct,
+    dailyLossLimitPct,
+    maxSectorExposurePct,
+    dataQuality,
+    botStatus,
+    activeEpochId,
+  };
+}
+
+export interface UserBotStateFirestoreFields {
+  ownerId: string;
+  simCapitalUsd: number;
+  maxRiskPerTradePct: number;
+  dailyLossLimitPct: number;
+  maxSectorExposurePct: number;
+  botStatus: BotStateStatus;
+  activeEpochId: string;
+}
+
+export type UserBotStateUpdateFields = Omit<UserBotStateFirestoreFields, 'ownerId'>;
+
+export function toUserBotStateFirestoreFields(
+  settings: MasterPlanSettings,
+  ownerId: string
+): UserBotStateFirestoreFields {
+  const clamped = clampSettingsBounds(settings);
+  return {
+    ownerId,
+    simCapitalUsd: clamped.simCapitalUsd,
+    maxRiskPerTradePct: clamped.maxRiskPerTradePct,
+    dailyLossLimitPct: clamped.dailyLossLimitPct,
+    maxSectorExposurePct: clamped.maxSectorExposurePct,
+    botStatus: clamped.botStatus,
+    activeEpochId: clamped.activeEpochId,
+  };
+}
+
+export function toUserBotStateUpdateFields(settings: MasterPlanSettings): UserBotStateUpdateFields {
+  const clamped = clampSettingsBounds(settings);
+  return {
+    simCapitalUsd: clamped.simCapitalUsd,
+    maxRiskPerTradePct: clamped.maxRiskPerTradePct,
+    dailyLossLimitPct: clamped.dailyLossLimitPct,
+    maxSectorExposurePct: clamped.maxSectorExposurePct,
+    botStatus: clamped.botStatus,
+    activeEpochId: clamped.activeEpochId,
+  };
+}
+
+export function mergeCloudUserBotSettings(
+  local: MasterPlanSettings,
+  remote: Partial<MasterPlanSettings>
+): MasterPlanSettings {
+  return clampSettingsBounds({
+    ...local,
+    ...remote,
+    dataQuality: local.dataQuality,
+  });
+}
 
 let currentSettings: MasterPlanSettings = { ...DEFAULT_SETTINGS };
 const settingsListeners = new Set<(s: MasterPlanSettings) => void>();
@@ -119,12 +222,15 @@ export function loadSettings(): MasterPlanSettings {
       const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (raw) {
         const parsed = JSON.parse(raw);
-        currentSettings = { ...DEFAULT_SETTINGS, ...parsed };
+        currentSettings = clampSettingsBounds({ ...DEFAULT_SETTINGS, ...parsed });
       } else {
         const cap = localStorage.getItem(STORAGE_KEYS.SIM_CAPITAL);
         const rsk = localStorage.getItem(STORAGE_KEYS.SIM_RISK);
-        if (cap) currentSettings.simCapitalUsd = Number(cap) || 2000;
-        if (rsk) currentSettings.maxRiskPerTradePct = Number(rsk) || 1.0;
+        currentSettings = clampSettingsBounds({
+          ...DEFAULT_SETTINGS,
+          simCapitalUsd: cap ? Number(cap) : DEFAULT_SETTINGS.simCapitalUsd,
+          maxRiskPerTradePct: rsk ? Number(rsk) : DEFAULT_SETTINGS.maxRiskPerTradePct,
+        });
       }
     }
   } catch (err) {
@@ -134,7 +240,7 @@ export function loadSettings(): MasterPlanSettings {
 }
 
 export function saveSettings(updated: Partial<MasterPlanSettings>): MasterPlanSettings {
-  currentSettings = { ...currentSettings, ...updated };
+  currentSettings = clampSettingsBounds({ ...currentSettings, ...updated });
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(currentSettings));
@@ -156,6 +262,65 @@ export function subscribeSettings(cb: (s: MasterPlanSettings) => void): () => vo
 
 export function getRiskUsd(settings: MasterPlanSettings = currentSettings): number {
   return (settings.simCapitalUsd * settings.maxRiskPerTradePct) / 100;
+}
+
+export async function loadUserBotStateFromFirestore(): Promise<Partial<MasterPlanSettings> | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  const path = `users/${user.uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    if (!snap.exists()) return null;
+    const data = snap.data() as Record<string, any>;
+    const merged = clampSettingsBounds({
+      simCapitalUsd: data.simCapitalUsd,
+      maxRiskPerTradePct: data.maxRiskPerTradePct,
+      dailyLossLimitPct: data.dailyLossLimitPct,
+      maxSectorExposurePct: data.maxSectorExposurePct,
+      botStatus: data.botStatus,
+      activeEpochId: data.activeEpochId,
+    });
+    return {
+      simCapitalUsd: merged.simCapitalUsd,
+      maxRiskPerTradePct: merged.maxRiskPerTradePct,
+      dailyLossLimitPct: merged.dailyLossLimitPct,
+      maxSectorExposurePct: merged.maxSectorExposurePct,
+      botStatus: merged.botStatus,
+      activeEpochId: merged.activeEpochId,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+    return null;
+  }
+}
+
+export async function saveUserBotStateToFirestore(
+  settings: MasterPlanSettings
+): Promise<{ synced: boolean; mode?: 'created' | 'updated' }> {
+  const user = auth.currentUser;
+  if (!user) return { synced: false };
+  const path = `users/${user.uid}`;
+  const ref = doc(db, 'users', user.uid);
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, {
+        ...toUserBotStateUpdateFields(settings),
+        updatedAt: serverTimestamp(),
+      });
+      return { synced: true, mode: 'updated' };
+    }
+    await setDoc(ref, {
+      ...toUserBotStateFirestoreFields(settings, user.uid),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return { synced: true, mode: 'created' };
+  } catch (error) {
+    const op = OperationType.WRITE;
+    handleFirestoreError(error, op, path);
+    return { synced: false };
+  }
 }
 
 /* =====================================================================

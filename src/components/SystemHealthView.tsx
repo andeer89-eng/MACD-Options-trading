@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Activity,
   Cpu,
@@ -36,12 +36,29 @@ export const SystemHealthView: React.FC = () => {
   const [isPinging, setIsPinging] = useState(false);
   const [cacheClearNotice, setCacheClearNotice] = useState<string | null>(null);
 
+  const isMountedRef = useRef<boolean>(true);
+  const healthAbortRef = useRef<AbortController | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      healthAbortRef.current?.abort();
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
   // Fetch real-time health data from backend API
   const fetchHealthData = async () => {
+    healthAbortRef.current?.abort();
+    const controller = new AbortController();
+    healthAbortRef.current = controller;
     try {
-      const res = await fetch('/api/system-health');
+      const res = await fetch('/api/system-health', { signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (!isMountedRef.current || controller.signal.aborted) return;
       const recentLatencies: number[] = Array.isArray(data.recentLatencies) ? data.recentLatencies : [];
       const historyMapped = recentLatencies.map((latencyMs, i) => ({
         timestamp: `Cycle ${i + 1}`,
@@ -76,9 +93,10 @@ export const SystemHealthView: React.FC = () => {
       }));
       setHealthError(null);
     } catch (err: any) {
+      if (err?.name === 'AbortError' || !isMountedRef.current) return;
       setHealthError(err?.message || 'Unable to connect to /api/system-health telemetry endpoint.');
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) setIsLoading(false);
     }
   };
 
@@ -86,13 +104,36 @@ export const SystemHealthView: React.FC = () => {
     fetchHealthData();
   }, []);
 
-  // 3-second live auto-refresh interval
+  // Subscribe to consolidated SSE market-stream-pulse instead of aggressive 3s polling
   useEffect(() => {
     if (!autoRefresh) return;
-    const intervalId = setInterval(() => {
-      fetchHealthData();
-    }, 3000);
-    return () => clearInterval(intervalId);
+    const handlePulse = (evt: Event) => {
+      const pulse = (evt as CustomEvent).detail;
+      if (!pulse || !isMountedRef.current) return;
+      setHealthData((prev) => ({
+        ...prev,
+        status: pulse.status ?? prev.status,
+        uptimeSeconds: pulse.uptimeSeconds ?? prev.uptimeSeconds,
+        uptimeFormatted: formatUptime(pulse.uptimeSeconds ?? prev.uptimeSeconds),
+        apiQuota: {
+          ...prev.apiQuota,
+          usedRequests: pulse.usedRequests ?? prev.apiQuota.usedRequests,
+        },
+        cache: {
+          ...prev.cache,
+          cachedSymbolsCount: pulse.cachedSymbolsCount ?? prev.cache.cachedSymbolsCount,
+          estimatedMemoryKb: Math.round((pulse.cachedSymbolsCount ?? prev.cache.cachedSymbolsCount) * 2.8),
+        },
+        daemon: {
+          ...prev.daemon,
+          consecutiveSuccessfulScans:
+            pulse.consecutiveSuccessfulScans ?? prev.daemon.consecutiveSuccessfulScans,
+          lastHeartbeat: pulse.lastScanTimestampIso || prev.daemon.lastHeartbeat,
+        },
+      }));
+    };
+    window.addEventListener('market-stream-pulse', handlePulse);
+    return () => window.removeEventListener('market-stream-pulse', handlePulse);
   }, [autoRefresh]);
 
   // Execute live latency diagnostic ping
@@ -103,16 +144,21 @@ export const SystemHealthView: React.FC = () => {
     try {
       const res = await fetch('/api/system-health/ping');
       const roundtrip = Date.now() - start;
+      if (!isMountedRef.current) return;
       if (res.ok) {
         const data = await res.json();
-        setPingResult({ pingMs: data.pingMs || roundtrip, ok: true, timestamp: Date.now() });
+        if (isMountedRef.current) {
+          setPingResult({ pingMs: data.pingMs || roundtrip, ok: true, timestamp: Date.now() });
+        }
       } else {
         setPingResult({ pingMs: roundtrip, ok: false, timestamp: Date.now() });
       }
     } catch {
-      setPingResult({ pingMs: Date.now() - start, ok: false, timestamp: Date.now() });
+      if (isMountedRef.current) {
+        setPingResult({ pingMs: Date.now() - start, ok: false, timestamp: Date.now() });
+      }
     } finally {
-      setIsPinging(false);
+      if (isMountedRef.current) setIsPinging(false);
     }
   };
 
@@ -120,14 +166,17 @@ export const SystemHealthView: React.FC = () => {
   const handleClearCache = async () => {
     try {
       const res = await fetch('/api/system-health/clear-cache', { method: 'POST' });
-      if (res.ok) {
+      if (res.ok && isMountedRef.current) {
         const data = await res.json();
         setCacheClearNotice(`Successfully purged ${data.clearedCount} cached assets from in-memory cache.`);
         fetchHealthData();
-        setTimeout(() => setCacheClearNotice(null), 4000);
+        if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = setTimeout(() => {
+          if (isMountedRef.current) setCacheClearNotice(null);
+        }, 4000);
       }
     } catch {
-      setCacheClearNotice('Cache clear completed.');
+      if (isMountedRef.current) setCacheClearNotice('Cache clear completed.');
     }
   };
 
@@ -305,7 +354,7 @@ export const SystemHealthView: React.FC = () => {
                   const heightPercent = Math.min(100, Math.max(15, (item.latencyMs / 500) * 100));
                   return (
                     <div
-                      key={idx}
+                      key={`${item.timestamp}-${idx}`}
                       title={`${item.timestamp}: ${item.latencyMs}ms`}
                       className="flex-1 bg-emerald-500/70 hover:bg-emerald-400 rounded-t transition"
                       style={{ height: `${heightPercent}%` }}

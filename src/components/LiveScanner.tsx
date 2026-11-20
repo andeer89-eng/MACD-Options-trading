@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Search,
   RefreshCw,
@@ -220,7 +221,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     (item) => (item.atrPercent !== undefined ? item.atrPercent : 2.0) < minAtrPercent
   ).length;
 
-  const [visibleCount, setVisibleCount] = useState<number>(24);
+  const scannerScrollRef = useRef<HTMLDivElement>(null);
 
   const enrichedBySymbol = useMemo(() => {
     const map = new Map<
@@ -307,22 +308,12 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     selectedStageFilter,
   ]);
 
-  useEffect(() => {
-    setVisibleCount(24);
-  }, [
-    filterType,
-    selectedSectorFilter,
-    selectedStageFilter,
-    atrFilterActive,
-    minAtrPercent,
-    showStagnantSymbols,
-    results.length,
-  ]);
-
-  const visibleResults = useMemo(
-    () => filteredResults.slice(0, visibleCount),
-    [filteredResults, visibleCount]
-  );
+  const scannerVirtualizer = useVirtualizer({
+    count: filteredResults.length,
+    getScrollElement: () => scannerScrollRef.current,
+    estimateSize: () => 184,
+    overscan: 6,
+  });
 
   const totalTripleCount = results.filter((r) => r.hasTripleDivergence).length;
   const totalBullish = results.filter((r) =>
@@ -859,35 +850,61 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         </div>
 
         <div className="text-xs text-zinc-500 font-mono">
-          Showing {visibleResults.length} of {filteredResults.length} matches (Excluding stagnant: {atrFilterActive && !showStagnantSymbols ? 'YES' : 'NO'})
+          Showing {filteredResults.length} matches (Virtualized &bull; Excluding stagnant: {atrFilterActive && !showStagnantSymbols ? 'YES' : 'NO'})
         </div>
       </div>
 
       {/* Results List */}
       <div className="space-y-4">
-        {filteredResults.length === 0 && (
+        {filteredResults.length === 0 ? (
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-10 text-center text-xs font-mono text-zinc-400">
             {scanning
               ? 'Scanning live Yahoo Finance feeds across active universe...'
               : 'No live setups matched current filters. Click Scan or broaden filters above.'}
           </div>
-        )}
-        {visibleResults.map((item) => {
-          const mainSetup = item.setups[0];
-          const hasSetup = Boolean(mainSetup);
-          const isBull = mainSetup?.type.includes('BULLISH');
-          const atrPct = item.atrPercent !== undefined ? item.atrPercent : 0;
-          const isStagnant = atrPct < minAtrPercent;
-          const scanItemKey = `${item.symbol}-${item.timeframe || timeframe}`;
-          const enriched = enrichedBySymbol.get(item.symbol);
-          const conf = enriched?.conf;
-          const stageSummary = enriched?.stageSummary;
-          const weighting = enriched?.weighting ?? null;
-
-          return (
+        ) : (
+          <div
+            ref={scannerScrollRef}
+            data-testid="scanner-virtual-list"
+            className="max-h-[760px] overflow-y-auto pr-1"
+          >
             <div
-              key={scanItemKey}
-              className={`bg-zinc-900 border rounded-xl p-5 transition hover:border-zinc-700 ${
+              style={{
+                height: `${scannerVirtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {scannerVirtualizer.getVirtualItems().map((virtualRow) => {
+                const item = filteredResults[virtualRow.index];
+                if (!item) return null;
+                const mainSetup = item.setups[0];
+                const hasSetup = Boolean(mainSetup);
+                const isBull = mainSetup?.type.includes('BULLISH');
+                const atrPct = item.atrPercent !== undefined ? item.atrPercent : 0;
+                const isStagnant = atrPct < minAtrPercent;
+                const scanItemKey = `${item.symbol}-${item.timeframe || timeframe}`;
+                const enriched = enrichedBySymbol.get(item.symbol);
+                const conf = enriched?.conf;
+                const stageSummary = enriched?.stageSummary;
+                const weighting = enriched?.weighting ?? null;
+
+                return (
+                  <div
+                    key={scanItemKey}
+                    data-index={virtualRow.index}
+                    ref={scannerVirtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                      paddingBottom: '16px',
+                    }}
+                  >
+                    <div
+                      className={`bg-zinc-900 border rounded-xl p-5 transition hover:border-zinc-700 ${
                 isStagnant && showStagnantSymbols
                   ? 'border-zinc-800 opacity-60 bg-zinc-950/60'
                   : mainSetup?.type.includes('TRIPLE')
@@ -1177,18 +1194,11 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                   </div>
                 </div>
               )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-        {filteredResults.length > visibleResults.length && (
-          <div className="pt-2 flex justify-center">
-            <button
-              type="button"
-              onClick={() => setVisibleCount((prev) => prev + 24)}
-              className="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-mono font-bold transition"
-            >
-              Show 24 More ({filteredResults.length - visibleResults.length} remaining)
-            </button>
           </div>
         )}
       </div>

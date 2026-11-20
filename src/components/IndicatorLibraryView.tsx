@@ -28,8 +28,8 @@ import {
 } from '../utils/indicatorLibrary';
 import {
   executePineScriptIndicator,
-  buildSampleValidationCandles,
 } from '../utils/pineScriptExecutor';
+import type { Candle } from '../utils/trullasStrategy';
 
 interface IndicatorLibraryViewProps {
   onSelectIndicatorForChart?: (indicator: CustomPineIndicator) => void;
@@ -94,6 +94,8 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
     updateIndicatorsState(updated);
   };
 
+  const validationCandlesRef = React.useRef<Candle[] | null>(null);
+
   const handleValidateAndTranspile = async () => {
     if (!pasteCode.trim()) {
       setValidationError('Please enter or paste TradingView Pine Script code.');
@@ -105,7 +107,26 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
     setTranspileResult(null);
 
     try {
-      const sampleBars = buildSampleValidationCandles(80, 150);
+      let liveBars = validationCandlesRef.current;
+      if (!liveBars || liveBars.length < 25) {
+        const candleRes = await fetch('/api/candles?symbol=AAPL&timeframe=1d&range=6mo');
+        if (candleRes.ok) {
+          const candleJson = await candleRes.json();
+          if (Array.isArray(candleJson?.candles) && candleJson.candles.length >= 25) {
+            liveBars = candleJson.candles;
+            validationCandlesRef.current = liveBars;
+          }
+        }
+      }
+
+      if (!liveBars || liveBars.length < 25) {
+        setTranspileResult({
+          valid: false,
+          error: 'Live market candles unavailable (at least 25 real AAPL bars required for validation).',
+        });
+        return;
+      }
+
       const [execRes, apiRes] = await Promise.all([
         executePineScriptIndicator(
           {
@@ -113,7 +134,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
             name: indicatorName.trim() || 'Imported Indicator',
             pineCode: pasteCode,
           },
-          sampleBars,
+          liveBars,
           { symbol: 'AAPL', timeframe: '1d' }
         ),
         fetch('/api/luxalgo/pinets-run', {
@@ -121,6 +142,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             symbol: 'AAPL',
+            candles: liveBars,
             pineCode: pasteCode,
           }),
         })

@@ -374,8 +374,3 @@ export function parseBrokerCsvToJournalEntries(
     totalDataRows: rows.length - 1,
   };
 }
-
-export const SAMPLE_BROKER_CSV = `Symbol,Side,Entry Date,Exit Date,Quantity,Entry Price,Exit Price,Stop Loss,Target Price,Notes
-NVDA,Long,2026-10-08,2026-10-21,20,124.50,136.80,119.20,136.50,Stage 2 bullish triple divergence breakout
-AAPL,Long,2026-10-14,2026-10-25,15,221.40,229.90,217.50,231.00,RSI and MACD momentum confirmation
-AMD,Short,2026-10-16,2026-10-20,12,158.00,162.40,162.40,147.00,Respected hard stop above swing high`;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Bot,
   Zap,
@@ -44,20 +44,26 @@ import {
   PortfolioStats,
   EquityPoint,
   AdvancedPerformanceAnalytics,
+  initDefaultPortfolio,
   loadAutomatedPortfolio,
   saveAutomatedPortfolio,
-  resetAutomatedPortfolio,
   calculatePortfolioStats,
   calculateAdvancedAnalytics,
-  processAutonomousCycle,
-  manualCloseAutomatedPosition,
-  exportAutomatedLogsToCSV,
   evaluateCboeOptionsConfluence,
+  exportAutomatedLogsToCSV,
 } from '../utils/automatedPortfolio';
 import { downloadCSV } from '../utils/tradeJournal';
+import { loadSettings } from '../utils/masterPlanCore';
+import {
+  alpacaPositionsToAutomatedPositions,
+  alpacaOrdersToAutomatedLogs,
+  mapAlpacaOrdersToJournalEntries,
+  parseOccOptionSymbol,
+  selectAlpacaEquityCandidates,
+} from '../utils/alpacaJournalSync';
+import { useAlpacaPaper } from '../hooks/useAlpacaPaper';
 import {
   ActiveMemoryState,
-  TradeEpisode,
   loadActiveMemoryState,
   saveActiveMemoryState,
   resetActiveMemoryState,
@@ -74,6 +80,16 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   onSelectSymbolForChart,
   scannerResults = [],
 }) => {
+  const {
+    overview,
+    loading: alpacaLoading,
+    error: alpacaError,
+    lastSyncSummary,
+    refresh: refreshAlpaca,
+    submitOrder,
+    closePosition,
+  } = useAlpacaPaper({ pollMs: 30000 });
+
   const [account, setAccount] = useState<PortfolioAccount>(() => loadAutomatedPortfolio());
   const [portfolioTab, setPortfolioTab] = useState<'positions' | 'analytics' | 'brain'>('positions');
   const [chartMode, setChartMode] = useState<'equity' | 'drawdown' | 'combined'>('combined');
@@ -82,9 +98,70 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   const [isCycleRunning, setIsCycleRunning] = useState(false);
   const [isSynthesizingMemory, setIsSynthesizingMemory] = useState(false);
   const [logFilter, setLogFilter] = useState<'ALL' | 'OPEN' | 'PARTIAL_EXIT' | 'FULL_EXIT' | 'STOP_LOSS'>('ALL');
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showResetMemoryConfirm, setShowResetMemoryConfirm] = useState(false);
   const [expandedPositionIds, setExpandedPositionIds] = useState<Set<string>>(new Set());
+
+  const isAlpacaConnected = Boolean(overview?.configured && overview?.account);
+
+  const livePortfolio = useMemo<PortfolioAccount>(() => {
+    if (!overview?.configured || !overview?.account) {
+      return {
+        ...initDefaultPortfolio(0),
+        isAutoPilotActive: account.isAutoPilotActive,
+        riskPerTradePercent: account.riskPerTradePercent,
+        maxOpenPositions: account.maxOpenPositions,
+        activeMemory: account.activeMemory,
+      };
+    }
+
+    const eqOrders = (overview.orders || []).filter(
+      (o) => o.asset_class !== 'us_option' && !parseOccOptionSymbol(o.symbol).isOption
+    );
+    const livePositions = alpacaPositionsToAutomatedPositions(
+      overview.equityPositions || [],
+      eqOrders,
+      scannerResults
+    );
+    const closedEqEntries = mapAlpacaOrdersToJournalEntries(
+      eqOrders,
+      overview.equityPositions || [],
+      []
+    ).entries.filter((e) => e.status !== 'OPEN');
+
+    const closedLogs: AutomatedTradeLog[] = closedEqEntries.map((e) => ({
+      id: `alpaca-closed-${e.id}`,
+      timestamp: `${e.exitDate || e.entryDate} 16:00`,
+      positionId: e.id,
+      symbol: e.symbol,
+      action: e.realizedPnL !== undefined && e.realizedPnL < 0 ? 'STOP_LOSS' : 'FULL_EXIT',
+      shares: e.quantity,
+      price: e.exitPrice ?? e.entryPrice,
+      realizedPnL: e.realizedPnL,
+      realizedPnLPercent: e.pnlPercent,
+      reason: e.notes,
+    }));
+
+    const orderLogs = alpacaOrdersToAutomatedLogs(eqOrders);
+    const rawEquity = overview.account.equity;
+    const rawUnrealized = livePositions.reduce((s, p) => s + p.unrealizedPnL, 0);
+    const totalRealized = closedEqEntries.reduce((s, e) => s + (e.realizedPnL || 0), 0);
+    const inferredBaseline = Math.max(0, Number((rawEquity - totalRealized - rawUnrealized).toFixed(2)));
+
+    return {
+      startingBalance: inferredBaseline > 0 ? inferredBaseline : overview.account.last_equity || rawEquity,
+      cash: overview.account.cash,
+      equity: rawEquity,
+      realizedPnL: Number(totalRealized.toFixed(2)),
+      unrealizedPnL: Number(rawUnrealized.toFixed(2)),
+      positions: livePositions,
+      tradeHistory: closedLogs.length > 0 ? closedLogs : orderLogs,
+      isAutoPilotActive: account.isAutoPilotActive,
+      riskPerTradePercent: account.riskPerTradePercent,
+      maxOpenPositions: account.maxOpenPositions,
+      lastUpdated: overview.fetchedAt,
+      activeMemory: account.activeMemory,
+    };
+  }, [overview, scannerResults, account.isAutoPilotActive, account.riskPerTradePercent, account.maxOpenPositions, account.activeMemory]);
 
   const togglePositionExpand = (posId: string) => {
     setExpandedPositionIds((prev) => {
@@ -99,7 +176,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   };
 
   const handleExpandAllPositions = () => {
-    setExpandedPositionIds(new Set(account.positions.map((p) => p.id)));
+    setExpandedPositionIds(new Set(livePortfolio.positions.map((p) => p.id)));
   };
 
   const handleCollapseAllPositions = () => {
@@ -135,7 +212,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
     const dollarRisk = ((stats.currentEquity * riskVal) / 100).toFixed(2);
     setLastCycleMessage(
-      `Risk Controls Saved: Risk per trade set to ${riskVal}% ($${dollarRisk} USD on $${stats.currentEquity.toFixed(2)} equity). Max open positions cap set to ${posCapVal}.`
+      `Risk Controls Saved: Risk per trade set to ${riskVal}% ($${dollarRisk} USD on $${stats.currentEquity.toFixed(2)} Alpaca Paper equity). Max open positions cap set to ${posCapVal}.`
     );
   };
 
@@ -161,54 +238,90 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     };
   }, []);
 
-  // Sync to localStorage whenever account updates
+  // Persist bot settings and memory changes cleanly
   useEffect(() => {
     saveAutomatedPortfolio(account);
   }, [account]);
 
   const stats: PortfolioStats = useMemo(() => {
-    return calculatePortfolioStats(account);
-  }, [account]);
+    return calculatePortfolioStats(livePortfolio);
+  }, [livePortfolio]);
 
   const analytics: AdvancedPerformanceAnalytics = useMemo(() => {
-    return calculateAdvancedAnalytics(account, spyBenchmarkReturnPct);
-  }, [account, spyBenchmarkReturnPct]);
+    return calculateAdvancedAnalytics(livePortfolio, spyBenchmarkReturnPct);
+  }, [livePortfolio, spyBenchmarkReturnPct]);
 
+  const overviewRef = useRef(overview);
+  overviewRef.current = overview;
+
+
+  const accountRef = useRef<PortfolioAccount>(account);
+  const scannerResultsRef = useRef<any[]>(scannerResults);
+  const cycleInFlightRef = useRef<boolean>(false);
+  const cycleAbortRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
+
+  useEffect(() => {
+    scannerResultsRef.current = scannerResults;
+  }, [scannerResults]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      cycleAbortRef.current?.abort();
+    };
+  }, []);
 
   // Auto-Pilot Cycle Trigger
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (account.isAutoPilotActive) {
-      interval = setInterval(() => {
-        const session = getMarketSessionStatus();
-        if (session === 'OPEN') {
-          handleRunCycle();
-        }
-      }, 60000); // Check every minute
-    }
+    if (!account.isAutoPilotActive) return;
+    const interval = setInterval(() => {
+      const session = getMarketSessionStatus();
+      if (session === 'OPEN') {
+        handleRunCycle();
+      }
+    }, 60000); // Check every minute
     return () => clearInterval(interval);
   }, [account.isAutoPilotActive]);
 
-  // Execute Auto-Pilot Cycle
+  // Execute Alpaca Paper Equity Auto-Pilot Cycle
   const handleRunCycle = async (force: boolean = false) => {
+    const activeOverview = overviewRef.current;
+    if (!activeOverview?.configured || !activeOverview?.account) {
+      setLastCycleMessage(
+        'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env to execute Paper orders.'
+      );
+      return;
+    }
+
     if (!force) {
       const session = getMarketSessionStatus();
       if (session !== 'OPEN') {
-        setLastCycleMessage(`Market is ${session}. Auto-pilot paused.`);
+        setLastCycleMessage(`Market is ${session}. Auto-pilot scheduled check paused.`);
         return;
       }
     }
+    if (cycleInFlightRef.current) return;
+    cycleInFlightRef.current = true;
+    cycleAbortRef.current?.abort();
+    const controller = new AbortController();
+    cycleAbortRef.current = controller;
 
     setIsCycleRunning(true);
-    setLastCycleMessage('Evaluating Trullàs 4-Pillars rules, Fibonacci targets, and stop-loss levels...');
+    setLastCycleMessage('Scanning US equities and evaluating Alpaca Paper 4-Pillars setups...');
 
     try {
-      // If no scanner results provided yet, fetch fresh market data from /api/scan
-      let marketItems = scannerResults;
+      let marketItems = scannerResultsRef.current;
       if (!marketItems || marketItems.length === 0) {
         const res = await fetch('/api/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             tickers: ['AAPL', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'TSLA', 'JPM', 'LLY', 'XOM', 'SPY', 'AMD', 'AVGO'],
             timeframe: '1d',
@@ -220,22 +333,69 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         }
       }
 
-      const { updatedAccount, actionsTaken } = processAutonomousCycle(account, marketItems);
-      setAccount(updatedAccount);
+      if (!isMountedRef.current || controller.signal.aborted) return;
 
-      if (actionsTaken.length > 0) {
+      const masterSettings = {
+        ...loadSettings(),
+        maxRiskPerTradePct: accountRef.current.riskPerTradePercent || 1.0,
+      };
+      const { ordersToPlace, positionsToClose } = selectAlpacaEquityCandidates(
+        activeOverview,
+        marketItems,
+        masterSettings,
+        accountRef.current.maxOpenPositions || 5
+      );
+
+      let executedCount = 0;
+      const messages: string[] = [];
+
+      for (const exitItem of positionsToClose) {
+        const closeRes = await closePosition(exitItem.symbol, { percentage: exitItem.percentage });
+        if (closeRes.ok) {
+          executedCount++;
+          messages.push(`Closed ${exitItem.symbol} (${exitItem.reason})`);
+        } else if (closeRes.error) {
+          messages.push(`Exit error ${exitItem.symbol}: ${closeRes.error}`);
+        }
+      }
+
+      for (const cand of ordersToPlace) {
+        const orderRes = await submitOrder({
+          symbol: cand.symbol,
+          side: cand.side,
+          qty: cand.qty,
+          type: cand.type,
+          time_in_force: cand.time_in_force,
+        });
+        if (orderRes.ok) {
+          executedCount++;
+          messages.push(`Submitted Alpaca Paper BUY ${cand.qty} ${cand.symbol}`);
+        } else if (orderRes.error) {
+          messages.push(`Order error ${cand.symbol}: ${orderRes.error}`);
+        }
+      }
+
+      await refreshAlpaca();
+
+      if (executedCount > 0) {
         setLastCycleMessage(
-          `Cycle completed: Executed ${actionsTaken.length} autonomous order(s) based on market metrics.`
+          `Alpaca Paper cycle complete: ${messages.join(' • ')}. Synced to Local Trade Journal.`
         );
+      } else if (messages.length > 0) {
+        setLastCycleMessage(`Alpaca Paper notices: ${messages.join(' • ')}`);
       } else {
         setLastCycleMessage(
-          'Cycle completed: All positions monitored. No target scale-outs or stop breaches detected. Capital protected.'
+          `Alpaca Paper scan complete: Monitored ${activeOverview.equityPositions.length} open equity position(s). No new setups cleared all risk gates.`
         );
       }
     } catch (err) {
-      setLastCycleMessage('Cycle aborted: unable to reach live market scanner API.');
+      if ((err as Error)?.name === 'AbortError') return;
+      if (isMountedRef.current) {
+        setLastCycleMessage('Cycle aborted: unable to reach market scanner or Alpaca Paper proxy.');
+      }
     } finally {
-      setIsCycleRunning(false);
+      cycleInFlightRef.current = false;
+      if (isMountedRef.current) setIsCycleRunning(false);
     }
   };
 
@@ -247,39 +407,33 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     }));
   };
 
-  // Reset to $10,000 Portfolio
-  const handleResetPortfolio = () => {
-    const fresh = resetAutomatedPortfolio(10000);
-    setAccount(fresh);
-    setShowResetConfirm(false);
-    setLastCycleMessage('Portfolio successfully reset to $10,000.00 virtual capital.');
-  };
-
-  // Manual Close
+  // Manual Close via Alpaca Paper API
   const handleOpenManualClose = (pos: AutomatedPosition, fraction: number = 0.5) => {
     setPositionToClose(pos);
     setCloseFraction(fraction);
     setCloseExitPrice(pos.currentPrice);
     setCloseReason(
       fraction >= 1.0
-        ? 'Manual full position exit at discretionary target'
-        : 'Discretionary 50% partial profit scale-out'
+        ? 'Manual full position exit on Alpaca Paper'
+        : 'Manual 50% partial exit on Alpaca Paper'
     );
   };
 
-  const handleConfirmManualClose = (e: React.FormEvent) => {
+  const handleConfirmManualClose = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!positionToClose) return;
 
-    const updated = manualCloseAutomatedPosition(
-      account,
-      positionToClose.id,
-      closeExitPrice,
-      closeFraction,
-      closeReason
-    );
-    setAccount(updated);
+    const pct = closeFraction >= 1.0 ? 100 : Math.max(1, Math.round(closeFraction * 100));
+    const targetSym = positionToClose.symbol;
     setPositionToClose(null);
+    const res = await closePosition(targetSym, pct >= 100 ? undefined : { percentage: pct });
+    if (res.ok) {
+      setLastCycleMessage(
+        `Submitted Alpaca Paper close (${pct}%) for ${targetSym}. Real fills synced to Local Trade Journal.`
+      );
+    } else {
+      setLastCycleMessage(`Alpaca Paper close rejected for ${targetSym}: ${res.error}`);
+    }
   };
 
   const activeMemory: ActiveMemoryState = useMemo(() => {
@@ -287,11 +441,11 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   }, [account.activeMemory]);
 
   const handleExportPortfolioCSV = () => {
-    const csvContent = exportAutomatedLogsToCSV(account);
+    const csvContent = exportAutomatedLogsToCSV(livePortfolio);
     const dateStamp = new Date().toISOString().slice(0, 10);
-    const fileName = `trullas_automated_portfolio_${dateStamp}.csv`;
+    const fileName = `alpaca_paper_equities_${dateStamp}.csv`;
     downloadCSV(csvContent, fileName);
-    setLastCycleMessage(`Exported ${account.tradeHistory.length} automated portfolio trade records to ${fileName}`);
+    setLastCycleMessage(`Exported ${livePortfolio.tradeHistory.length} Alpaca Paper execution records to ${fileName}`);
   };
 
   const handleExportMemoryJSON = () => {
@@ -314,11 +468,11 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     setIsSynthesizingMemory(true);
     setTimeout(() => {
       let updatedMem = { ...activeMemory };
-      const closedLogs = account.tradeHistory.filter(
+      const closedLogs = livePortfolio.tradeHistory.filter(
         (l) => l.action === 'PARTIAL_EXIT' || l.action === 'FULL_EXIT' || l.action === 'STOP_LOSS'
       );
 
-      for (const log of closedLogs.slice(0, 5)) {
+      for (const log of closedLogs.slice(0, 10)) {
         const isWin = (log.realizedPnL || 0) >= 0;
         const { updatedState } = ingestTradeEpisode(updatedMem, {
           symbol: log.symbol,
@@ -342,9 +496,9 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       saveActiveMemoryState(updatedMem);
       setIsSynthesizingMemory(false);
       setLastCycleMessage(
-        `Memory Synthesis Complete: Evaluated trade history. Calibrated setup weights, quality hurdles, and ATR stop cushions.`
+        `Memory Synthesis Complete: Evaluated ${closedLogs.length} real Alpaca Paper trade record(s).`
       );
-    }, 700);
+    }, 500);
   };
 
   const handleResetMemory = () => {
@@ -354,19 +508,19 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       activeMemory: freshMem,
     }));
     setShowResetMemoryConfirm(false);
-    setLastCycleMessage('Active Memory reset to default benchmark parameters.');
+    setLastCycleMessage('Active Memory reset to clean default parameters.');
   };
 
   const filteredLogs = useMemo(() => {
-    return account.tradeHistory.filter((log) => {
+    return livePortfolio.tradeHistory.filter((log) => {
       if (logFilter === 'ALL') return true;
       return log.action === logFilter;
     });
-  }, [account.tradeHistory, logFilter]);
+  }, [livePortfolio.tradeHistory, logFilter]);
 
   return (
     <div className="space-y-6">
-      {/* HUD: Account Overview Banner */}
+      {/* HUD: Alpaca Paper Account Overview Banner */}
       <div className="bg-gradient-to-r from-zinc-900 via-zinc-900 to-zinc-950 border border-zinc-800 rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-xl">
         <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
 
@@ -375,37 +529,48 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
                 <Bot className="w-3.5 h-3.5" />
-                <span>Automated Portfolio Manager</span>
+                <span>Stocks Auto-Bot &bull; Alpaca Paper</span>
               </span>
               <span
                 className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold ${
-                  account.isAutoPilotActive
+                  isAlpacaConnected
                     ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-zinc-800 text-zinc-400'
+                    : 'bg-amber-950/50 text-amber-300 border border-amber-500/30'
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full ${account.isAutoPilotActive ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}></span>
-                <span>{account.isAutoPilotActive ? 'Auto-Pilot: ACTIVE' : 'Auto-Pilot: PAUSED'}</span>
+                <span className={`w-2 h-2 rounded-full ${isAlpacaConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                <span>
+                  {alpacaLoading
+                    ? 'Connecting Alpaca Paper...'
+                    : isAlpacaConnected
+                    ? `ALPACA PAPER CONNECTED · #${overview?.account?.account_number || ''}`
+                    : 'ALPACA PAPER DISCONNECTED'}
+                </span>
               </span>
               <span className="text-xs text-zinc-400 font-mono">
-                Baseline: $10,000.00 USD (Virtual)
+                {overview?.paperEndpoint || 'https://paper-api.alpaca.markets'}
+                {lastSyncSummary ? ` • Journal synced (${lastSyncSummary.totalAlpacaEntries} Alpaca entries)` : ''}
               </span>
             </div>
 
             <div className="flex items-baseline space-x-3 mt-1">
               <h2 className="text-3xl sm:text-4xl font-extrabold text-white font-mono tracking-tight">
-                ${stats.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {isAlpacaConnected
+                  ? `$${stats.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
               </h2>
-              <span
-                className={`text-base font-bold font-mono flex items-center ${
-                  stats.totalReturnDollars >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                }`}
-              >
-                {stats.totalReturnDollars >= 0 ? '+' : ''}${stats.totalReturnDollars.toFixed(2)} ({stats.totalReturnPercent >= 0 ? '+' : ''}{stats.totalReturnPercent.toFixed(2)}%)
-              </span>
+              {isAlpacaConnected && (
+                <span
+                  className={`text-base font-bold font-mono flex items-center ${
+                    (overview?.account?.day_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {(overview?.account?.day_pnl ?? 0) >= 0 ? '+' : ''}${(overview?.account?.day_pnl ?? 0).toFixed(2)} ({(overview?.account?.day_pnl_pct ?? 0) >= 0 ? '+' : ''}{(overview?.account?.day_pnl_pct ?? 0).toFixed(2)}% Day)
+                </span>
+              )}
             </div>
             <p className="mt-1 text-xs text-zinc-400 max-w-2xl leading-relaxed">
-              Managed automatically using <strong>David Trullàs 4-Pillars Algorithm</strong> (MACD triple divergence, RSI exhaustion, 23.6% Fib triggers, 1% fixed risk rule, and partial 38.2%/61.8% scale-outs).
+              Executes equities strictly against your configured <strong>Alpaca Paper</strong> brokerage account (paper-api.alpaca.markets) and mirrors every real fill &amp; position into your Local Trade Journal.
             </p>
           </div>
 
@@ -413,19 +578,28 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
               onClick={() => handleRunCycle(true)}
-              disabled={isCycleRunning}
+              disabled={isCycleRunning || !isAlpacaConnected}
               className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold rounded-xl text-xs shadow-lg shadow-emerald-600/25 transition flex items-center space-x-2"
-              title="Scan market and execute model rebalancing, scale-outs, or entries"
+              title="Scan US equities and route Paper orders to Alpaca"
             >
               <Zap className={`w-4 h-4 ${isCycleRunning ? 'animate-spin' : ''}`} />
-              <span>{isCycleRunning ? 'Evaluating...' : 'Run Auto-Pilot Cycle'}</span>
+              <span>{isCycleRunning ? 'Routing Orders...' : 'Run Auto-Pilot Cycle'}</span>
+            </button>
+
+            <button
+              onClick={() => refreshAlpaca()}
+              className="px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white font-medium rounded-xl text-xs border border-zinc-700 transition flex items-center space-x-1.5 shadow-sm"
+              title="Refresh Alpaca Paper balances, positions, and sync fills to Trade Journal"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
+              <span>Refresh Alpaca</span>
             </button>
 
             <button
               onClick={handleExportPortfolioCSV}
               data-testid="export-portfolio-csv-btn"
               className="px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white font-medium rounded-xl text-xs border border-zinc-700 transition flex items-center space-x-1.5 shadow-sm"
-              title="Export all automated portfolio trade logs and telemetry to CSV file"
+              title="Export Alpaca Paper execution logs to CSV"
             >
               <Download className="w-3.5 h-3.5 text-emerald-400" />
               <span>Export CSV</span>
@@ -438,17 +612,23 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
               {account.isAutoPilotActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
               <span>{account.isAutoPilotActive ? 'Pause Bot' : 'Resume Bot'}</span>
             </button>
-
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="px-3.5 py-2.5 bg-zinc-900 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 font-medium rounded-xl text-xs border border-zinc-800 transition flex items-center space-x-1.5"
-              title="Reset portfolio back to $10,000 virtual starting capital"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset $10k</span>
-            </button>
           </div>
         </div>
+
+        {!alpacaLoading && !isAlpacaConnected && (
+          <div
+            data-testid="alpaca-stocks-config-banner"
+            className="mt-4 p-3.5 bg-amber-950/40 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex items-start space-x-2.5"
+          >
+            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-amber-300">Alpaca Paper Account Required</div>
+              <p className="text-amber-200/80 mt-0.5">
+                {overview?.message || alpacaError || 'Configure APCA_API_KEY_ID, APCA_API_SECRET_KEY, and APCA_API_BASE_URL=https://paper-api.alpaca.markets in server .env to enable Paper trading and live history sync.'}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Live Cycle Notification Toast */}
         {lastCycleMessage && (
@@ -480,7 +660,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             }`}
           >
             <Layers className="w-4 h-4 text-emerald-400" />
-            <span>Active Positions & Orders ({account.positions.length})</span>
+            <span>Active Positions &amp; Orders ({livePortfolio.positions.length})</span>
           </button>
 
           <button
@@ -519,8 +699,8 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
         <div className="flex items-center space-x-3 px-3 text-xs text-zinc-400 font-mono">
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>FinRL & TradeMemory Protocol Engine</span>
+            <span className={`w-2 h-2 rounded-full ${isAlpacaConnected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}></span>
+            <span>Alpaca Paper Execution Engine</span>
           </span>
         </div>
       </div>
@@ -528,11 +708,13 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       {/* Primary Statistical KPI Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 uppercase tracking-wider font-medium">Virtual Cash</div>
+          <div className="text-[11px] text-zinc-400 uppercase tracking-wider font-medium">Alpaca Cash</div>
           <div className="text-xl font-bold text-white mt-1 font-mono">
-            ${stats.cashBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {isAlpacaConnected ? `$${stats.cashBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
           </div>
-          <div className="text-[10px] text-zinc-500 mt-1 font-mono">Reserve Liquidity</div>
+          <div className="text-[10px] text-zinc-500 mt-1 font-mono">
+            {isAlpacaConnected ? `BP: $${(overview?.account?.buying_power || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : 'Not Connected'}
+          </div>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
@@ -544,7 +726,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
           >
             {stats.realizedPnL >= 0 ? '+' : ''}${stats.realizedPnL.toFixed(2)}
           </div>
-          <div className="text-[10px] text-zinc-500 mt-1">Banked Closed Gains</div>
+          <div className="text-[10px] text-zinc-500 mt-1">Alpaca Closed Gains</div>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
@@ -556,7 +738,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
           >
             {stats.unrealizedPnL >= 0 ? '+' : ''}${stats.unrealizedPnL.toFixed(2)}
           </div>
-          <div className="text-[10px] text-zinc-500 mt-1">{account.positions.length} active positions</div>
+          <div className="text-[10px] text-zinc-500 mt-1">{livePortfolio.positions.length} active equity positions</div>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
@@ -605,7 +787,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             {(account.riskPerTradePercent || 1.0).toFixed(1)}% Max
           </div>
           <div className="text-[10px] text-zinc-500 mt-1 flex items-center justify-between font-mono">
-            <span>Max DD: {stats.maxDrawdownPercent}%</span>
+            <span>Max DD: {isAlpacaConnected ? `${stats.maxDrawdownPercent}%` : '0%'}</span>
             <span>Cap: {account.maxOpenPositions || 5} Pos</span>
           </div>
         </div>
@@ -622,7 +804,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-zinc-400 text-[11px] leading-relaxed">
           <div className="bg-zinc-950 p-2.5 rounded-lg border border-zinc-800/60">
             <span className="text-emerald-400 font-bold block mb-0.5">1. Entry &amp; Position Sizing</span>
-            MACD Double/Triple Divergence + RSI exhaustion. Position sized to risk exactly 1.0% ($100) of account balance to the 1.2x ATR stop-loss.
+            MACD Double/Triple Divergence + RSI exhaustion. Position sized to risk exactly {(account.riskPerTradePercent || 1.0).toFixed(1)}%{stats.currentEquity > 0 ? ` ($${((stats.currentEquity * (account.riskPerTradePercent || 1.0)) / 100).toFixed(0)})` : ''} of account balance to the 1.2x ATR stop-loss.
           </div>
           <div className="bg-zinc-950 p-2.5 rounded-lg border border-zinc-800/60">
             <span className="text-amber-400 font-bold block mb-0.5">2. Partial Scaling Out</span>
@@ -640,17 +822,17 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-3">
             <h3 className="text-base font-bold text-white flex items-center space-x-2 font-mono">
-              <span>Active Open Positions</span>
+              <span>Active Alpaca Paper Positions</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
-                {account.positions.length} Open
+                {livePortfolio.positions.length} Open
               </span>
             </h3>
             <span className="text-xs text-zinc-500 hidden sm:inline">
-              Click any row to reveal detailed execution card &amp; CBOE radar
+              Click any row to reveal execution card &amp; CBOE radar
             </span>
           </div>
 
-          {account.positions.length > 0 && (
+          {livePortfolio.positions.length > 0 && (
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleExpandAllPositions}
@@ -668,7 +850,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
           )}
         </div>
 
-        {account.positions.length > 0 ? (
+        {livePortfolio.positions.length > 0 ? (
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -689,12 +871,12 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/80 text-xs font-mono">
-                  {account.positions.map((pos) => {
+                  {livePortfolio.positions.map((pos) => {
                     const isBull = pos.direction === 'BULLISH';
                     const isPnlPositive = pos.unrealizedPnL >= 0;
                     const isExpanded = expandedPositionIds.has(pos.id);
                     const positionValue = pos.currentShares * pos.currentPrice;
-                    const totalEquity = account.equity || (account.cash + account.positions.reduce((acc, p) => acc + (p.currentShares * p.currentPrice), 0));
+                    const totalEquity = livePortfolio.equity || (livePortfolio.cash + livePortfolio.positions.reduce((acc, p) => acc + (p.currentShares * p.currentPrice), 0));
                     const portfolioPct = totalEquity > 0 ? ((positionValue / totalEquity) * 100).toFixed(1) : '0.0';
                     const riskPerShare = Math.abs(pos.entryPrice - pos.trailingStop);
                     const rMultiple = riskPerShare > 0
@@ -1204,13 +1386,13 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
               <div>
                 <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold mb-2">
                   <LineChart className="w-3.5 h-3.5" />
-                  <span>Virtual $10,000 Portfolio Quantitative Risk &amp; Return Analytics</span>
+                  <span>Alpaca Paper Equity Quantitative Risk &amp; Return Analytics</span>
                 </div>
                 <h3 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
                   Performance Analytics &amp; Drawdown Visualizer
                 </h3>
                 <p className="mt-1 text-xs text-zinc-300 max-w-2xl leading-relaxed">
-                  Real-time quantitative performance suite tracking Sharpe ratio, Sortino ratio, Calmar ratio, 95% Value at Risk (VaR), and an interactive drawdown graph tracking the virtual $10,000 account curve.
+                  Real-time quantitative performance suite tracking Sharpe ratio, Sortino ratio, Calmar ratio, 95% Value at Risk (VaR), and an interactive drawdown graph derived strictly from your Alpaca Paper execution history.
                 </p>
               </div>
 
@@ -1328,11 +1510,11 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                 <h4 className="text-sm font-bold text-white font-mono flex items-center space-x-2">
                   <span>Portfolio Equity Curve &amp; Underwater Drawdown Visualization</span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-sans">
-                    $10,000 Baseline
+                    ${livePortfolio.startingBalance.toLocaleString()} Baseline
                   </span>
                 </h4>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Real-time track of account equity growth vs peak high-water mark and underwater drawdown percentages across all trade events.
+                  Real-time track of Alpaca Paper account equity growth vs peak high-water mark across verified order executions.
                 </p>
               </div>
 
@@ -1348,14 +1530,14 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                 </div>
                 <div className="flex items-center space-x-1.5">
                   <span className="w-3 h-0.5 stroke-dasharray border-b border-dashed border-zinc-500"></span>
-                  <span className="text-zinc-400">Baseline ($10k)</span>
+                  <span className="text-zinc-400">Baseline</span>
                 </div>
               </div>
             </div>
 
             {/* SVG Chart Container */}
             <div className="w-full h-72 relative bg-zinc-950/80 border border-zinc-800/60 rounded-xl p-4 overflow-hidden">
-              {renderDrawdownSvgGraph(analytics.equityCurve, chartMode, hoveredPointIndex, setHoveredPointIndex)}
+              {renderDrawdownSvgGraph(analytics.equityCurve, chartMode, hoveredPointIndex, setHoveredPointIndex, livePortfolio.startingBalance)}
             </div>
 
             {/* Hover Point Detailed Callout Banner */}
@@ -1892,35 +2074,6 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         </div>
       )}
 
-      {/* MODAL: Reset Confirmation */}
-      {showResetConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center space-x-3 text-amber-400">
-              <AlertCircle className="w-6 h-6" />
-              <h3 className="text-base font-bold text-white">Reset Portfolio to $10,000?</h3>
-            </div>
-            <p className="text-xs text-zinc-300 leading-relaxed">
-              This will reset the Automated Portfolio back to the pristine $10,000.00 virtual capital baseline with default Trullàs 4-Pillars positions and clean audit metrics.
-            </p>
-            <div className="flex items-center justify-end space-x-3 pt-2">
-              <button
-                onClick={() => setShowResetConfirm(false)}
-                className="px-4 py-2 text-xs text-zinc-400 hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleResetPortfolio}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-lg transition"
-              >
-                Yes, Reset Portfolio
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* MODAL: Reset Memory Confirmation */}
       {showResetMemoryConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
@@ -2053,7 +2206,8 @@ function renderDrawdownSvgGraph(
   points: EquityPoint[],
   mode: 'equity' | 'drawdown' | 'combined',
   hoveredIndex: number | null,
-  setHoveredIndex: (idx: number | null) => void
+  setHoveredIndex: (idx: number | null) => void,
+  startingBaseline: number = 0
 ) {
   if (!points || points.length === 0) return null;
 
@@ -2064,9 +2218,11 @@ function renderDrawdownSvgGraph(
   const graphH = height - padding.top - padding.bottom;
 
   const equities = points.map((p) => p.equity);
-  const minEq = Math.min(...equities, 9800);
-  const maxEq = Math.max(...equities, 10300);
-  const eqRange = Math.max(100, maxEq - minEq);
+  const rawMinEq = Math.min(...equities);
+  const rawMaxEq = Math.max(...equities);
+  const minEq = rawMinEq > 0 ? rawMinEq * 0.985 : 0;
+  const maxEq = rawMaxEq > 0 ? rawMaxEq * 1.015 : 100;
+  const eqRange = Math.max(10, maxEq - minEq);
 
   const drawdowns = points.map((p) => p.drawdownPercent);
   const minDD = Math.min(...drawdowns, -3.0);
@@ -2123,21 +2279,21 @@ function renderDrawdownSvgGraph(
       <line x1={padding.left} y1={padding.top + graphH / 2} x2={width - padding.right} y2={padding.top + graphH / 2} stroke="#27272a" strokeDasharray="3 3" />
       <line x1={padding.left} y1={padding.top + graphH} x2={width - padding.right} y2={padding.top + graphH} stroke="#27272a" />
 
-      {/* Baseline $10,000 line */}
-      {(mode === 'equity' || mode === 'combined') && (
+      {/* Starting Equity Baseline */}
+      {(mode === 'equity' || mode === 'combined') && startingBaseline > 0 && (
         <g>
           <line
             x1={padding.left}
-            y1={getEquityY(10000)}
+            y1={getEquityY(startingBaseline)}
             x2={width - padding.right}
-            y2={getEquityY(10000)}
+            y2={getEquityY(startingBaseline)}
             stroke="#10b981"
             strokeWidth="1"
             strokeDasharray="4 4"
             opacity="0.6"
           />
-          <text x={padding.left + 6} y={getEquityY(10000) - 5} fill="#10b981" fontSize="9" fontFamily="monospace" fontWeight="bold">
-            $10,000 Deposit Baseline
+          <text x={padding.left + 6} y={getEquityY(startingBaseline) - 5} fill="#10b981" fontSize="9" fontFamily="monospace" fontWeight="bold">
+            ${startingBaseline.toLocaleString()} Baseline
           </text>
         </g>
       )}

@@ -28,19 +28,19 @@ test('initDefaultOptionsPortfolio initializes clean empty journal with zero synt
   assert.strictEqual(stats.winRatePercent, 0.0);
 });
 
-test('processOptionsAutonomousCycle scans and opens a qualified MES position on fresh $2,000 account', () => {
+test('processOptionsAutonomousCycle scans and opens a qualified SPY position cleanly', () => {
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.positions.length, 0);
 
   const testCandles = [
-    { open: 6850, high: 6890, low: 6820, close: 6880 },
-    { open: 6880, high: 6910, low: 6840, close: 6895 },
-    { open: 6895, high: 6945, low: 6875, close: 6920 },
-    { open: 6920, high: 6935, low: 6890, close: 6915 }, // Outside/Inside setup
-    { open: 6915, high: 6930, low: 6900, close: 6920 },
+    { open: 585, high: 589, low: 582, close: 588 },
+    { open: 588, high: 591, low: 584, close: 589.5 },
+    { open: 589.5, high: 594.5, low: 587.5, close: 592 },
+    { open: 592, high: 593.5, low: 589, close: 591.5 }, // Outside/Inside setup
+    { open: 591.5, high: 593, low: 590, close: 592 },
   ];
   const marketItems = [
-    { symbol: 'MES', currentPrice: 6920.0, candles: testCandles },
+    { symbol: 'SPY', currentPrice: 592.0, candles: testCandles },
   ];
 
   const { updatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
@@ -53,13 +53,13 @@ test('processOptionsAutonomousCycle scans and opens a qualified MES position on 
 test('manualCloseOptionsPosition closes an option, updates realized income, and learns from real trade history', () => {
   const account = initDefaultOptionsPortfolio(2000);
   const testCandles = [
-    { open: 6850, high: 6890, low: 6820, close: 6880 },
-    { open: 6880, high: 6910, low: 6840, close: 6895 },
-    { open: 6895, high: 6945, low: 6875, close: 6920 },
-    { open: 6920, high: 6935, low: 6890, close: 6915 },
-    { open: 6915, high: 6930, low: 6900, close: 6920 },
+    { open: 585, high: 589, low: 582, close: 588 },
+    { open: 588, high: 591, low: 584, close: 589.5 },
+    { open: 589.5, high: 594.5, low: 587.5, close: 592 },
+    { open: 592, high: 593.5, low: 589, close: 591.5 },
+    { open: 591.5, high: 593, low: 590, close: 592 },
   ];
-  const marketItems = [{ symbol: 'MES', currentPrice: 6920.0, candles: testCandles }];
+  const marketItems = [{ symbol: 'SPY', currentPrice: 592.0, candles: testCandles }];
   const { updatedAccount: populatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
   assert.ok(populatedAccount.positions.length > 0);
 
@@ -105,21 +105,21 @@ test('processOptionsAutonomousCycle does not mutate input account arrays and iss
     contractsCount: 1,
     entryPremiumPerContract: 2.5,
     currentPremiumPerContract: 1.0,
-    totalPremiumCollected: 12.5,
-    underlyingPriceAtEntry: strike + 200,
-    underlyingCurrentPrice: strike + 250,
+    totalPremiumCollected: 250.0,
+    underlyingPriceAtEntry: strike + 20,
+    underlyingCurrentPrice: strike + 25,
     strikeDistancePercent: 4.0,
     delta: -0.09,
     gamma: 0.001,
     dailyTheta: 1.5,
     vega: -0.5,
     ivRankPercent: 18,
-    unrealizedPnL: 7.5,
+    unrealizedPnL: 150.0,
     unrealizedPnLPercent: 60,
     profitTargetPercent: 75,
     status: 'Open' as const,
     tradingWarzPattern: 'Inside Bar',
-    goldenZoneSupportLevel: strike + 40,
+    goldenZoneSupportLevel: strike + 4,
     setupGrade: 'A+' as const,
     whyOpenedThesis: 'Test position',
   });
@@ -127,8 +127,8 @@ test('processOptionsAutonomousCycle does not mutate input account arrays and iss
   const inputAccount = {
     ...base,
     positions: [
-      sharedExpiringPos('MES', 'MES 17NOV26 6700 P', 6700),
-      sharedExpiringPos('SPY', 'SPY 17NOV26 570 P', 570),
+      sharedExpiringPos('QQQ', 'QQQ261117P00480000', 480),
+      sharedExpiringPos('SPY', 'SPY261117P00570000', 570),
     ],
   };
 
@@ -138,7 +138,7 @@ test('processOptionsAutonomousCycle does not mutate input account arrays and iss
   const { updatedAccount } = processOptionsAutonomousCycle(
     inputAccount,
     [
-      { symbol: 'MES', currentPrice: 6950 },
+      { symbol: 'QQQ', currentPrice: 505 },
       { symbol: 'SPY', currentPrice: 595 },
     ],
     true
@@ -160,7 +160,7 @@ test('processOptionsAutonomousCycle does not mutate input account arrays and iss
   assert.strictEqual(logIds.size, updatedAccount.sessionLogs.length, 'Session log IDs must be strictly unique');
 });
 
-test('loadOptionsPortfolio repairs persisted duplicate IDs (e.g. rich-opt-live-1794587680533) in localStorage', () => {
+test('loadOptionsPortfolio repairs persisted duplicate IDs in localStorage and filters legacy futures records', () => {
   const storageMap = new Map<string, string>();
   const prevWindow = (globalThis as any).window;
   (globalThis as any).window = {
@@ -179,10 +179,10 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs (e.g. rich-opt-live-1
       {
         id: dupId,
         date: '2026-11-18',
-        ticker: 'MES',
+        ticker: 'QQQ',
         boughtSold: 'Sold',
-        contract: 'MES 18NOV26 6700 P',
-        strike: 6700,
+        contract: 'QQQ261118P00480000',
+        strike: 480,
         optionType: 'PUT',
         expiration: 'Nov 18, 2026',
         expirationDateStr: '2026-11-18',
@@ -190,12 +190,12 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs (e.g. rich-opt-live-1
         profitPercent: 80,
         status: 'Closed',
         outcomeReason: 'Early Take-Profit',
-        underlyingPriceAtEntry: 6900,
-        strikeDistancePercent: 2.9,
+        underlyingPriceAtEntry: 500,
+        strikeDistancePercent: 4.0,
         delta: 0.1,
         thetaPerDay: 1.8,
         tradingWarzPattern: 'INSIDE_BAR',
-        goldenZoneSupportLevel: 6740,
+        goldenZoneSupportLevel: 485,
         whyOpenedThesis: 'Trade 1',
       },
       {
@@ -203,7 +203,7 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs (e.g. rich-opt-live-1
         date: '2026-11-18',
         ticker: 'SPY',
         boughtSold: 'Sold',
-        contract: 'SPY 18NOV26 570 P',
+        contract: 'SPY261118P00570000',
         strike: 570,
         optionType: 'PUT',
         expiration: 'Nov 18, 2026',

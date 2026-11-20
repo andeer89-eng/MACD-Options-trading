@@ -8,6 +8,10 @@ import {
   canTrade,
   isNyseMarketOpen,
   DEFAULT_SETTINGS,
+  clampSettingsBounds,
+  toUserBotStateFirestoreFields,
+  toUserBotStateUpdateFields,
+  mergeCloudUserBotSettings,
 } from './masterPlanCore.ts';
 
 describe('TRULLAS Master Plan v3 Core Tests', () => {
@@ -149,4 +153,77 @@ describe('TRULLAS Master Plan v3 Core Tests', () => {
     assert.strictEqual(gate.checks[1].shortName, 'data_feed');
     assert.strictEqual(gate.checks[0].name, 'NYSE Calendar Open');
   });
+
+  it('clampSettingsBounds enforces Firestore schema boundaries and truncates activeEpochId', () => {
+    const clamped = clampSettingsBounds({
+      simCapitalUsd: 999_999_999,
+      maxRiskPerTradePct: -5,
+      dailyLossLimitPct: 150,
+      maxSectorExposurePct: -10,
+      botStatus: 'invalid_state' as any,
+      dataQuality: 'bogus' as any,
+      activeEpochId: 'e'.repeat(90),
+    });
+
+    assert.strictEqual(clamped.simCapitalUsd, 100_000_000);
+    assert.strictEqual(clamped.maxRiskPerTradePct, DEFAULT_SETTINGS.maxRiskPerTradePct);
+    assert.strictEqual(clamped.dailyLossLimitPct, 100);
+    assert.strictEqual(clamped.maxSectorExposurePct, 0);
+    assert.strictEqual(clamped.botStatus, 'armed');
+    assert.strictEqual(clamped.dataQuality, 'live');
+    assert.strictEqual(clamped.activeEpochId.length, 64);
+  });
+
+  it('toUserBotStateFirestoreFields and toUserBotStateUpdateFields omit dataQuality and enforce allowed keys', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      simCapitalUsd: 15000,
+      maxRiskPerTradePct: 1.5,
+      dataQuality: 'cached' as const,
+      botStatus: 'paused' as const,
+    };
+
+    const createFields = toUserBotStateFirestoreFields(settings, 'uid-abc-123');
+    assert.strictEqual(createFields.ownerId, 'uid-abc-123');
+    assert.strictEqual(createFields.simCapitalUsd, 15000);
+    assert.strictEqual(createFields.maxRiskPerTradePct, 1.5);
+    assert.strictEqual(createFields.botStatus, 'paused');
+    assert.strictEqual('dataQuality' in createFields, false);
+
+    const updateFields = toUserBotStateUpdateFields(settings);
+    assert.strictEqual('ownerId' in updateFields, false);
+    assert.strictEqual('createdAt' in updateFields, false);
+    assert.strictEqual('dataQuality' in updateFields, false);
+    assert.deepStrictEqual(
+      Object.keys(updateFields).sort(),
+      [
+        'activeEpochId',
+        'botStatus',
+        'dailyLossLimitPct',
+        'maxRiskPerTradePct',
+        'maxSectorExposurePct',
+        'simCapitalUsd',
+      ]
+    );
+  });
+
+  it('mergeCloudUserBotSettings merges cloud fields while preserving local dataQuality', () => {
+    const local = {
+      ...DEFAULT_SETTINGS,
+      simCapitalUsd: 2000,
+      dataQuality: 'cached' as const,
+      botStatus: 'armed' as const,
+    };
+    const merged = mergeCloudUserBotSettings(local, {
+      simCapitalUsd: 25000,
+      maxRiskPerTradePct: 0.75,
+      botStatus: 'paused',
+    });
+
+    assert.strictEqual(merged.simCapitalUsd, 25000);
+    assert.strictEqual(merged.maxRiskPerTradePct, 0.75);
+    assert.strictEqual(merged.botStatus, 'paused');
+    assert.strictEqual(merged.dataQuality, 'cached');
+  });
 });
+

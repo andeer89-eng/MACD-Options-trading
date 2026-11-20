@@ -45,6 +45,7 @@ import {
 import { DivergenceSetup } from './utils/trullasStrategy';
 import { SP500_UNIVERSE } from './data/sp500Universe';
 import { deduplicateSymbols, generateStableAlertId } from './utils/dataFetcher';
+import { useMarketStream } from './hooks/useMarketStream';
 
 type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
 type ChartSubTab = 'studio' | 'sec';
@@ -136,6 +137,8 @@ export default function App() {
   const prevSetupIds = useRef<Set<string>>(new Set());
   const isScanningRef = useRef<boolean>(false);
   const scanAbortRef = useRef<AbortController | null>(null);
+
+  useMarketStream(true);
 
   // Unified router supporting both the 8 concentrated hubs and legacy deep-link tab IDs
   const navigateTo = (target: string, subTab?: string) => {
@@ -297,7 +300,11 @@ export default function App() {
         signal: controller.signal,
       });
       if (res.ok) {
-        const data = await res.json();
+        const text = await res.text();
+        if (text.trim().startsWith('<')) {
+          throw new Error('Scan API returned HTML instead of JSON');
+        }
+        const data = JSON.parse(text);
         setResults(data.results || []);
         setLastScanTime(new Date());
 
@@ -390,10 +397,11 @@ export default function App() {
     runScan();
   }, []);
 
-  // 24/7 Background Auto-Scan Interval (every 45 seconds)
+  // 24/7 Background Auto-Scan Interval (every 45 seconds when page visible)
   useEffect(() => {
     if (!isAutoScanning) return;
     const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       runScan(watchlist, timeframe);
     }, 45000);
     return () => clearInterval(intervalId);

@@ -30,7 +30,14 @@ async function fetchResults(tickers: string[]) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tickers: uniqueTickers, timeframe: '1d' }),
   });
-  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Scan API responded with status ${res.status}`);
+  }
+  const text = await res.text();
+  if (text.trim().startsWith('<')) {
+    throw new Error('Scan API returned HTML instead of JSON');
+  }
+  const data = JSON.parse(text);
   return data.results || [];
 }
 

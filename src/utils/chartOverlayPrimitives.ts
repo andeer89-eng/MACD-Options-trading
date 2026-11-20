@@ -350,3 +350,91 @@ export function createChartCoordBridge(
     },
   };
 }
+
+export interface SetupPriceLineLabels {
+  trigger: string;
+  tp1: string;
+  tp2: string;
+  stopLoss: string;
+}
+
+export function resolveSetupPriceLineLabels(params: {
+  triggerPrice: number;
+  tp1: number;
+  tp2: number;
+  stopLoss: number;
+  compact: boolean;
+}): SetupPriceLineLabels {
+  const { triggerPrice, tp1, tp2, stopLoss, compact } = params;
+  if (compact) {
+    return {
+      trigger: 'TRG 23.6%',
+      tp1: 'TP1 38.2%',
+      tp2: 'TP2 61.8%',
+      stopLoss: 'SL',
+    };
+  }
+  return {
+    trigger: `TRIGGER 23.6% ($${triggerPrice.toFixed(2)})`,
+    tp1: `TP1 38.2% ($${tp1.toFixed(2)})`,
+    tp2: `TP2 GOLDEN 61.8% ($${tp2.toFixed(2)})`,
+    stopLoss: `STOP LOSS ($${stopLoss.toFixed(2)})`,
+  };
+}
+
+export function resolveFibPriceLineLabel(
+  name: string,
+  price: number,
+  compact: boolean
+): string {
+  if (compact) {
+    return name.replace('Golden Pocket ', 'Fib ');
+  }
+  return `${name} ($${price.toFixed(2)})`;
+}
+
+export interface SuperTrendHudLayout {
+  rightOffset: number;
+  priceLabelLanePx: number;
+  effectiveLabelWidth: number;
+  hudWidthPx: number;
+  showLegendCard: boolean;
+}
+
+export function resolveSuperTrendHudLayout(params: {
+  totalWidth: number;
+  plotWidth: number;
+  paneHeight: number;
+  reservePriceLabelLane: boolean;
+  showTable: boolean;
+  showLegend: boolean;
+}): SuperTrendHudLayout {
+  const {
+    totalWidth,
+    plotWidth,
+    paneHeight,
+    reservePriceLabelLane,
+    showTable,
+    showLegend,
+  } = params;
+
+  const hudWidthPx = 184;
+  const axisWidth = Math.max(50, Math.round(totalWidth - plotWidth));
+  const baseRightOffset = Math.max(58, axisWidth + 8);
+  const priceLabelLanePx = reservePriceLabelLane && plotWidth >= 560 ? 96 : 0;
+  const rightOffset = baseRightOffset + priceLabelLanePx;
+  const hasHudCard = showTable || showLegend;
+  const cardReserveWidth = hasHudCard ? hudWidthPx + 10 : 8;
+  const effectiveLabelWidth = Math.max(
+    120,
+    plotWidth - cardReserveWidth - priceLabelLanePx
+  );
+
+  return {
+    rightOffset,
+    priceLabelLanePx,
+    effectiveLabelWidth,
+    hudWidthPx,
+    showLegendCard: showLegend && paneHeight >= 325,
+  };
+}

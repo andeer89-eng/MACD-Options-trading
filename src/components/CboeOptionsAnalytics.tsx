@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Activity,
   Search,
@@ -53,11 +53,25 @@ export const CboeOptionsAnalytics: React.FC<CboeOptionsAnalyticsProps> = ({
     return () => clearInterval(timer);
   }, [lastFetched]);
 
+  const reqIdRef = useRef<number>(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const fetchOptionsData = async (
     sym: string,
     isManualRefresh: boolean = false,
     expirationOverride?: string
   ) => {
+    const reqId = ++reqIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     if (isManualRefresh) setRefreshing(true);
     else setLoading(true);
     setErrorMsg(null);
@@ -67,8 +81,11 @@ export const CboeOptionsAnalytics: React.FC<CboeOptionsAnalyticsProps> = ({
       if (isManualRefresh) params.set('refresh', 'true');
       if (expirationOverride) params.set('expiration', expirationOverride);
 
-      const res = await fetch(`/api/cboe-options?${params.toString()}`);
+      const res = await fetch(`/api/cboe-options?${params.toString()}`, {
+        signal: controller.signal,
+      });
       const data = await res.json();
+      if (reqId !== reqIdRef.current) return;
       if (!res.ok) {
         throw new Error(data.error || `HTTP ${res.status} fetching CBOE options`);
       }
@@ -83,12 +100,15 @@ export const CboeOptionsAnalytics: React.FC<CboeOptionsAnalyticsProps> = ({
         setSelectedExpiration(data.optionsSummary.selectedExpiration || undefined);
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError' || reqId !== reqIdRef.current) return;
       setErrorMsg(err?.message || 'Unable to connect to live CBOE options endpoint.');
       setMarketOverview(createUnavailableCboeOverview('Live CBOE upstream feed unavailable'));
       setOptionsSummary(null);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (reqId === reqIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 

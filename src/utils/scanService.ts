@@ -199,7 +199,11 @@ class ScanService {
             throw new Error(`Scan API responded with status ${res.status}`);
           }
 
-          const json = await res.json();
+          const text = await res.text();
+          if (text.trim().startsWith('<')) {
+            throw new Error('Scan API returned HTML instead of JSON (server reloading)');
+          }
+          const json = JSON.parse(text);
           const items: UnifiedScanResult[] = [];
 
           for (const raw of json.results || []) {

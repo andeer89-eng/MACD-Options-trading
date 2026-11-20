@@ -20,6 +20,8 @@ import {
   CheckCircle2,
   XCircle,
   ExternalLink,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
 import {
   MasterPlanSettings,
@@ -34,6 +36,9 @@ import {
   isNyseMarketOpen,
   DataQuality,
   BotStateStatus,
+  loadUserBotStateFromFirestore,
+  saveUserBotStateToFirestore,
+  mergeCloudUserBotSettings,
 } from '../utils/masterPlanCore';
 import {
   ENGINE_VERSION,
@@ -107,6 +112,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
 }) => {
   const { user } = useAuth();
   const [settings, setSettings] = useState<MasterPlanSettings>(loadSettings);
+  const [cloudSyncState, setCloudSyncState] = useState<'local' | 'syncing' | 'synced' | 'error'>(
+    user ? 'syncing' : 'local'
+  );
+  const cloudHydratedRef = React.useRef<boolean>(false);
+  const syncTimerRef = React.useRef<number | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('');
   const [universeFilter, setUniverseFilter] = useState<'both' | 'sp500' | 'ndx100'>('both');
   const [statusFilter, setStatusFilter] = useState<'active' | 'all'>('active');
@@ -277,8 +287,41 @@ export const TodayView: React.FC<TodayViewProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      cloudHydratedRef.current = false;
+      setCloudSyncState('local');
+      if (syncTimerRef.current !== null) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      return;
+    }
+
     let active = true;
+    cloudHydratedRef.current = false;
+    setCloudSyncState('syncing');
+
+    loadUserBotStateFromFirestore()
+      .then(async (remote) => {
+        if (!active) return;
+        const local = loadSettings();
+        if (remote) {
+          const merged = mergeCloudUserBotSettings(local, remote);
+          saveSettings(merged);
+          setSettings(merged);
+          setCloudSyncState('synced');
+        } else {
+          await saveUserBotStateToFirestore(local);
+          if (active) setCloudSyncState('synced');
+        }
+        cloudHydratedRef.current = true;
+      })
+      .catch(() => {
+        if (!active) return;
+        cloudHydratedRef.current = true;
+        setCloudSyncState('error');
+      });
+
     loadDailyWatchlistFromFirestore()
       .then((items) => {
         if (!active || items.length === 0) return;
@@ -295,21 +338,45 @@ export const TodayView: React.FC<TodayViewProps> = ({
       .catch(() => {});
     return () => {
       active = false;
+      if (syncTimerRef.current !== null) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
     };
   }, [user]);
+
+  const scheduleCloudSync = (nextSettings: MasterPlanSettings) => {
+    if (!user || !cloudHydratedRef.current) return;
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current);
+    }
+    setCloudSyncState('syncing');
+    syncTimerRef.current = window.setTimeout(() => {
+      syncTimerRef.current = null;
+      saveUserBotStateToFirestore(nextSettings)
+        .then((res) => {
+          setCloudSyncState(res.synced ? 'synced' : 'local');
+        })
+        .catch(() => {
+          setCloudSyncState('error');
+        });
+    }, 500);
+  };
 
   // Handlers for Capital and Risk manual settings inputs (§1)
   const handleCapitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value);
     if (val >= 100) {
-      saveSettings({ simCapitalUsd: val });
+      const updated = saveSettings({ simCapitalUsd: val });
+      scheduleCloudSync(updated);
     }
   };
 
   const handleRiskPctChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value);
     if (val > 0 && val <= 10) {
-      saveSettings({ maxRiskPerTradePct: val });
+      const updated = saveSettings({ maxRiskPerTradePct: val });
+      scheduleCloudSync(updated);
     }
   };
 
@@ -318,7 +385,8 @@ export const TodayView: React.FC<TodayViewProps> = ({
   };
 
   const handleBotStatusChange = (status: BotStateStatus) => {
-    saveSettings({ botStatus: status });
+    const updated = saveSettings({ botStatus: status });
+    scheduleCloudSync(updated);
   };
 
   // Watchlist Items derived strictly from live Scanner setups + saved Watchlist items
@@ -548,7 +616,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>
               NON-LIVE MODE — Feed quality is set to {settings.dataQuality.toUpperCase()}.
-              canTrade() Check #2 blocks simulated position sizing.
+              canTrade() Check #2 blocks unverified position sizing.
             </span>
           </div>
           <button
@@ -631,20 +699,54 @@ export const TodayView: React.FC<TodayViewProps> = ({
               Capital Allocation & Live Risk Controls (Master Plan v3 §1)
             </h3>
           </div>
-          <span className="text-[11px] text-zinc-400 font-mono">
-            Computed Risk:{' '}
-            <strong className="text-emerald-400">
-              ${((settings.simCapitalUsd * settings.maxRiskPerTradePct) / 100).toFixed(2)}
-            </strong>{' '}
-            / trade (
-            {settings.maxRiskPerTradePct}% of ${settings.simCapitalUsd.toLocaleString()})
-          </span>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono">
+            <span
+              title={
+                user
+                  ? 'Bot state & risk controls synced with your Firebase account'
+                  : 'Sign in with Google to sync capital & bot controls across devices'
+              }
+              className={`inline-flex items-center space-x-1 ${
+                cloudSyncState === 'synced'
+                  ? 'text-emerald-400'
+                  : cloudSyncState === 'syncing'
+                  ? 'text-amber-400'
+                  : cloudSyncState === 'error'
+                  ? 'text-rose-400'
+                  : 'text-zinc-400'
+              }`}
+            >
+              {cloudSyncState === 'local' ? (
+                <CloudOff className="w-3.5 h-3.5" />
+              ) : (
+                <Cloud className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {cloudSyncState === 'synced'
+                  ? 'Cloud Synced'
+                  : cloudSyncState === 'syncing'
+                  ? 'Syncing Cloud...'
+                  : cloudSyncState === 'error'
+                  ? 'Sync Error'
+                  : 'Local Only'}
+              </span>
+            </span>
+            <span className="text-zinc-700" aria-hidden="true">|</span>
+            <span className="text-zinc-400">
+              Computed Risk:{' '}
+              <strong className="text-emerald-400">
+                ${((settings.simCapitalUsd * settings.maxRiskPerTradePct) / 100).toFixed(2)}
+              </strong>{' '}
+              / trade (
+              {settings.maxRiskPerTradePct}% of ${settings.simCapitalUsd.toLocaleString()})
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
           <div>
             <label htmlFor="sim-capital-input" className="text-zinc-400 block mb-1">
-              Allocated Capital (Paper / Sim):
+              Sizing Capital (USD):
             </label>
             <div className="relative">
               <span className="absolute left-2.5 top-2 text-zinc-500 font-bold">$</span>

@@ -1368,7 +1368,7 @@ if __name__ == "__main__":
             {/* Trade Log Table */}
             <div className="space-y-2">
               <div className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                Simulated Stage Trades Log ({activeBacktest.trades.length} Trades):
+                Historical Stage Backtest Log ({activeBacktest.trades.length} Trades):
               </div>
 
               <div className="overflow-x-auto rounded-lg border border-zinc-800">

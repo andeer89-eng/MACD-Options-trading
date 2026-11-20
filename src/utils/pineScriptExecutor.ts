@@ -841,25 +841,3 @@ export async function executePineScriptIndicator(
     };
   }
 }
-
-export function buildSampleValidationCandles(count = 80, basePrice = 150): Candle[] {
-  const start = Date.now() - count * 86_400_000;
-  return Array.from({ length: count }, (_, i) => {
-    const wave = Math.sin(i * 0.25) * (basePrice * 0.08) + i * (basePrice * 0.003);
-    const close = basePrice + wave;
-    const open = close - Math.cos(i * 0.3) * (basePrice * 0.01);
-    const high = Math.max(open, close) + basePrice * 0.012;
-    const low = Math.min(open, close) - basePrice * 0.012;
-    const ts = start + i * 86_400_000;
-    return {
-      timestamp: ts,
-      dateStr: new Date(ts).toISOString().slice(0, 10),
-      open: Number(open.toFixed(4)),
-      high: Number(high.toFixed(4)),
-      low: Number(low.toFixed(4)),
-      close: Number(close.toFixed(4)),
-      volume: Math.round(1_200_000 + Math.abs(Math.sin(i * 0.5)) * 800_000),
-    };
-  });
-}
-

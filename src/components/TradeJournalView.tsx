@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   BookOpen,
   Plus,
@@ -32,6 +33,7 @@ import {
   Activity,
   Sparkles,
   BarChart3,
+  RefreshCw,
 } from 'lucide-react';
 import {
   JournalEntry,
@@ -48,10 +50,8 @@ import {
   downloadCSV,
   enrichJournalEntryAnalytics,
 } from '../utils/tradeJournal';
-import {
-  parseBrokerCsvToJournalEntries,
-  SAMPLE_BROKER_CSV,
-} from '../utils/csvJournalImport';
+import { parseBrokerCsvToJournalEntries } from '../utils/csvJournalImport';
+import { syncAlpacaOverviewToLocalJournal } from '../hooks/useAlpacaPaper';
 import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
@@ -84,6 +84,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [showLogModal, setShowLogModal] = useState(false);
   const [selectedEntryForView, setSelectedEntryForView] = useState<JournalEntry | null>(null);
   const [expandedJournalIds, setExpandedJournalIds] = useState<Set<string>>(new Set());
+  const journalScrollRef = useRef<HTMLDivElement>(null);
 
   const toggleJournalExpand = (id: string) => {
     setExpandedJournalIds((prev) => {
@@ -129,10 +130,38 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [closeNotes, setCloseNotes] = useState<string>('');
   const [closeExitScreenshot, setCloseExitScreenshot] = useState<string>('');
   const [exportToast, setExportToast] = useState<string | null>(null);
+  const [isSyncingAlpaca, setIsSyncingAlpaca] = useState<boolean>(false);
 
   // 1-Click CSV Import Modal State
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvImportText, setCsvImportText] = useState('');
+
+  const handleSyncAlpacaPaper = async () => {
+    setIsSyncingAlpaca(true);
+    try {
+      const res = await fetch('/api/alpaca/overview');
+      const data = await res.json();
+      if (!data?.configured || !data?.account) {
+        setExportToast(
+          data?.message ||
+            'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env.'
+        );
+        setTimeout(() => setExportToast(null), 5000);
+        return;
+      }
+      const syncResult = syncAlpacaOverviewToLocalJournal(data);
+      setEntries(syncResult.entries);
+      setExportToast(
+        `Synced Alpaca Paper history: ${syncResult.addedCount} added, ${syncResult.updatedCount} updated (${syncResult.totalAlpacaEntries} total Alpaca records).`
+      );
+      setTimeout(() => setExportToast(null), 5000);
+    } catch {
+      setExportToast('Unable to reach /api/alpaca/overview to sync Alpaca Paper trades.');
+      setTimeout(() => setExportToast(null), 4500);
+    } finally {
+      setIsSyncingAlpaca(false);
+    }
+  };
 
   const parsedCsvPreview = useMemo(() => {
     if (!csvImportText.trim()) return null;
@@ -263,13 +292,20 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         })
         .catch((err) => console.warn('Failed to load Firestore journal entries:', err));
     }
+    const handleJournalUpdated = () => {
+      if (!active) return;
+      setEntries(loadJournalEntries());
+    };
+    window.addEventListener('trullas-journal-updated', handleJournalUpdated);
+
     return () => {
       active = false;
+      window.removeEventListener('trullas-journal-updated', handleJournalUpdated);
     };
   }, [user]);
 
-  // Capital Epoch Selection (only shown if legacy entries exist)
-  const [selectedEpoch, setSelectedEpoch] = useState<'epoch-2k-virtual' | 'legacy-50k'>('epoch-2k-virtual');
+  // Ledger Scope Selection (Active, Alpaca Paper Only, or Archived)
+  const [selectedEpoch, setSelectedEpoch] = useState<'active' | 'alpaca-paper' | 'legacy-50k'>('active');
 
   const hasLegacyEntries = useMemo(() => entries.some((e) => e.epochId === 'legacy-50k'), [entries]);
 
@@ -283,7 +319,10 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
       if (selectedEpoch === 'legacy-50k') {
         return e.epochId === 'legacy-50k';
       }
-      return !e.epochId || e.epochId === 'epoch-2k-virtual';
+      if (selectedEpoch === 'alpaca-paper') {
+        return e.epochId === 'alpaca-paper' || e.tags.includes('Alpaca Paper');
+      }
+      return e.epochId !== 'legacy-50k';
     });
   }, [entries, selectedEpoch]);
 
@@ -400,6 +439,13 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     });
   }, [epochEntries, activeFilter, searchQuery]);
 
+  const journalVirtualizer = useVirtualizer({
+    count: filteredEntries.length,
+    getScrollElement: () => journalScrollRef.current,
+    estimateSize: () => 56,
+    overscan: 8,
+  });
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-12">
       {/* Top Tab Mode Switcher: Stock Auto-Pilot vs Options Auto-Pilot vs Manual Diary */}
@@ -414,7 +460,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             }`}
           >
             <Bot className="w-4 h-4" />
-            <span>Stock Portfolio Manager ($10k Virtual)</span>
+            <span>Stocks Auto-Bot (Alpaca Paper)</span>
           </button>
 
           <button
@@ -427,7 +473,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           >
             <Sparkles className="w-4 h-4 text-emerald-300" />
             <span className="flex items-center space-x-1.5">
-              <span>Options Harvesting Bot</span>
+              <span>Options Auto-Bot (Alpaca Paper)</span>
             </span>
           </button>
 
@@ -440,7 +486,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            <span>Manual Trade Diary ({entries.length})</span>
+            <span>Local Trade Journal ({entries.length})</span>
           </button>
 
           <button
@@ -459,12 +505,12 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         <div className="flex items-center space-x-3 px-3 text-xs text-zinc-400 font-mono">
           <span>
             {journalTab === 'options'
-              ? 'S&P 500 Put Harvesting & Golden Zone'
+              ? 'Alpaca Paper Options & Golden Zone'
               : journalTab === 'automated'
-              ? '4-Pillars Equity Engine'
+              ? 'Alpaca Paper 4-Pillars Equity Engine'
               : journalTab === 'backtester'
-              ? 'Historical Multi-Asset Simulation'
-              : 'Manual Journal & CSV Ledger'}
+              ? 'Historical Multi-Asset Backtest'
+              : 'Alpaca Paper Sync & Local Trade Journal'}
           </span>
         </div>
       </div>
@@ -489,17 +535,28 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
               <div>
                 <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium mb-3">
                   <BookOpen className="w-3.5 h-3.5" />
-                  <span>Trader Execution Diary & Performance Analytics</span>
+                  <span>Alpaca Paper Sync &amp; Execution Ledger</span>
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-                  Manual Trading Performance Journal
+                  Local Trade Journal &amp; Performance Ledger
                 </h1>
                 <p className="mt-2 text-sm text-zinc-400 max-w-2xl leading-relaxed">
-                  Log trades taken based on scanner setups, attach entry/exit chart screenshots, track win rate metrics, and audit strategy discipline.
+                  Automatically records every Alpaca Paper stock and option trade alongside your manual setups, screenshots, R-multiples, and CSV exports.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  onClick={handleSyncAlpacaPaper}
+                  disabled={isSyncingAlpaca}
+                  data-testid="sync-alpaca-journal-btn"
+                  className="flex items-center space-x-2 px-3.5 py-2.5 bg-indigo-600/90 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition whitespace-nowrap"
+                  title="Sync real fills and open positions from your Alpaca Paper account into the local journal"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingAlpaca ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingAlpaca ? 'Syncing Alpaca...' : 'Sync Alpaca Paper'}</span>
+                </button>
+
                 <button
                   onClick={() => setShowCsvImportModal(true)}
                   data-testid="open-csv-import-btn"
@@ -546,20 +603,30 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           </div>
         )}
 
-        {/* CAPITAL EPOCH SELECTOR */}
+        {/* LEDGER SCOPE SELECTOR */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-zinc-950/80 border border-zinc-800 p-2.5 rounded-xl">
           <div className="flex items-center space-x-2">
             <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Journal Ledger:</span>
             <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-xs">
               <button
-                onClick={() => setSelectedEpoch('epoch-2k-virtual')}
+                onClick={() => setSelectedEpoch('active')}
                 className={`px-3 py-1 rounded-md font-semibold transition ${
-                  selectedEpoch === 'epoch-2k-virtual'
+                  selectedEpoch === 'active'
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                Active Journal ({entries.filter((e) => !e.epochId || e.epochId === 'epoch-2k-virtual').length})
+                Active Journal ({entries.filter((e) => e.epochId !== 'legacy-50k').length})
+              </button>
+              <button
+                onClick={() => setSelectedEpoch('alpaca-paper')}
+                className={`px-3 py-1 rounded-md font-semibold transition ${
+                  selectedEpoch === 'alpaca-paper'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Alpaca Paper Only ({entries.filter((e) => e.epochId === 'alpaca-paper' || e.tags.includes('Alpaca Paper')).length})
               </button>
               {hasLegacyEntries && (
                 <button
@@ -619,7 +686,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
           </div>
 
           <div className="border-r border-zinc-800 pr-2">
-            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Sample (n / n_eff)</span>
+            <span className="text-[10px] text-zinc-400 block font-sans uppercase">Trades (n / n_eff)</span>
             <div className="text-xl font-bold text-white mt-1">
               {stats.closedTrades} <span className="text-xs font-normal text-zinc-400">/ {stats.effectiveDays}d</span>
             </div>
@@ -720,10 +787,10 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div ref={journalScrollRef} className="overflow-x-auto max-h-[680px] overflow-y-auto">
             <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-950/80 text-[11px] font-mono text-zinc-400 uppercase tracking-wider select-none">
+              <thead className="sticky top-0 z-10 bg-zinc-950">
+                <tr className="border-b border-zinc-800 bg-zinc-950/95 text-[11px] font-mono text-zinc-400 uppercase tracking-wider select-none">
                   <th className="py-3 px-3 w-8 text-center"></th>
                   <th className="py-3 px-3 font-semibold text-zinc-300">Entry Date</th>
                   <th className="py-3 px-3 font-semibold text-zinc-300">Duration</th>
@@ -743,11 +810,27 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/80 text-xs font-mono">
-                {filteredEntries.map((item) => {
-                  const isWin = item.status === 'CLOSED_WIN';
-                  const isLoss = item.status === 'CLOSED_LOSS';
-                  const isOpen = item.status === 'OPEN';
-                  const isExpanded = expandedJournalIds.has(item.id);
+                {(() => {
+                  const vItems = journalVirtualizer.getVirtualItems();
+                  const paddingTop = vItems.length > 0 ? vItems[0].start : 0;
+                  const paddingBottom =
+                    vItems.length > 0
+                      ? Math.max(0, journalVirtualizer.getTotalSize() - vItems[vItems.length - 1].end)
+                      : 0;
+                  return (
+                    <>
+                      {paddingTop > 0 && (
+                        <tr aria-hidden="true">
+                          <td colSpan={16} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
+                        </tr>
+                      )}
+                      {vItems.map((virtualRow) => {
+                        const item = filteredEntries[virtualRow.index];
+                        if (!item) return null;
+                        const isWin = item.status === 'CLOSED_WIN';
+                        const isLoss = item.status === 'CLOSED_LOSS';
+                        const isOpen = item.status === 'OPEN';
+                        const isExpanded = expandedJournalIds.has(item.id);
                   const isBull = !item.setupType.includes('BEAR');
                   const riskPerShare = Math.abs(item.entryPrice - item.stopLoss);
                   
@@ -992,7 +1075,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                       {/* ACCORDION DROPDOWN: Inline Trade Autopsy */}
                       {isExpanded && (
                         <tr className="bg-zinc-950/95 border-b border-zinc-800">
-                          <td colSpan={13} className="p-5">
+                          <td colSpan={16} className="p-5">
                             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4 shadow-inner">
                               {/* Header & Meta */}
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1255,6 +1338,14 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                     </React.Fragment>
                   );
                 })}
+                      {paddingBottom > 0 && (
+                        <tr aria-hidden="true">
+                          <td colSpan={16} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
+                        </tr>
+                      )}
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
@@ -1867,15 +1958,6 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                   className="hidden"
                 />
               </label>
-
-              <button
-                type="button"
-                data-testid="load-sample-csv-btn"
-                onClick={() => setCsvImportText(SAMPLE_BROKER_CSV)}
-                className="px-3 py-1.5 bg-zinc-950 hover:bg-zinc-800 text-sky-400 border border-zinc-800 rounded-lg transition font-medium"
-              >
-                Load Sample Broker CSV (3 Trades)
-              </button>
             </div>
 
             <div>

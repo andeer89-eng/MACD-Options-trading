@@ -6,7 +6,30 @@
  * Includes Continual Learning / Active Memory for Autonomous Strike Calibration and Theta Management
  */
 
-import type { OptionsTradeRecord } from '../data/richOptionsTradesArchive.ts';
+export interface OptionsTradeRecord {
+  id: string;
+  date: string;
+  ticker: string;
+  boughtSold: 'Sold' | 'Bought';
+  contract: string;
+  strike: number;
+  optionType: 'PUT' | 'CALL';
+  expiration: string;
+  expirationDateStr: string;
+  profitDollars: number;
+  profitPercent: number;
+  status: 'Open' | 'Closed';
+  outcomeReason: 'Expired Worthless' | 'Early Take-Profit' | 'Break Even' | 'Order Error' | string;
+  underlyingPriceAtEntry: number;
+  strikeDistancePercent: number;
+  delta: number;
+  thetaPerDay: number;
+  tradingWarzPattern?: string;
+  goldenZoneSupportLevel: number;
+  whyOpenedThesis: string;
+  session?: MarketRegimeType;
+}
+
 import {
   TradingWarzAnalysis,
   analyzeTradingWarzSetup,
@@ -18,8 +41,8 @@ import { escapeCsvCell } from './csvExport.ts';
 
 export interface OptionsPosition {
   id: string;
-  ticker: string; // 'ES', 'MES', 'SPY'
-  contract: string; // e.g. "ES 12NOV26 7380 P"
+  ticker: string; // e.g. 'SPY', 'QQQ', 'IWM', 'AAPL'
+  contract: string; // OCC symbol or formatted contract e.g. "SPY261218P00560000"
   boughtSold: 'Sold' | 'Bought';
   optionType: 'PUT' | 'CALL';
   strike: number;
@@ -100,8 +123,8 @@ export interface OptionsPortfolioAccount {
   unrealizedPnL: number;
   dailyThetaIncome: number;
   positions: OptionsPosition[];
-  tradeHistory: OptionsTradeRecord[]; // Active $2k Era trades ONLY
-  legacyHistory: OptionsTradeRecord[]; // Archived read-only 192 historical audit records (50k era)
+  tradeHistory: OptionsTradeRecord[];
+  legacyHistory: OptionsTradeRecord[];
   sessionLogs: OptionsTradeLog[];
   isAutoPilotActive: boolean;
   targetDelta: number; // 0.08 to 0.16
@@ -181,8 +204,7 @@ function deduplicateEntityIds<T extends { id?: string }>(
 }
 
 /**
- * Synthesizes comprehensive epistemic memory episodes from historical options trade records
- * Generates verbal critique, reinforcement weights, and rule learning for all 192 trades
+ * Synthesizes epistemic memory episodes from real closed options trade records.
  */
 export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeRecord[]): OptionsTradeEpisode[] {
   return tradeHistory.map((trade, idx) => {
@@ -341,7 +363,7 @@ export function exportOptionsMemoryJSON(memory: OptionsActiveMemoryState): strin
  * Calculates complete options portfolio performance statistics
  */
 export function calculateOptionsStats(account: OptionsPortfolioAccount): OptionsPortfolioStats {
-  const startingBalance = account.startingBalance || 2000;
+  const startingBalance = Math.max(0, Number.isFinite(account.startingBalance) ? account.startingBalance : 0);
   const unrealizedPnL = account.positions.reduce((sum, p) => sum + p.unrealizedPnL, 0);
   const currentEquity = account.equity !== undefined && account.equity > 0
     ? Number(account.equity.toFixed(2))
@@ -417,11 +439,11 @@ export function calculateOptionsStats(account: OptionsPortfolioAccount): Options
 
 /**
  * Autonomous Options Cycle Engine:
- * 1. Mark to market open short options positions
+ * 1. Mark to market open options positions
  * 2. Auto-take profit when profit target (e.g. 70-85%) is hit (Buy to close)
  * 3. Expire worthless if 0 DTE remaining (100% gain)
- * 4. Scan S&P 500 (ES, MES, SPY) for TradingWarz Golden Zone & candlestick setups
- * 5. Sell new safe OTM Puts with 0.08 - 0.14 Delta
+ * 4. Scan Alpaca-tradable US equity/ETF options (SPY, QQQ, IWM, AAPL, NVDA, MSFT)
+ * 5. Evaluate OTM Puts with 0.08 - 0.14 Delta beneath TradingWarz 61.8% Golden Zone
  * 6. Update Active Memory brain
  */
 export function processOptionsAutonomousCycle(
@@ -457,7 +479,7 @@ export function processOptionsAutonomousCycle(
     const underlyingPrice = market ? market.currentPrice : pos.underlyingCurrentPrice;
 
     const nextDte = Math.max(0, pos.dteDaysRemaining - 1);
-    const multiplier = pos.ticker === 'ES' ? 50 : 5;
+    const multiplier = 100;
     const ivDec = Math.max(0.12, (pos.ivRankPercent || 20) / 100);
     const bsReprice = nextDte === 0
       ? {
@@ -561,13 +583,11 @@ export function processOptionsAutonomousCycle(
   }
 
   // 2. SCAN FOR NEW HARVESTING OPPORTUNITIES IF UNDER MAX OPEN POSITIONS
-  const isMicroAccount = account.startingBalance <= 5000;
-  const minCashNeeded = isMicroAccount ? 700 : 12000;
+  const minCashNeeded = 700;
 
   if (updatedPositions.length < account.maxOpenPositions && updatedCash >= minCashNeeded) {
-    // For $2,000 accounts, prioritize Micro E-mini (MES) and SPY, avoiding full ES ($15k margin)
     const candidates = marketItems.filter((m) =>
-      isMicroAccount ? ['MES', 'SPY'].includes(m.symbol) : ['ES', 'MES', 'SPY'].includes(m.symbol)
+      ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'MSFT'].includes(m.symbol)
     );
     const openContracts = new Set(updatedPositions.map((p) => p.ticker));
 
@@ -591,9 +611,8 @@ export function processOptionsAutonomousCycle(
       // Check if setup qualifies under TradingWarz filter (A+ or A grade preferred)
       if (twAnalysis.setupGrade === 'A+' || twAnalysis.setupGrade === 'A' || !account.tradingWarzStrictFilter) {
         const strike = twAnalysis.recommendedPutStrike;
-        const multiplier = item.symbol === 'ES' ? 50 : 5;
-        // Conservative 1 contract for $2,000 micro account
-        const contracts = isMicroAccount ? 1 : item.symbol === 'ES' ? 1 : 5;
+        const multiplier = 100;
+        const contracts = 1;
 
         // Derive annualized volatility from real candle closes (log returns); fallback to ATR-scaled vol if short window
         const validCloses = candles.map((c) => c.close).filter((c) => Number.isFinite(c) && c > 0);
@@ -711,7 +730,7 @@ export function manualCloseOptionsPosition(
   const target = account.positions.find((p) => p.id === positionId);
   if (!target) return account;
 
-  const multiplier = target.ticker === 'ES' ? 50 : 5;
+  const multiplier = 100;
   const costToClose = buyBackPremium * target.contractsCount * multiplier;
   const pnl = target.totalPremiumCollected - costToClose;
   const pnlPct = ((target.entryPremiumPerContract - buyBackPremium) / target.entryPremiumPerContract) * 100;
@@ -800,14 +819,27 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
           if (!Array.isArray(parsed.positions)) {
             parsed.positions = [];
             dirty = true;
+          } else if (parsed.positions.some((p: any) => p?.ticker === 'ES' || p?.ticker === 'MES')) {
+            parsed.positions = parsed.positions.filter((p: any) => p?.ticker !== 'ES' && p?.ticker !== 'MES');
+            dirty = true;
           }
 
           if (!Array.isArray(parsed.tradeHistory)) {
             parsed.tradeHistory = [];
             dirty = true;
-          } else if (parsed.tradeHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
+          } else if (
+            parsed.tradeHistory.some(
+              (t: any) =>
+                String(t?.id || '').startsWith('rich-opt-log-') ||
+                t?.ticker === 'ES' ||
+                t?.ticker === 'MES'
+            )
+          ) {
             parsed.tradeHistory = parsed.tradeHistory.filter(
-              (t: any) => !String(t?.id || '').startsWith('rich-opt-log-')
+              (t: any) =>
+                !String(t?.id || '').startsWith('rich-opt-log-') &&
+                t?.ticker !== 'ES' &&
+                t?.ticker !== 'MES'
             );
             dirty = true;
           }
@@ -829,7 +861,9 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
           }
 
           if (!parsed.activeMemory) {
-            parsed.activeMemory = initDefaultOptionsPortfolio(parsed.startingBalance || 2000).activeMemory;
+            parsed.activeMemory = initDefaultOptionsPortfolio(
+              Number.isFinite(parsed.startingBalance) ? parsed.startingBalance : 0
+            ).activeMemory;
             dirty = true;
           } else if (!Array.isArray(parsed.activeMemory.episodes)) {
             parsed.activeMemory.episodes = [];

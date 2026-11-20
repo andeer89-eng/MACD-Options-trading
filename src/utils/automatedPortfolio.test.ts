@@ -176,3 +176,17 @@ test('calculateAdvancedAnalytics computes real equity curve without fake floor c
   assert.equal(analytics.sp500BenchmarkReturnPercent, 2.5);
   assert.ok(analytics.totalTrades === 2);
 });
+
+test('initDefaultPortfolio(0) yields 0% drawdown and 0% return when Alpaca Paper is disconnected', () => {
+  const disconnected = initDefaultPortfolio(0);
+  const stats = calculatePortfolioStats(disconnected);
+  assert.equal(stats.startingBalance, 0);
+  assert.equal(stats.currentEquity, 0);
+  assert.equal(stats.maxDrawdownPercent, 0);
+  assert.equal(stats.totalReturnPercent, 0);
+
+  const analytics = calculateAdvancedAnalytics(disconnected, null);
+  assert.equal(analytics.maxDrawdownPercent, 0);
+  assert.equal(analytics.startingBalance, 0);
+});
+

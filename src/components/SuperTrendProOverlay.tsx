@@ -11,6 +11,7 @@ import {
   estimateOverlayPillSize,
   formatOverlayPrice,
   getPrimaryPaneBounds,
+  resolveSuperTrendHudLayout,
   syncCanvasToContainer,
 } from '../utils/chartOverlayPrimitives';
 import { Eye, EyeOff, TrendingUp } from 'lucide-react';
@@ -43,6 +44,7 @@ interface SuperTrendProOverlayProps {
   toggles?: SuperTrendVisualToggles;
   onToggleLayer?: (key: keyof SuperTrendVisualToggles) => void;
   toolbarTopClass?: string;
+  reservePriceLabelLane?: boolean;
 }
 
 const fmtPrice = (v: number | null | undefined) => formatOverlayPrice(v, 4);
@@ -110,6 +112,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
   toggles: controlledToggles,
   onToggleLayer,
   toolbarTopClass = 'top-2',
+  reservePriceLabelLane = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [internalToggles, setInternalToggles] = useState<SuperTrendVisualToggles>(
@@ -118,10 +121,12 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
   const toggles = controlledToggles ?? internalToggles;
   const [paneBox, setPaneBox] = useState<{
     rightOffset: number;
+    priceLabelLanePx: number;
     paneHeight: number;
     paneBottomOffset: number;
   }>({
     rightOffset: 68,
+    priceLabelLanePx: 0,
     paneHeight: 380,
     paneBottomOffset: 190,
   });
@@ -143,23 +148,32 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
       const { width, height: totalHeight, ctx } = synced;
       const { plotWidth, paneHeight } = getPrimaryPaneBounds(chart, width, totalHeight, 0.65);
 
-      const nextRightOffset = Math.max(58, Math.round(width - plotWidth + 8));
+      const hudLayout = resolveSuperTrendHudLayout({
+        totalWidth: width,
+        plotWidth,
+        paneHeight,
+        reservePriceLabelLane,
+        showTable: toggles.table,
+        showLegend: toggles.legend,
+      });
+
       const nextPaneBottomOffset = Math.max(8, Math.round(totalHeight - paneHeight + 6));
       setPaneBox((prev) =>
-        Math.abs(prev.rightOffset - nextRightOffset) >= 2 ||
+        Math.abs(prev.rightOffset - hudLayout.rightOffset) >= 2 ||
+        prev.priceLabelLanePx !== hudLayout.priceLabelLanePx ||
         Math.abs(prev.paneHeight - paneHeight) >= 2 ||
         Math.abs(prev.paneBottomOffset - nextPaneBottomOffset) >= 2
           ? {
-              rightOffset: nextRightOffset,
+              rightOffset: hudLayout.rightOffset,
+              priceLabelLanePx: hudLayout.priceLabelLanePx,
               paneHeight,
               paneBottomOffset: nextPaneBottomOffset,
             }
           : prev
       );
 
-      // Reserve right-side telemetry card column for signal labels so pills stay legible
-      const cardReserveWidth = toggles.table || toggles.legend ? 194 : 8;
-      const effectiveLabelWidth = Math.max(120, plotWidth - cardReserveWidth);
+      // Reserve right-side telemetry card column + right-edge price-line lane so signal pills stay legible
+      const effectiveLabelWidth = hudLayout.effectiveLabelWidth;
       const topMargin = toolbarTopClass.includes('9') ? 58 : toolbarTopClass.includes('16') ? 82 : 34;
 
       const placer = createPillCollisionPlacer({
@@ -533,7 +547,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
       }
       ro.disconnect();
     };
-  }, [chart, mainSeries, containerRef, report, toggles, toolbarTopClass]);
+  }, [chart, mainSeries, containerRef, report, toggles, toolbarTopClass, reservePriceLabelLane]);
 
   if (!report) return null;
 
@@ -558,7 +572,9 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
 
       {/* Top-Left Compact Layer Toggle Bar */}
       <div
-        className={`absolute ${toolbarTopClass} left-2 z-20 flex flex-wrap items-center gap-0.5 bg-[#090d18]/90 backdrop-blur-md border border-[#2962FF]/50 rounded-lg px-1.5 py-0.5 text-[9.5px] font-mono shadow-lg max-w-[calc(100%-265px)]`}
+        className={`absolute ${toolbarTopClass} left-2 z-20 flex flex-wrap items-center gap-0.5 bg-[#090d18]/90 backdrop-blur-md border border-[#2962FF]/50 rounded-lg px-1.5 py-0.5 text-[9.5px] font-mono shadow-lg ${
+          paneBox.priceLabelLanePx > 0 ? 'max-w-[calc(100%-365px)]' : 'max-w-[calc(100%-265px)]'
+        }`}
       >
         <span className="text-emerald-400 font-bold flex items-center gap-1 pr-1.5 border-r border-zinc-700/80 shrink-0">
           <TrendingUp className="w-3 h-3" />
@@ -595,6 +611,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
       {toggles.table && (
         <div
           data-testid="supertrend-telemetry-table"
+          data-reserved-price-lane={paneBox.priceLabelLanePx}
           style={{ right: `${paneBox.rightOffset}px` }}
           className="absolute top-2 z-20 pointer-events-none rounded border border-[#2962FF]/80 bg-[#090d18]/82 backdrop-blur-sm shadow-xl text-[9.5px] font-mono text-zinc-200 overflow-hidden w-[184px]"
         >
@@ -657,6 +674,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
       {showLegendCard && (
         <div
           data-testid="supertrend-signals-legend"
+          data-reserved-price-lane={paneBox.priceLabelLanePx}
           style={{
             right: `${paneBox.rightOffset}px`,
             bottom: `${paneBox.paneBottomOffset}px`,

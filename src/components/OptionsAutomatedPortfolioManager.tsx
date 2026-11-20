@@ -49,22 +49,24 @@ import {
   OptionsTradeEpisode,
   loadOptionsPortfolio,
   saveOptionsPortfolio,
-  resetOptionsPortfolio,
+  initDefaultOptionsPortfolio,
   calculateOptionsStats,
-  processOptionsAutonomousCycle,
-  manualCloseOptionsPosition,
   exportOptionsLogsToCSV,
   relearnOptionsMemoryFromHistory,
   exportOptionsMemoryJSON,
+  OptionsTradeRecord,
 } from '../utils/optionsAutomatedPortfolio';
-import type { OptionsTradeRecord } from '../data/richOptionsTradesArchive';
+import { analyzeTradingWarzSetup, CandleOHLC } from '../utils/tradingWarzEngine';
+import { useAlpacaPaper, fetchAlpacaOptionContracts } from '../hooks/useAlpacaPaper';
+import {
+  alpacaPositionsToOptionsPositions,
+  alpacaOrdersToOptionsHistory,
+  alpacaOrdersToOptionsSessionLogs,
+} from '../utils/alpacaJournalSync';
 import { downloadCSV } from '../utils/tradeJournal';
 import {
   getMarketSessionStatus,
-  getTradeExecutionRegime,
-  MarketRegimeType,
   getBucharestTimeFormatted,
-  getBucharestDateTimeFormatted,
 } from '../utils/marketSession';
 
 interface OptionsAutomatedPortfolioManagerProps {
@@ -74,50 +76,117 @@ interface OptionsAutomatedPortfolioManagerProps {
 
 export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfolioManagerProps> = ({
   onSelectSymbolForChart,
-  scannerResults = [],
 }) => {
+  const {
+    overview,
+    loading: alpacaLoading,
+    error: alpacaError,
+    lastSyncSummary,
+    refresh: refreshAlpaca,
+    submitOrder,
+    closePosition,
+  } = useAlpacaPaper({ pollMs: 30000 });
+
   const [account, setAccount] = useState<OptionsPortfolioAccount>(() => loadOptionsPortfolio());
-  const [mainTab, setMainTab] = useState<'journal' | 'legacy' | 'open-positions' | 'brain' | 'rules'>('journal');
+  const [mainTab, setMainTab] = useState<'journal' | 'open-positions' | 'brain'>('journal');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'EXPIRED' | 'EARLY_TP' | 'BREAKEVEN'>('ALL');
   const [sessionFilter, setSessionFilter] = useState<'ALL' | 'REGULAR' | 'PREMARKET' | 'AFTERHOURS' | '24/7'>('ALL');
   const [yearFilter, setYearFilter] = useState<'ALL' | '2026' | '2025'>('ALL');
-  const [tickerFilter, setTickerFilter] = useState<'ALL' | 'ES' | 'MES' | 'SPY'>('ALL');
+  const [tickerFilter, setTickerFilter] = useState<'ALL' | 'SPY' | 'QQQ' | 'IWM' | 'AAPL' | 'NVDA' | 'MSFT'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set(['opt-pos-es-nov12', 'rich-opt-log-1']));
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [isCycleRunning, setIsCycleRunning] = useState(false);
   const [cycleFeedbackMessage, setCycleFeedbackMessage] = useState<string | null>(null);
   const [exportToast, setExportToast] = useState<string | null>(null);
 
-  // Live Market Time & Multi-Cadence Countdown
+  const isAlpacaConnected = Boolean(overview?.configured && overview?.account);
+
+  // Live Market Time & Countdown
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [nextScanCountdown, setNextScanCountdown] = useState<number>(60);
 
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-      setNextScanCountdown((prev) => (prev <= 1 ? 60 : prev - 1));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const overviewRef = useRef(overview);
+  overviewRef.current = overview;
   const accountRef = useRef<OptionsPortfolioAccount>(account);
   const autoCycleInFlightRef = useRef<boolean>(false);
+  const cycleAbortRef = useRef<AbortController | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
     accountRef.current = account;
   }, [account]);
 
-  const fetchLiveOptionsCandidates = async () => {
-    const targets = [
-      { symbol: 'ES', feedSymbol: 'ES=F' },
-      { symbol: 'MES', feedSymbol: 'MES=F' },
-      { symbol: 'SPY', feedSymbol: 'SPY' },
-    ];
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      cycleAbortRef.current?.abort();
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
+
+  const liveOptionsAccount = useMemo<OptionsPortfolioAccount>(() => {
+    if (!overview?.configured || !overview?.account) {
+      return {
+        ...initDefaultOptionsPortfolio(0),
+        isAutoPilotActive: account.isAutoPilotActive,
+        targetDelta: account.targetDelta,
+        profitTakePercent: account.profitTakePercent,
+        minDte: account.minDte,
+        maxOpenPositions: account.maxOpenPositions,
+        tradingWarzStrictFilter: account.tradingWarzStrictFilter,
+        activeMemory: account.activeMemory,
+      };
+    }
+
+    const livePositions = alpacaPositionsToOptionsPositions(
+      overview.optionPositions || [],
+      overview.orders || [],
+      account.profitTakePercent
+    );
+    const liveHistory = alpacaOrdersToOptionsHistory(overview.orders || []);
+    const liveLogs = alpacaOrdersToOptionsSessionLogs(overview.orders || []);
+    const totalRealized = Number(liveHistory.reduce((s, r) => s + r.profitDollars, 0).toFixed(2));
+    const totalUnrealized = Number(livePositions.reduce((s, p) => s + p.unrealizedPnL, 0).toFixed(2));
+    const totalDailyTheta = Number(livePositions.reduce((s, p) => s + p.dailyTheta, 0).toFixed(2));
+
+    return {
+      startingBalance: overview.account.last_equity || overview.account.equity,
+      cash: overview.account.options_buying_power || overview.account.cash,
+      equity: overview.account.equity,
+      totalRealizedIncome: totalRealized,
+      unrealizedPnL: totalUnrealized,
+      dailyThetaIncome: totalDailyTheta,
+      positions: livePositions,
+      tradeHistory: liveHistory,
+      legacyHistory: [],
+      sessionLogs: liveLogs,
+      isAutoPilotActive: account.isAutoPilotActive,
+      targetDelta: account.targetDelta,
+      profitTakePercent: account.profitTakePercent,
+      minDte: account.minDte,
+      maxOpenPositions: account.maxOpenPositions,
+      tradingWarzStrictFilter: account.tradingWarzStrictFilter,
+      lastUpdated: overview.fetchedAt,
+      activeMemory: account.activeMemory,
+    };
+  }, [overview, account]);
+
+  const fetchLiveOptionsCandidates = async (signal?: AbortSignal) => {
+    const targets = ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'MSFT'];
     const settled = await Promise.all(
-      targets.map(async ({ symbol, feedSymbol }) => {
+      targets.map(async (symbol) => {
         try {
-          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(feedSymbol)}&timeframe=1d&range=1mo`);
+          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d&range=1mo`, {
+            signal,
+          });
           if (!res.ok) return null;
           const json = await res.json();
           const bars = Array.isArray(json?.candles) ? json.candles : [];
@@ -132,7 +201,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
               high: Number(b.high ?? b.close),
               low: Number(b.low ?? b.close),
               close: Number(b.close),
-            })),
+            })) as CandleOHLC[],
           };
         } catch {
           return null;
@@ -142,41 +211,149 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     return settled.filter((item): item is NonNullable<typeof item> => item !== null);
   };
 
-  // Autonomous Intraday Scheduler (every 60s when autopilot is active)
-  useEffect(() => {
-    if (!account.isAutoPilotActive) return;
+  // Run autonomous Alpaca Paper options cycle (shared by button & scheduler)
+  const executeAlpacaOptionsCycle = async (signal?: AbortSignal, fromScheduler = false) => {
+    const activeOverview = overviewRef.current;
+    if (!activeOverview?.configured || !activeOverview?.account) {
+      if (!fromScheduler && isMountedRef.current) {
+        setCycleFeedbackMessage(
+          'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env to execute Paper options orders.'
+        );
+      }
+      return;
+    }
 
-    if (nextScanCountdown === 60) {
+    const latestAccount = accountRef.current;
+    const marketCandidates = await fetchLiveOptionsCandidates(signal);
+    if (!isMountedRef.current || signal?.aborted || marketCandidates.length === 0) {
+      if (!fromScheduler && isMountedRef.current) {
+        setCycleFeedbackMessage('Cycle aborted: live SPY / QQQ / IWM / AAPL / NVDA / MSFT market feeds unavailable.');
+      }
+      return;
+    }
+
+    const actionsLog: string[] = [];
+    const currentOpenPositions = alpacaPositionsToOptionsPositions(
+      activeOverview.optionPositions || [],
+      activeOverview.orders || [],
+      latestAccount.profitTakePercent
+    );
+
+    // 1. Evaluate open Alpaca OCC option positions for TP / expiration exits
+    for (const pos of currentOpenPositions) {
+      if (pos.unrealizedPnLPercent >= latestAccount.profitTakePercent || pos.dteDaysRemaining <= 0) {
+        const res = await closePosition(pos.contract);
+        if (res.ok) {
+          actionsLog.push(`Buy-to-Close ${pos.contract} (${pos.unrealizedPnLPercent.toFixed(1)}% profit)`);
+        } else if (res.error) {
+          actionsLog.push(`Exit rejected ${pos.contract}: ${res.error}`);
+        }
+      }
+    }
+
+    // 2. Scan for new short put opportunities if under maxOpenPositions
+    const openUnderlyings = new Set(currentOpenPositions.map((p) => p.ticker));
+    const pendingSymbols = new Set(
+      (activeOverview.orders || [])
+        .filter((o) => ['new', 'accepted', 'pending_new', 'partially_filled'].includes(o.status))
+        .map((o) => o.symbol.toUpperCase())
+    );
+
+    let openSlots = Math.max(0, latestAccount.maxOpenPositions - currentOpenPositions.length);
+    const optionsLevel = activeOverview.account.options_approved_level ?? 0;
+
+    if (openSlots > 0 && optionsLevel < 2) {
+      actionsLog.push(
+        `Alpaca Paper Options Level ${optionsLevel} detected (Level 2+ required for cash-secured short puts). Enable Level 2 Options in Alpaca Paper settings to route short put orders.`
+      );
+    } else if (openSlots > 0) {
+      for (const cand of marketCandidates) {
+        if (openSlots <= 0) break;
+        if (openUnderlyings.has(cand.symbol)) continue;
+
+        const twAnalysis = analyzeTradingWarzSetup(cand.candles, cand.currentPrice);
+        if (
+          twAnalysis.setupGrade !== 'A+' &&
+          twAnalysis.setupGrade !== 'A' &&
+          latestAccount.tradingWarzStrictFilter
+        ) {
+          continue;
+        }
+
+        const chainRes = await fetchAlpacaOptionContracts({
+          underlying: cand.symbol,
+          type: 'put',
+          minDte: latestAccount.minDte,
+          maxDte: latestAccount.minDte + 14,
+          maxStrike: twAnalysis.recommendedPutStrike,
+          limit: 12,
+        });
+        if (!chainRes.ok || chainRes.contracts.length === 0) continue;
+
+        const tradable = chainRes.contracts
+          .filter((c) => c.tradable && !pendingSymbols.has(c.symbol.toUpperCase()))
+          .sort((a, b) => b.strike_price - a.strike_price);
+        const chosen = tradable.find((c) => (c.close_price ?? 0) >= 0.15) || tradable[0];
+        if (!chosen) continue;
+
+        const orderRes = await submitOrder({
+          symbol: chosen.symbol,
+          side: 'sell',
+          qty: 1,
+          type: chosen.close_price && chosen.close_price > 0 ? 'limit' : 'market',
+          time_in_force: 'day',
+          ...(chosen.close_price && chosen.close_price > 0
+            ? { limit_price: Number(chosen.close_price.toFixed(2)) }
+            : {}),
+        });
+
+        if (orderRes.ok) {
+          openSlots -= 1;
+          openUnderlyings.add(cand.symbol);
+          actionsLog.push(`Sold 1x ${chosen.symbol} (TradingWarz ${twAnalysis.patternLabel})`);
+        } else if (orderRes.error) {
+          actionsLog.push(`Order rejected ${chosen.symbol}: ${orderRes.error}`);
+        }
+      }
+    }
+
+    await refreshAlpaca();
+
+    if (!isMountedRef.current) return;
+    if (actionsLog.length > 0) {
+      setCycleFeedbackMessage(`Alpaca Paper Options Cycle: ${actionsLog.join(' • ')}.`);
+    } else if (!fromScheduler) {
+      setCycleFeedbackMessage(
+        `Alpaca Paper Options Cycle complete: Evaluated ${currentOpenPositions.length} open contract(s) across ${marketCandidates.length} underlyings.`
+      );
+    }
+  };
+
+  // Autonomous Intraday Scheduler (every 60s when autopilot is active and market is OPEN)
+  useEffect(() => {
+    if (!account.isAutoPilotActive || !isAlpacaConnected) return;
+
+    const runScheduledCycle = async () => {
+      if (getMarketSessionStatus() !== 'OPEN') return;
       if (autoCycleInFlightRef.current) return;
       autoCycleInFlightRef.current = true;
-      let active = true;
-      fetchLiveOptionsCandidates()
-        .then((marketCandidates) => {
-          if (!active || marketCandidates.length === 0) return;
-          const latestAccount = accountRef.current;
-          if (!latestAccount.isAutoPilotActive) return;
-          const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(
-            latestAccount,
-            marketCandidates,
-            true
-          );
-          if (actionsTaken.length > 0) {
-            accountRef.current = updatedAccount;
-            setAccount(updatedAccount);
-            setCycleFeedbackMessage(
-              `Autopilot Scheduled Check: Executed ${actionsTaken.length} autonomous option action(s) from live feeds.`
-            );
-            setTimeout(() => setCycleFeedbackMessage(null), 5000);
-          }
-        })
-        .finally(() => {
-          autoCycleInFlightRef.current = false;
-        });
-      return () => {
-        active = false;
-      };
-    }
-  }, [nextScanCountdown, account.isAutoPilotActive]);
+      cycleAbortRef.current?.abort();
+      const controller = new AbortController();
+      cycleAbortRef.current = controller;
+
+      try {
+        await executeAlpacaOptionsCycle(controller.signal, true);
+      } finally {
+        autoCycleInFlightRef.current = false;
+      }
+    };
+
+    const intervalId = setInterval(runScheduledCycle, 60000);
+    return () => {
+      clearInterval(intervalId);
+      cycleAbortRef.current?.abort();
+    };
+  }, [account.isAutoPilotActive, isAlpacaConnected]);
 
   // Active Memory Brain State
   const [isRelearningMemory, setIsRelearningMemory] = useState(false);
@@ -194,15 +371,17 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   // Manual Close Modal State
   const [positionToClose, setPositionToClose] = useState<OptionsPosition | null>(null);
-  const [closeBuyBackPremium, setCloseBuyBackPremium] = useState<number>(1.0);
-  const [closeReason, setCloseReason] = useState<string>('Discretionary early profit capture');
+  const [closeReason, setCloseReason] = useState<string>('Manual Alpaca Paper Buy-to-Close');
 
-  const stats: OptionsPortfolioStats = useMemo(() => calculateOptionsStats(account), [account]);
+  const stats: OptionsPortfolioStats = useMemo(
+    () => calculateOptionsStats(liveOptionsAccount),
+    [liveOptionsAccount]
+  );
   const marketSession = useMemo(() => getMarketSessionStatus(), [currentTime]);
 
-  // Combine active open positions and active closed trade history for the main Trade Journal
+  // Combine active open positions and closed Alpaca trade history for Options Trade Journal
   const combinedActiveJournal = useMemo(() => {
-    const openRecords: OptionsTradeRecord[] = (account.positions || []).map((pos) => ({
+    const openRecords: OptionsTradeRecord[] = (liveOptionsAccount.positions || []).map((pos) => ({
       id: pos.id,
       date: pos.entryDate,
       ticker: pos.ticker,
@@ -226,7 +405,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       session: pos.executionSession || 'REGULAR',
     }));
     const seen = new Set<string>();
-    return [...openRecords, ...(account.tradeHistory || [])].map((rec, idx) => {
+    return [...openRecords, ...(liveOptionsAccount.tradeHistory || [])].map((rec, idx) => {
       const baseId = rec.id || `opt-journal-${idx + 1}`;
       if (!seen.has(baseId)) {
         seen.add(baseId);
@@ -239,9 +418,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       seen.add(uniqueId);
       return { ...rec, id: uniqueId };
     });
-  }, [account.positions, account.tradeHistory]);
+  }, [liveOptionsAccount.positions, liveOptionsAccount.tradeHistory]);
 
-  // Filter active trade history records ($2k era)
+  // Filter Alpaca Paper options trade history records
   const filteredHistory = useMemo(() => {
     return combinedActiveJournal.filter((t) => {
       if (statusFilter === 'OPEN' && t.status !== 'Open') return false;
@@ -274,40 +453,6 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       return true;
     });
   }, [combinedActiveJournal, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
-
-  // Filter legacy audit records (50k era read-only archive)
-  const filteredLegacy = useMemo(() => {
-    return (account.legacyHistory || []).filter((t) => {
-      if (statusFilter === 'OPEN' && t.status !== 'Open') return false;
-      if (statusFilter === 'EXPIRED' && t.outcomeReason !== 'Expired Worthless') return false;
-      if (statusFilter === 'EARLY_TP' && t.outcomeReason !== 'Early Take-Profit') return false;
-      if (statusFilter === 'BREAKEVEN' && t.outcomeReason !== 'Break Even') return false;
-
-      if (sessionFilter !== 'ALL') {
-        const tradeSession = t.session || 'REGULAR';
-        if (sessionFilter === '24/7' && tradeSession !== '24/7') return false;
-        if (sessionFilter === 'REGULAR' && tradeSession !== 'REGULAR') return false;
-        if (sessionFilter === 'PREMARKET' && tradeSession !== 'PREMARKET') return false;
-        if (sessionFilter === 'AFTERHOURS' && tradeSession !== 'AFTERHOURS') return false;
-      }
-
-      if (yearFilter !== 'ALL' && !t.date.startsWith(yearFilter)) return false;
-      if (tickerFilter !== 'ALL' && t.ticker !== tickerFilter) return false;
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const match =
-          t.contract.toLowerCase().includes(q) ||
-          t.ticker.toLowerCase().includes(q) ||
-          String(t.strike).includes(q) ||
-          (t.tradingWarzPattern && t.tradingWarzPattern.toLowerCase().includes(q)) ||
-          t.whyOpenedThesis.toLowerCase().includes(q);
-        if (!match) return false;
-      }
-
-      return true;
-    });
-  }, [account.legacyHistory, statusFilter, sessionFilter, yearFilter, tickerFilter, searchQuery]);
 
   // Filter episodes for Brain tab
   const filteredEpisodes = useMemo(() => {
@@ -351,38 +496,21 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     setExpandedRowIds(new Set());
   };
 
-  // Run autonomous options cycle
+  // Run autonomous Alpaca Paper options cycle
   const handleRunOptionsCycle = async () => {
+    if (!isAlpacaConnected) {
+      setCycleFeedbackMessage(
+        'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env to execute Paper options orders.'
+      );
+      return;
+    }
     setIsCycleRunning(true);
-    setCycleFeedbackMessage('Fetching live ES=F, MES=F & SPY OHLCV feeds and evaluating TradingWarz Golden Zones...');
+    setCycleFeedbackMessage('Scanning Alpaca Paper OCC option contracts (SPY, QQQ, IWM, AAPL, NVDA, MSFT) & TradingWarz Golden Zones...');
 
     try {
-      const marketCandidates = await fetchLiveOptionsCandidates();
-      if (marketCandidates.length === 0) {
-        setCycleFeedbackMessage('Cycle aborted: live ES=F / MES=F / SPY market feeds unavailable.');
-        setTimeout(() => setCycleFeedbackMessage(null), 6000);
-        return;
-      }
-
-      const latestAccount = accountRef.current;
-      const { updatedAccount, actionsTaken } = processOptionsAutonomousCycle(latestAccount, marketCandidates);
-      accountRef.current = updatedAccount;
-      setAccount(updatedAccount);
-
-      if (actionsTaken.length > 0) {
-        setCycleFeedbackMessage(
-          `Cycle Complete: Executed ${actionsTaken.length} autonomous options action(s) using live ES/MES/SPY telemetry.`
-        );
-      } else {
-        setCycleFeedbackMessage(
-          `Cycle Complete: Evaluated ${account.positions.length} open short put(s) against live market feeds. Accruing +$${updatedAccount.dailyThetaIncome.toFixed(2)}/day in theta decay.`
-        );
-      }
-
-      setTimeout(() => setCycleFeedbackMessage(null), 6000);
+      await executeAlpacaOptionsCycle(undefined, false);
     } catch {
-      setCycleFeedbackMessage('Cycle aborted: unable to reach live market candles API.');
-      setTimeout(() => setCycleFeedbackMessage(null), 6000);
+      setCycleFeedbackMessage('Cycle aborted: unable to reach Alpaca Paper options API.');
     } finally {
       setIsCycleRunning(false);
     }
@@ -401,31 +529,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   // Export CSV
   const handleExportCSV = () => {
-    const csv = exportOptionsLogsToCSV(account);
-    downloadCSV(csv, `options_harvesting_journal_${new Date().toISOString().slice(0, 10)}.csv`);
-    setExportToast(`Exported ${account.tradeHistory.length} trade records.`);
+    const csv = exportOptionsLogsToCSV(liveOptionsAccount);
+    downloadCSV(csv, `alpaca_paper_options_${new Date().toISOString().slice(0, 10)}.csv`);
+    setExportToast(`Exported ${liveOptionsAccount.tradeHistory.length} Alpaca Paper option trade record(s).`);
     setTimeout(() => setExportToast(null), 4000);
   };
 
-  // Reset Portfolio
-  const handleResetPortfolio = () => {
-    setShowResetConfirm(true);
-  };
-
-  const confirmResetPortfolio = () => {
-    const reset = resetOptionsPortfolio(2000);
-    setAccount(reset);
-    setShowResetConfirm(false);
-    setCycleFeedbackMessage('Options Portfolio reset with fresh $2,000.00 USD starting capital.');
-    setTimeout(() => setCycleFeedbackMessage(null), 5000);
-  };
-
-  // Relearn / Resynthesize Active Memory from History
+  // Relearn / Resynthesize Active Memory from Alpaca Paper History
   const handleRelearnFromHistory = () => {
     setIsRelearningMemory(true);
-    setCycleFeedbackMessage('Synthesizing reflection memory from recorded closed options trades...');
+    setCycleFeedbackMessage('Synthesizing reflection memory from recorded Alpaca Paper closed options trades...');
     setTimeout(() => {
-      const updated = relearnOptionsMemoryFromHistory(account);
+      const updated = relearnOptionsMemoryFromHistory({
+        ...account,
+        tradeHistory: liveOptionsAccount.tradeHistory,
+        legacyHistory: [],
+      });
       setAccount(updated);
       setIsRelearningMemory(false);
       setCycleFeedbackMessage(`Synthesized ${updated.activeMemory.episodes.length} trade episode(s). Calibrated Max Delta: ≤ ${updated.activeMemory.calibratedMaxDelta}Δ`);
@@ -440,7 +559,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `rich_sp500_options_memory_brain_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `alpaca_options_memory_brain_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
     setExportToast(`Downloaded active memory bank (${account.activeMemory.episodes.length} episodes)!`);
@@ -466,26 +585,24 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     setTimeout(() => setCycleFeedbackMessage(null), 4000);
   };
 
-  // Manual Close
-  const handleConfirmManualClose = (e: React.FormEvent) => {
+  // Manual Close via Alpaca Paper API
+  const handleConfirmManualClose = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!positionToClose) return;
-
-    const updated = manualCloseOptionsPosition(
-      account,
-      positionToClose.id,
-      Number(closeBuyBackPremium),
-      closeReason
-    );
-    setAccount(updated);
+    const contractSymbol = positionToClose.contract;
     setPositionToClose(null);
-    setCycleFeedbackMessage(`Closed ${positionToClose.contract}. Collateral released.`);
-    setTimeout(() => setCycleFeedbackMessage(null), 4000);
+    const res = await closePosition(contractSymbol);
+    if (res.ok) {
+      setCycleFeedbackMessage(`Submitted Alpaca Paper close for ${contractSymbol}. Real fills synced to Local Trade Journal.`);
+    } else {
+      setCycleFeedbackMessage(`Alpaca Paper close rejected for ${contractSymbol}: ${res.error}`);
+    }
+    setTimeout(() => setCycleFeedbackMessage(null), 5000);
   };
 
   return (
     <div className="space-y-6">
-      {/* PERSISTENT OPTIONS HUD */}
+      {/* PERSISTENT ALPACA PAPER OPTIONS HUD */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
         
@@ -495,30 +612,46 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
               <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 <Flame className="w-3.5 h-3.5 text-emerald-400" />
-                <span>S&amp;P 500 Options Harvesting Engine ($2,000 Baseline)</span>
+                <span>Options Auto-Bot &bull; Alpaca Paper</span>
               </span>
-              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                <Sparkles className="w-3 h-3 text-indigo-400" />
-                <span>TradingWarz Golden Zone</span>
+              <span
+                className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-xs font-mono font-semibold border ${
+                  isAlpacaConnected
+                    ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-950/50 text-amber-300 border-amber-500/30'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${isAlpacaConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                <span>
+                  {alpacaLoading
+                    ? 'Connecting Alpaca Paper...'
+                    : isAlpacaConnected
+                    ? `ALPACA PAPER CONNECTED · Options Lvl ${overview?.account?.options_approved_level ?? 0}`
+                    : 'ALPACA PAPER DISCONNECTED'}
+                </span>
               </span>
-              <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700 font-mono">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Last Data Refresh: {getBucharestTimeFormatted(currentTime)} Bucharest Time (Fresh)</span>
+              <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono">
+                <span>{getBucharestTimeFormatted(currentTime)} EET</span>
               </span>
               <span className="text-xs text-zinc-400">
                 • {account.isAutoPilotActive ? 'Auto-Pilot ACTIVE' : 'Auto-Pilot PAUSED'}
+                {lastSyncSummary ? ` • Journal synced (${lastSyncSummary.totalAlpacaEntries})` : ''}
               </span>
             </div>
             <div className="mt-2 flex items-baseline space-x-3">
-              <span className="text-3xl font-extrabold text-white tracking-tight">
-                ${stats.totalRealizedIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <span className="text-3xl font-extrabold text-white font-mono tracking-tight">
+                {isAlpacaConnected
+                  ? `$${(overview?.account?.options_buying_power ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
               </span>
-              <span className="text-sm font-semibold text-emerald-400">
-                +${stats.totalRealizedIncome.toFixed(2)} Realized Income
+              <span className="text-sm font-semibold text-emerald-400 font-mono">
+                {isAlpacaConnected
+                  ? `Options Buying Power • ${stats.totalRealizedIncome >= 0 ? '+' : ''}$${stats.totalRealizedIncome.toFixed(2)} Realized`
+                  : 'Configure Alpaca Paper keys in server .env'}
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-1 max-w-2xl">
-              Harvesting theta decay on /ES & /MES Out-of-the-Money Puts (0.08 - 0.14 Delta) anchored beneath the TradingWarz 61.8% Fibonacci Golden Zone with $2,000 capital.
+              Harvests theta decay on Alpaca Paper OCC Equity/ETF Out-of-the-Money Puts (SPY, QQQ, IWM, AAPL, NVDA, MSFT at 0.08 - 0.14 Delta) anchored beneath the TradingWarz 61.8% Golden Zone.
             </p>
           </div>
 
@@ -526,15 +659,24 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleRunOptionsCycle}
-              disabled={isCycleRunning}
+              disabled={isCycleRunning || !isAlpacaConnected}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-lg ${
                 isCycleRunning
                   ? 'bg-emerald-600/50 text-white cursor-wait'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20 hover:scale-[1.02]'
+                  : 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white shadow-emerald-500/20'
               }`}
             >
               <Zap className={`w-4 h-4 ${isCycleRunning ? 'animate-spin' : ''}`} />
-              <span>{isCycleRunning ? 'Harvesting Theta...' : 'Run Options Auto-Pilot Cycle'}</span>
+              <span>{isCycleRunning ? 'Routing Options...' : 'Run Options Auto-Pilot Cycle'}</span>
+            </button>
+
+            <button
+              onClick={() => refreshAlpaca()}
+              className="flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
+              title="Refresh Alpaca Paper OCC positions, orders, and sync to Trade Journal"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
+              <span>Refresh Alpaca</span>
             </button>
 
             <button
@@ -557,7 +699,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <button
               onClick={handleExportCSV}
               className="flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
-              title="Download verified Rich options archive in CSV"
+              title="Export Alpaca Paper options execution records to CSV"
             >
               <Download className="w-3.5 h-3.5 text-blue-400" />
               <span>Export CSV</span>
@@ -570,16 +712,23 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
               <Sliders className="w-3.5 h-3.5 text-purple-400" />
               <span>Controls</span>
             </button>
-
-            <button
-              onClick={handleResetPortfolio}
-              className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors"
-              title="Reset Options Portfolio ($2,000)"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
+
+        {!alpacaLoading && !isAlpacaConnected && (
+          <div
+            data-testid="alpaca-options-config-banner"
+            className="mt-3 p-3.5 bg-amber-950/40 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex items-start space-x-2.5"
+          >
+            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-amber-300">Alpaca Paper Account Required</div>
+              <p className="text-amber-200/80 mt-0.5">
+                {overview?.message || alpacaError || 'Configure APCA_API_KEY_ID, APCA_API_SECRET_KEY, and APCA_API_BASE_URL=https://paper-api.alpaca.markets in server .env to enable Paper OCC options routing and live history sync.'}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Live Feedback Notification Banner */}
         {cycleFeedbackMessage && (
@@ -654,7 +803,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         </div>
       </div>
 
-      {/* STRATEGY LOGIC BANNER (Rules enforced by Rich & TradingWarz) */}
+      {/* STRATEGY LOGIC BANNER (Rules enforced by Alpaca Paper Options & TradingWarz) */}
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4">
         <div className="flex items-center space-x-2 text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">
           <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -664,7 +813,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           <div className="bg-zinc-950/50 p-3 rounded-lg border border-zinc-800/80">
             <span className="font-semibold text-emerald-400">1. Delta & Safe Strike Selection:</span>
             <p className="text-zinc-400 mt-1">
-              Sells cash-secured / LEAPS collateralized Out-of-the-Money Puts strictly at <strong>0.08 - 0.14 Delta</strong> (86% - 94% theoretical probability of expiring worthless), keeping strikes 2.5% to 4.5% below current price.
+              Sells cash-secured Out-of-the-Money US Equity/ETF Puts strictly at <strong>0.08 - 0.14 Delta</strong> (86% - 94% theoretical probability of expiring worthless), keeping strikes 2.5% to 4.5% below current price.
             </p>
           </div>
           <div className="bg-zinc-950/50 p-3 rounded-lg border border-zinc-800/80">
@@ -676,13 +825,13 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           <div className="bg-zinc-950/50 p-3 rounded-lg border border-zinc-800/80">
             <span className="font-semibold text-amber-400">3. 70-85% Early TP & Breakeven Defense:</span>
             <p className="text-zinc-400 mt-1">
-              Captures <strong>65% to 85% of total premium early</strong> via Buy-to-Close rather than enduring weekend gamma tail risk. On rare adverse index drops testing strike, exits at breakeven immediately.
+              Captures <strong>65% to 85% of total premium early</strong> via Alpaca Buy-to-Close rather than enduring weekend gamma tail risk.
             </p>
           </div>
         </div>
       </div>
 
-      {/* TAB NAVIGATION: Trade Journal, Open Positions, Brain, Rules */}
+      {/* TAB NAVIGATION: Trade Journal, Open Positions, Brain */}
       <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
         <div className="flex items-center space-x-2">
           <button
@@ -697,20 +846,6 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <span>Options Trade Journal ({filteredHistory.length})</span>
           </button>
 
-          {account.legacyHistory && account.legacyHistory.length > 0 && (
-            <button
-              onClick={() => setMainTab('legacy')}
-              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                mainTab === 'legacy'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                  : 'text-zinc-400 hover:text-amber-200 hover:bg-zinc-800/50'
-              }`}
-            >
-              <Award className="w-3.5 h-3.5 text-amber-400" />
-              <span>Archived ({filteredLegacy.length})</span>
-            </button>
-          )}
-
           <button
             onClick={() => setMainTab('open-positions')}
             className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -720,7 +855,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             }`}
           >
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Active Open Positions ({account.positions.length})</span>
+            <span>Active Open Positions ({liveOptionsAccount.positions.length})</span>
           </button>
 
           <button
@@ -808,7 +943,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
               <div className="flex items-center space-x-1 text-xs">
                 <span className="text-zinc-500">Asset:</span>
-                {(['ALL', 'ES', 'MES'] as const).map((tick) => (
+                {(['ALL', 'SPY', 'QQQ', 'IWM', 'AAPL'] as const).map((tick) => (
                   <button
                     key={tick}
                     onClick={() => setTickerFilter(tick)}
@@ -873,7 +1008,23 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60">
-                  {filteredHistory.map((trade) => {
+                  {filteredHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-10 px-4 text-center text-zinc-400">
+                        <div className="max-w-md mx-auto space-y-1">
+                          <p className="font-semibold text-zinc-300">
+                            {isAlpacaConnected
+                              ? 'No Alpaca Paper option positions or filled option orders yet.'
+                              : 'Connect Alpaca Paper in server .env to view live option positions and execution history.'}
+                          </p>
+                          <p className="text-[11px] text-zinc-500">
+                            Every Alpaca Paper OCC option fill is mirrored automatically into your Local Trade Journal.
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredHistory.map((trade) => {
                     const isExpanded = expandedRowIds.has(trade.id);
                     const isWin = trade.profitDollars > 0;
                     const isBreakEven = trade.outcomeReason === 'Break Even';
@@ -962,7 +1113,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                         {/* Expandable Deep Analytics Card */}
                         {isExpanded && (
                           <tr className="bg-zinc-950/90 border-t border-b border-zinc-800">
-                            <td colSpan={9} className="p-5">
+                            <td colSpan={10} className="p-5">
                               <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-5 space-y-4 shadow-xl">
                                 {/* Card Header with Contract Info */}
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-zinc-800 gap-2">
@@ -989,7 +1140,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        onSelectSymbolForChart(trade.ticker === 'ES' ? 'SPY' : trade.ticker);
+                                        onSelectSymbolForChart(trade.ticker);
                                       }}
                                       className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors"
                                     >
@@ -1070,7 +1221,8 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                         )}
                       </React.Fragment>
                     );
-                  })}
+                  })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1078,258 +1230,30 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         </div>
       )}
 
-      {/* TAB 2: LEGACY AUDIT ARCHIVE (50k ERA) - READ ONLY */}
-      {mainTab === 'legacy' && (
-        <div className="space-y-4">
-          <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-4 text-xs text-amber-200 flex items-start space-x-3">
-            <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-amber-300 text-sm block mb-1">
-                Read-Only Archived Trades ({account.legacyHistory.length})
-              </span>
-              <p className="text-amber-200/80 leading-relaxed">
-                Archived trade records available for post-trade inspection and calibration analysis.
-              </p>
-            </div>
-          </div>
-
-          {/* Filters Bar for Legacy */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900 p-3 rounded-lg border border-zinc-800">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-zinc-500 mr-1 flex items-center">
-                <Filter className="w-3 h-3 mr-1" /> Status:
-              </span>
-              {[
-                { id: 'ALL', label: 'All Trades' },
-                { id: 'EXPIRED', label: '100% Expired Worthless' },
-                { id: 'EARLY_TP', label: 'Early Take-Profit' },
-                { id: 'BREAKEVEN', label: 'Break Even' },
-              ].map((pill) => (
-                <button
-                  key={pill.id}
-                  onClick={() => setStatusFilter(pill.id as any)}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    statusFilter === pill.id
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                  }`}
-                >
-                  {pill.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-1 text-xs">
-                <span className="text-zinc-500">Year:</span>
-                {(['ALL', '2026', '2025'] as const).map((yr) => (
-                  <button
-                    key={yr}
-                    onClick={() => setYearFilter(yr)}
-                    className={`px-2 py-0.5 rounded text-xs ${
-                      yearFilter === yr ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {yr === 'ALL' ? 'All' : yr}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center space-x-1 text-xs">
-                <span className="text-zinc-500">Asset:</span>
-                {(['ALL', 'ES', 'MES'] as const).map((tick) => (
-                  <button
-                    key={tick}
-                    onClick={() => setTickerFilter(tick)}
-                    className={`px-2 py-0.5 rounded text-xs ${
-                      tickerFilter === tick ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {tick}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center space-x-1 text-xs">
-                <span className="text-zinc-500">Session:</span>
-                {(['ALL', 'REGULAR', 'PREMARKET', 'AFTERHOURS', '24/7'] as const).map((ses) => (
-                  <button
-                    key={ses}
-                    onClick={() => setSessionFilter(ses)}
-                    className={`px-2 py-0.5 rounded text-xs ${
-                      sessionFilter === ses ? 'bg-amber-600 text-white font-bold' : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    {ses}
-                  </button>
-                ))}
-              </div>
-
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2" />
-                <input
-                  type="text"
-                  placeholder="Search contract..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 w-44"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Legacy Table */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-zinc-950/80 text-zinc-400 border-b border-zinc-800 uppercase tracking-wider font-semibold text-[11px]">
-                  <tr>
-                    <th className="py-3 px-4 w-8"></th>
-                    <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4">Session</th>
-                    <th className="py-3 px-4">Contract / Strike</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4">TradingWarz Confluence</th>
-                    <th className="py-3 px-4">Expiration</th>
-                    <th className="py-3 px-4 text-right">Profit ($)</th>
-                    <th className="py-3 px-4 text-right">Return (%)</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/60">
-                  {filteredLegacy.map((trade) => {
-                    const isExpanded = expandedRowIds.has(trade.id);
-                    const isWin = trade.profitDollars > 0;
-                    const isBreakEven = trade.outcomeReason === 'Break Even';
-
-                    return (
-                      <React.Fragment key={trade.id}>
-                        <tr
-                          onClick={() => toggleRowExpand(trade.id)}
-                          className={`cursor-pointer transition-colors hover:bg-zinc-800/40 ${
-                            isExpanded ? 'bg-zinc-800/30' : ''
-                          }`}
-                        >
-                          <td className="py-3 px-4 text-zinc-500">
-                            {isExpanded ? (
-                              <ChevronDown className="w-4 h-4 text-amber-400" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4 text-zinc-400" />
-                            )}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-zinc-300 whitespace-nowrap">
-                            {trade.date}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              (trade.session || 'REGULAR') === '24/7'
-                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
-                                : (trade.session || 'REGULAR') === 'PREMARKET'
-                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                : (trade.session || 'REGULAR') === 'AFTERHOURS'
-                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            }`}>
-                              {trade.session || 'REGULAR'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-bold text-white font-mono">{trade.contract}</span>
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono">
-                                {trade.ticker}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                              SOLD PUT
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap text-zinc-300">
-                            <span className="inline-flex items-center space-x-1 text-xs">
-                              <Sparkles className="w-3 h-3 text-indigo-400" />
-                              <span>{trade.tradingWarzPattern?.replace(/_/g, ' ') || 'Golden Zone 61.8%'}</span>
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-zinc-400 whitespace-nowrap">
-                            {trade.expiration}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-bold whitespace-nowrap">
-                            <span className={isWin ? 'text-emerald-400' : isBreakEven ? 'text-amber-400' : 'text-rose-400'}>
-                              {trade.profitDollars >= 0 ? '+' : ''}${trade.profitDollars.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-semibold whitespace-nowrap">
-                            <span className={isWin ? 'text-emerald-400' : isBreakEven ? 'text-amber-400' : 'text-rose-400'}>
-                              {trade.profitPercent}%
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-center whitespace-nowrap">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">
-                              {trade.outcomeReason || 'Closed'}
-                            </span>
-                          </td>
-                        </tr>
-
-                        {isExpanded && (
-                          <tr className="bg-zinc-950/90 border-t border-b border-zinc-800">
-                            <td colSpan={10} className="p-4">
-                              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-                                      Legacy Trade Execution Thesis &amp; Model Confluence
-                                    </span>
-                                    <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                      {trade.session || 'REGULAR'}
-                                    </span>
-                                  </div>
-                                  <span className="text-xs text-zinc-500">
-                                    Delta: {trade.delta} | Theta: +${trade.thetaPerDay}/day
-                                  </span>
-                                </div>
-                                <p className="text-xs text-zinc-300 leading-relaxed">
-                                  {trade.whyOpenedThesis}
-                                </p>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: ACTIVE OPEN POSITIONS (Live Positions Management) */}
+      {/* TAB 2: ACTIVE OPEN POSITIONS (Live Alpaca Paper Positions) */}
       {mainTab === 'open-positions' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-white flex items-center space-x-2">
               <Layers className="w-4 h-4 text-emerald-400" />
-              <span>Active Open Short Put Positions ({account.positions.length})</span>
+              <span>Active Open Options Positions ({liveOptionsAccount.positions.length})</span>
             </h3>
             <span className="text-xs text-zinc-400">
               Total Accruing Theta: <strong className="text-purple-400">+${stats.dailyThetaIncome.toFixed(2)}/day</strong>
             </span>
           </div>
 
-          {account.positions.length === 0 ? (
+          {liveOptionsAccount.positions.length === 0 ? (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center text-zinc-400">
               <Bot className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-              <p>No active short put positions currently open.</p>
+              <p>No active option contracts open in your Alpaca Paper account.</p>
               <p className="text-xs text-zinc-500 mt-1">
-                Click "Run Options Auto-Pilot Cycle" to scan for high-grade TradingWarz Golden Zone setups on ES/MES.
+                Click "Run Options Auto-Pilot Cycle" to scan OCC option chains for TradingWarz Golden Zone setups on SPY, QQQ, IWM, AAPL, NVDA &amp; MSFT.
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {account.positions.map((pos) => {
+              {liveOptionsAccount.positions.map((pos) => {
                 const profitPct = pos.unrealizedPnLPercent;
                 return (
                   <div
@@ -1408,7 +1332,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                     {/* Position Action Buttons */}
                     <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
                       <button
-                        onClick={() => onSelectSymbolForChart(pos.ticker === 'ES' ? 'SPY' : pos.ticker)}
+                        onClick={() => onSelectSymbolForChart(pos.ticker)}
                         className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center space-x-1"
                       >
                         <LineChart className="w-3.5 h-3.5 text-indigo-400" />
@@ -1417,13 +1341,10 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
                       <div className="flex items-center space-x-2">
                         <button
-                          onClick={() => {
-                            setPositionToClose(pos);
-                            setCloseBuyBackPremium(pos.currentPremiumPerContract);
-                          }}
+                          onClick={() => setPositionToClose(pos)}
                           className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
                         >
-                          Buy to Close (Lock +${pos.unrealizedPnL.toFixed(2)})
+                          Close on Alpaca ({pos.unrealizedPnL >= 0 ? '+' : ''}${pos.unrealizedPnL.toFixed(2)})
                         </button>
                       </div>
                     </div>
@@ -1467,7 +1388,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             </div>
 
             <p className="text-xs text-zinc-400 max-w-3xl leading-relaxed">
-              The Options Engine utilizes continual reinforcement learning from real trade episodes. It analyzes win velocity, IV crush kinetics, and TradingWarz Golden Zone reliability to autonomously calibrate Delta distance and profit take targets.
+              The Options Engine utilizes continual reinforcement learning from real Alpaca Paper trade episodes. It analyzes win velocity, IV crush kinetics, and TradingWarz Golden Zone reliability to autonomously calibrate Delta distance and profit take targets.
             </p>
 
             {/* Top Metric Cards */}
@@ -1478,7 +1399,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   {account.activeMemory.episodes?.length || account.activeMemory.learningIterations}
                 </div>
                 <div className="text-[10px] text-purple-400">
-                  {account.tradeHistory.length} Live Closed Trade(s) Loaded
+                  {liveOptionsAccount.tradeHistory.length} Live Closed Trade(s) Loaded
                 </div>
               </div>
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
@@ -1786,7 +1707,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <h3 className="text-sm font-bold text-white flex items-center space-x-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Buy to Close: {positionToClose.contract}</span>
+                <span>Close on Alpaca Paper: {positionToClose.contract}</span>
               </h3>
               <button
                 onClick={() => setPositionToClose(null)}
@@ -1799,7 +1720,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             <form onSubmit={handleConfirmManualClose} className="space-y-4 text-xs">
               <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 space-y-1">
                 <div className="flex justify-between text-zinc-400">
-                  <span>Entry Premium Collected:</span>
+                  <span>Entry Premium:</span>
                   <span className="font-mono text-white">${positionToClose.entryPremiumPerContract.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-zinc-400">
@@ -1807,23 +1728,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   <span className="font-mono text-emerald-400">${positionToClose.currentPremiumPerContract.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-zinc-400">
-                  <span>Unrealized Gain:</span>
-                  <span className="font-mono text-emerald-400 font-bold">+${positionToClose.unrealizedPnL.toFixed(2)} (+{positionToClose.unrealizedPnLPercent}%)</span>
+                  <span>Unrealized P&amp;L:</span>
+                  <span className={`font-mono font-bold ${positionToClose.unrealizedPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {positionToClose.unrealizedPnL >= 0 ? '+' : ''}${positionToClose.unrealizedPnL.toFixed(2)} ({positionToClose.unrealizedPnLPercent}%)
+                  </span>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-zinc-300 font-medium mb-1">
-                  Buy-Back Premium ($):
-                </label>
-                <input
-                  type="number"
-                  step="0.10"
-                  min="0.05"
-                  value={closeBuyBackPremium}
-                  onChange={(e) => setCloseBuyBackPremium(parseFloat(e.target.value))}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-white font-mono"
-                />
               </div>
 
               <div>
@@ -1848,38 +1757,10 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                   type="submit"
                   className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
                 >
-                  Confirm Buy to Close
+                  Confirm Close on Alpaca Paper
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* RESET PORTFOLIO CONFIRMATION MODAL */}
-      {showResetConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
-            <h3 className="text-base font-bold text-white">Reset Options Portfolio?</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              This clears open options positions and resets starting cash to <strong className="text-white">$2,000.00 USD</strong> while preserving recorded strategy calibration rules.
-            </p>
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setShowResetConfirm(false)}
-                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmResetPortfolio}
-                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold"
-              >
-                Reset to $2,000
-              </button>
-            </div>
           </div>
         </div>
       )}

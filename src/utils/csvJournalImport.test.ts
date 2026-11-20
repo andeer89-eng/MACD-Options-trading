@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import {
   parseBrokerCsvToJournalEntries,
   splitCsvLines,
-  SAMPLE_BROKER_CSV,
 } from './csvJournalImport.ts';
+
+const TEST_BROKER_CSV = `Symbol,Side,Entry Date,Exit Date,Quantity,Entry Price,Exit Price,Stop Loss,Target Price,Notes
+NVDA,Long,2026-10-08,2026-10-21,20,124.50,136.80,119.20,136.50,Stage 2 bullish triple divergence breakout
+AAPL,Long,2026-10-14,2026-10-25,15,221.40,229.90,217.50,231.00,RSI and MACD momentum confirmation
+AMD,Short,2026-10-16,2026-10-20,12,158.00,162.40,162.40,147.00,Respected hard stop above swing high`;
 
 test('splitCsvLines preserves commas and escaped quotes inside quoted cells', () => {
   const csv = 'Symbol,Entry Price,Notes\n"NVDA",125.50,"Entered at 23.6% Fib, ""tight stop"""\n';
@@ -14,8 +18,8 @@ test('splitCsvLines preserves commas and escaped quotes inside quoted cells', ()
   assert.equal(rows[1][2], 'Entered at 23.6% Fib, "tight stop"');
 });
 
-test('parseBrokerCsvToJournalEntries imports sample broker CSV accurately for longs and shorts', () => {
-  const result = parseBrokerCsvToJournalEntries(SAMPLE_BROKER_CSV, 1760000000000);
+test('parseBrokerCsvToJournalEntries imports broker CSV accurately for longs and shorts', () => {
+  const result = parseBrokerCsvToJournalEntries(TEST_BROKER_CSV, 1760000000000);
   assert.equal(result.errors.length, 0);
   assert.equal(result.entries.length, 3);
 

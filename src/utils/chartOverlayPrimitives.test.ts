@@ -6,6 +6,9 @@ import {
   createPillCollisionPlacer,
   formatOverlayPrice,
   getPrimaryPaneBounds,
+  resolveFibPriceLineLabel,
+  resolveSetupPriceLineLabels,
+  resolveSuperTrendHudLayout,
   resolveVisibleHudDock,
 } from './chartOverlayPrimitives.ts';
 
@@ -156,5 +159,81 @@ describe('chartOverlayPrimitives', () => {
     assert.equal(compactQmxOverlayLabel('exhaustion', 'Exhaustion Cloud - Early Bullish Exh · 49'), 'EXH ▲ 49');
     assert.equal(compactQmxOverlayLabel('vacuum', 'VACUUM ▲ FILLED ✓ Entry 345.79 → Exit 346.46'), 'VAC ▲ FILLED');
     assert.equal(compactQmxOverlayLabel('vacuum', 'VACUUM ▼ OPEN Gap 350.00–353.00'), 'VAC ▼ OPEN');
+  });
+
+  it('resolveSetupPriceLineLabels and resolveFibPriceLineLabel compact titles when right HUD is active', () => {
+    assert.deepEqual(
+      resolveSetupPriceLineLabels({
+        triggerPrice: 310.5,
+        tp1: 325.25,
+        tp2: 348.75,
+        stopLoss: 295.0,
+        compact: true,
+      }),
+      {
+        trigger: 'TRG 23.6%',
+        tp1: 'TP1 38.2%',
+        tp2: 'TP2 61.8%',
+        stopLoss: 'SL',
+      }
+    );
+
+    assert.deepEqual(
+      resolveSetupPriceLineLabels({
+        triggerPrice: 310.5,
+        tp1: 325.25,
+        tp2: 348.75,
+        stopLoss: 295.0,
+        compact: false,
+      }),
+      {
+        trigger: 'TRIGGER 23.6% ($310.50)',
+        tp1: 'TP1 38.2% ($325.25)',
+        tp2: 'TP2 GOLDEN 61.8% ($348.75)',
+        stopLoss: 'STOP LOSS ($295.00)',
+      }
+    );
+
+    assert.equal(resolveFibPriceLineLabel('Golden Pocket 61.8%', 335.7, true), 'Fib 61.8%');
+    assert.equal(resolveFibPriceLineLabel('Fib 78.6%', 348.2, true), 'Fib 78.6%');
+    assert.equal(resolveFibPriceLineLabel('Golden Pocket 61.8%', 335.7, false), 'Golden Pocket 61.8% ($335.70)');
+  });
+
+  it('resolveSuperTrendHudLayout clears right-edge price-line lane when setup/fib labels are active', () => {
+    const standard = resolveSuperTrendHudLayout({
+      totalWidth: 1100,
+      plotWidth: 1036,
+      paneHeight: 480,
+      reservePriceLabelLane: false,
+      showTable: true,
+      showLegend: true,
+    });
+    assert.equal(standard.priceLabelLanePx, 0);
+    assert.equal(standard.rightOffset, 72);
+    assert.equal(standard.effectiveLabelWidth, 842);
+
+    const withSetupLines = resolveSuperTrendHudLayout({
+      totalWidth: 1100,
+      plotWidth: 1036,
+      paneHeight: 480,
+      reservePriceLabelLane: true,
+      showTable: true,
+      showLegend: true,
+    });
+    assert.equal(withSetupLines.priceLabelLanePx, 96);
+    assert.equal(withSetupLines.rightOffset, 168);
+    assert.ok(withSetupLines.effectiveLabelWidth < 1036 - 96 - 184);
+
+    // Narrow mobile viewport degrades gracefully without pushing HUD off-screen
+    const narrow = resolveSuperTrendHudLayout({
+      totalWidth: 370,
+      plotWidth: 310,
+      paneHeight: 340,
+      reservePriceLabelLane: true,
+      showTable: true,
+      showLegend: false,
+    });
+    assert.equal(narrow.priceLabelLanePx, 0);
+    assert.equal(narrow.rightOffset, 68);
   });
 });
