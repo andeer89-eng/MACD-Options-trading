@@ -1,4 +1,5 @@
 import { DivergenceSetup } from './trullasStrategy';
+import { fetchJsonSafe } from './safeFetchJson';
 
 export interface TelegramConfig {
   botToken: string;
@@ -82,9 +83,10 @@ export async function sendTelegramMessage(
   const url = `https://api.telegram.org/bot${botToken.trim()}/sendMessage`;
 
   try {
-    const response = await fetch(url, {
+    const resp = await fetchJsonSafe<{ ok?: boolean; description?: string }>(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      retryOnHtml: false,
       body: JSON.stringify({
         chat_id: chatId.trim(),
         text: message,
@@ -92,13 +94,12 @@ export async function sendTelegramMessage(
       }),
     });
 
-    const data = await response.json();
-    if (data.ok) {
+    if (resp.ok && resp.data?.ok) {
       return { success: true };
     } else {
       return {
         success: false,
-        error: data.description || 'Telegram API rejected request.',
+        error: resp.data?.description || resp.error || 'Telegram API rejected request.',
       };
     }
   } catch (err: any) {

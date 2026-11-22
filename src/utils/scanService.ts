@@ -7,6 +7,7 @@
 import { Levels, calculateLevels, DataQuality, loadSettings } from './masterPlanCore';
 import { DivergenceSetup } from './trullasStrategy';
 import { SP500_UNIVERSE, getCompanyName } from '../data/sp500Universe';
+import { fetchJsonSafe } from './safeFetchJson';
 
 export interface UnifiedScanResult {
   symbol: string;
@@ -189,21 +190,18 @@ class ScanService {
     if (!this.inFlightScans.has(flightKey)) {
       const promise = (async () => {
         try {
-          const res = await fetch('/api/scan', {
+          const scanResp = await fetchJsonSafe<{ results?: any[] }>('/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tickers: missingSymbols, timeframe: tf }),
+            retryOnHtml: true,
           });
 
-          if (!res.ok) {
-            throw new Error(`Scan API responded with status ${res.status}`);
+          if (!scanResp.ok || !scanResp.data) {
+            throw new Error(scanResp.error || `Scan API responded with status ${scanResp.status}`);
           }
 
-          const text = await res.text();
-          if (text.trim().startsWith('<')) {
-            throw new Error('Scan API returned HTML instead of JSON (server reloading)');
-          }
-          const json = JSON.parse(text);
+          const json = scanResp.data;
           const items: UnifiedScanResult[] = [];
 
           for (const raw of json.results || []) {

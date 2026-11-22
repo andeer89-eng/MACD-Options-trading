@@ -229,4 +229,19 @@ describe('HTTP Express Integration Routes', () => {
     assert.equal(typeof payloads[0].uptimeSeconds, 'number');
     assert.ok(payloads[0].status === 'OPTIMAL' || payloads[0].status === 'DEGRADED');
   });
+
+  it('GET /api/market-health returns Fear & Greed score, snapshots, and 1-month daily history', async () => {
+    const res = await fetch(`${baseUrl}/api/market-health`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as any;
+    assert.equal(body.isLive, true);
+    assert.equal(typeof body.current?.score, 'number');
+    assert.ok(body.current.score >= 0 && body.current.score <= 100);
+    assert.ok(['SAFE_RISK_ON', 'CAUTIOUS', 'CRASH_DEFENSE'].includes(body.current.safetyStatus));
+    assert.equal(typeof body.current.netVolume1MBillions, 'number');
+    assert.ok(Array.isArray(body.history1M));
+    assert.equal(body.history1M.length, 22);
+    assert.ok(body.snapshots?.now && body.snapshots?.previousClose && body.snapshots?.oneWeekAgo && body.snapshots?.oneMonthAgo && body.snapshots?.oneYearAgo);
+  });
 });
+

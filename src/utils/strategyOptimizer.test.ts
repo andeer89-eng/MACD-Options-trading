@@ -115,4 +115,67 @@ describe('Strategy Optimizer Unit Tests', () => {
     const zeroTradesSharpe = computePortfolioSharpe([], 10000, 365);
     assert.equal(zeroTradesSharpe, 0);
   });
+
+  test('optimizeStrategyParameters produces 70/30 Walk-Forward Out-of-Sample & Deflated Sharpe Ratio (DSR) audit', async () => {
+    const mod = await import('./strategyOptimizer');
+    const trendCandles: Candle[] = [];
+    const baseTs = Date.UTC(2024, 0, 1);
+    for (let i = 0; i < 240; i++) {
+      const wave = Math.sin(i / 7) * 7;
+      const close = 110 + i * 0.22 + wave;
+      trendCandles.push({
+        timestamp: baseTs + i * 86400000,
+        dateStr: new Date(baseTs + i * 86400000).toISOString().split('T')[0],
+        open: close - 0.5,
+        high: close + 1.6,
+        low: close - 1.5,
+        close,
+        volume: 3200000,
+      });
+    }
+
+    const report = optimizeStrategyParameters(trendCandles, {
+      symbol: 'AAPL',
+      timeframe: '1d',
+      range: '1y',
+      initialBalance: 10000,
+      riskPerTradePct: 1.5,
+      targetMode: 'tranches',
+      minQualityScore: 60,
+    });
+
+    assert.equal(report.walkForward.available, true);
+    assert.equal(report.walkForward.inSampleCandles, Math.floor(240 * 0.7));
+    assert.equal(report.walkForward.outOfSampleCandles, 240 - Math.floor(240 * 0.7));
+    assert.ok(Number.isFinite(report.walkForward.outOfSampleSharpe));
+    assert.ok(report.deflatedSharpe.trialsTested >= 54);
+    assert.ok(report.deflatedSharpe.deflatedSharpeProb >= 0 && report.deflatedSharpe.deflatedSharpeProb <= 1);
+    assert.ok(['LOW', 'MODERATE', 'HIGH'].includes(report.deflatedSharpe.overfitRisk));
+
+    // Short series (<90 bars) must gracefully disable walkForward without throwing
+    const shortReport = optimizeStrategyParameters(trendCandles.slice(0, 60), {
+      symbol: 'AAPL',
+      timeframe: '1d',
+      range: '3mo',
+      initialBalance: 10000,
+      riskPerTradePct: 1.5,
+      targetMode: 'tranches',
+      minQualityScore: 60,
+    });
+    assert.equal(shortReport.walkForward.available, false);
+
+    // Direct DSR check: positive consistent returns beat high-variance null
+    const dsrGood = mod.computeDeflatedSharpeRatio({
+      trades: Array.from({ length: 14 }, (_, idx) => ({
+        status: 'win',
+        netPnl: 120 + (idx % 3) * 15,
+      })),
+      initialBalance: 10000,
+      trialPerTradeSharpes: Array.from({ length: 55 }, (_, i) => (i === 0 ? 1.8 : 0.1 + (i % 5) * 0.08)),
+      outOfSampleAvailable: true,
+      outOfSamplePassed: true,
+    });
+    assert.ok(dsrGood.deflatedSharpePct >= 70, `Expected high DSR for strong OOS edge, got ${dsrGood.deflatedSharpePct}%`);
+    assert.equal(dsrGood.overfitRisk, 'LOW');
+  });
 });

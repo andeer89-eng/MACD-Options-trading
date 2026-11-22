@@ -25,6 +25,7 @@ import {
   OscillatorMatrixPoint,
   LuxAlgoConfluenceReport,
 } from '../utils/luxalgoIndicators';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface LuxAlgoSuiteProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -136,15 +137,18 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
+      const resp = await fetchJsonSafe<{
+        nwe: NadarayaWatsonResult;
+        smc: SmartMoneyConceptsResult;
+        oscillatorMatrix: OscillatorMatrixPoint[];
+        confluence: LuxAlgoConfluenceReport;
+      }>(
         `/api/luxalgo/indicators?symbol=${encodeURIComponent(sym)}&timeframe=${encodeURIComponent(tf)}&bandwidth=${bw}&multiplier=${mult}`
       );
-      if (!res.ok) {
-        const errPayload = await res.json().catch(() => null);
-        throw new Error(errPayload?.error || `HTTP ${res.status} fetching indicators`);
+      if (!resp.ok || !resp.data) {
+        throw new Error(resp.error || `HTTP ${resp.status} fetching indicators`);
       }
-      const json = await res.json();
-      setData(json);
+      setData(resp.data);
     } catch (e: any) {
       console.error('Failed to fetch LuxAlgo indicators:', e);
       setError(e?.message || 'Unable to load quantitative indicators.');
@@ -162,14 +166,23 @@ export const LuxAlgoSuite: React.FC<LuxAlgoSuiteProps> = ({
   const handleRunPineTS = async () => {
     setRunningPineTS(true);
     try {
-      const res = await fetch('/api/luxalgo/pinets-run', {
+      const resp = await fetchJsonSafe<{
+        syntaxValid: boolean;
+        transpiledPreview: string;
+        error: string | null;
+      }>('/api/luxalgo/pinets-run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, pineCode }),
       });
-      if (res.ok) {
-        const result = await res.json();
-        setPinetsResult(result);
+      if (resp.ok && resp.data) {
+        setPinetsResult(resp.data);
+      } else {
+        setPinetsResult({
+          syntaxValid: false,
+          transpiledPreview: '',
+          error: resp.error || `Execution failed (HTTP ${resp.status})`,
+        });
       }
     } catch (e: any) {
       setPinetsResult({

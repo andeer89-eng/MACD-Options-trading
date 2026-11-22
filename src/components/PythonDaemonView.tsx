@@ -14,6 +14,7 @@ import {
   Database,
   ArrowRight,
 } from 'lucide-react';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 export const PythonDaemonView: React.FC = () => {
   const [copied, setCopied] = useState(false);
@@ -37,16 +38,22 @@ export const PythonDaemonView: React.FC = () => {
     setRunningTest(true);
     setTestOutput('Launching Python 3.10 interpreter with trullas_scanner_247.py...\nConnecting to Yahoo Finance & SEC EDGAR...\n');
     try {
-      const res = await fetch('/api/run-python', {
+      const resp = await fetchJsonSafe<{
+        success?: boolean;
+        stdout?: string;
+        stderr?: string;
+        error?: string;
+      }>('/api/run-python', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickers: ['AAPL', 'MSFT', 'NVDA', 'BTC-USD', 'SPY'] }),
       });
-      const data = await res.json();
-      if (data.success) {
-        setTestOutput(data.stdout || 'Scan completed successfully with 0 exit code.');
+      if (resp.ok && resp.data?.success) {
+        setTestOutput(resp.data.stdout || 'Scan completed successfully with 0 exit code.');
       } else {
-        setTestOutput(`Error running script:\n${data.error}\n${data.stderr || ''}\n${data.stdout || ''}`);
+        setTestOutput(
+          `Error running script:\n${resp.data?.error || resp.error || `HTTP ${resp.status}`}\n${resp.data?.stderr || ''}\n${resp.data?.stdout || ''}`
+        );
       }
     } catch (e: any) {
       setTestOutput(`Execution failed: ${e.message}`);

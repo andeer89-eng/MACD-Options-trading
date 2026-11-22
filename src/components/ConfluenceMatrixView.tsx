@@ -32,6 +32,7 @@ import { Candle } from '../utils/trullasStrategy';
 import { SP500_TOP_50 } from '../data/sp500Universe';
 import { TickerOptionsSummary } from '../utils/cboeOptionsEngine';
 import { GicsSectorPerformance } from '../utils/sectorMetrics';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 function getCurrencyPrefix(currency?: string, symbol?: string): string {
   if (currency === 'SEK' || symbol?.endsWith('.ST')) return 'SEK ';
@@ -98,15 +99,12 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
       // Fetch sector performance once for real Sector Alpha weighting
       let localSectorsMap = new Map<string, GicsSectorPerformance>();
       try {
-        const secRes = await fetch('/api/sectors');
-        if (secRes.ok) {
-          const secData = await secRes.json();
-          if (Array.isArray(secData.sectors)) {
-            for (const s of secData.sectors) {
-              localSectorsMap.set(s.name, s);
-            }
-            setSectorsMap(localSectorsMap);
+        const secResp = await fetchJsonSafe<{ sectors?: GicsSectorPerformance[] }>('/api/sectors');
+        if (secResp.ok && Array.isArray(secResp.data?.sectors)) {
+          for (const s of secResp.data.sectors) {
+            localSectorsMap.set(s.name, s);
           }
+          setSectorsMap(localSectorsMap);
         }
       } catch {
         // Optional macro benchmark
@@ -129,10 +127,11 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
       if (toFetch.length > 0) {
         const results = await Promise.allSettled(
           toFetch.map(async (sym) => {
-            const cRes = await fetch(`/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=6mo`);
-            if (!cRes.ok) return { sym, candles: [] as Candle[] };
-            const cData = await cRes.json();
-            return { sym, candles: normalizeCandles(cData.candles || []) };
+            const cResp = await fetchJsonSafe<{ candles?: any[] }>(
+              `/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=6mo`
+            );
+            if (!cResp.ok || !cResp.data) return { sym, candles: [] as Candle[] };
+            return { sym, candles: normalizeCandles(cResp.data.candles || []) };
           })
         );
         for (const r of results) {
@@ -201,21 +200,19 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
 
     try {
       const [lookupRes, candleRes, cboeRes] = await Promise.allSettled([
-        fetch(`/api/lookup-ticker?query=${encodeURIComponent(clean)}`),
-        fetch(`/api/candles?symbol=${encodeURIComponent(clean)}&timeframe=1d&range=6mo`),
-        fetch(`/api/cboe-options?symbol=${encodeURIComponent(clean)}`),
+        fetchJsonSafe<any>(`/api/lookup-ticker?query=${encodeURIComponent(clean)}`),
+        fetchJsonSafe<{ candles?: any[] }>(`/api/candles?symbol=${encodeURIComponent(clean)}&timeframe=1d&range=6mo`),
+        fetchJsonSafe<{ optionsSummary?: TickerOptionsSummary }>(`/api/cboe-options?symbol=${encodeURIComponent(clean)}`),
       ]);
 
       let companyMetaOverride: any = null;
-      if (lookupRes.status === 'fulfilled' && lookupRes.value.ok) {
-        const data = await lookupRes.value.json();
-        if (data.found) companyMetaOverride = data;
+      if (lookupRes.status === 'fulfilled' && lookupRes.value.ok && lookupRes.value.data?.found) {
+        companyMetaOverride = lookupRes.value.data;
       }
 
       let realCandles: Candle[] = [];
-      if (candleRes.status === 'fulfilled' && candleRes.value.ok) {
-        const cData = await candleRes.value.json();
-        realCandles = normalizeCandles(cData.candles || []);
+      if (candleRes.status === 'fulfilled' && candleRes.value.ok && candleRes.value.data) {
+        realCandles = normalizeCandles(candleRes.value.data.candles || []);
       }
 
       if (realCandles.length < 30) {
@@ -225,9 +222,8 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
       }
 
       let cboeSummary: TickerOptionsSummary | null = null;
-      if (cboeRes.status === 'fulfilled' && cboeRes.value.ok) {
-        const cbData = await cboeRes.value.json();
-        cboeSummary = cbData.optionsSummary || null;
+      if (cboeRes.status === 'fulfilled' && cboeRes.value.ok && cboeRes.value.data) {
+        cboeSummary = cboeRes.value.data.optionsSummary || null;
       }
 
       const secName = companyMetaOverride?.sector || '';

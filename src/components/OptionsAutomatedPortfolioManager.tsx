@@ -58,10 +58,13 @@ import {
 } from '../utils/optionsAutomatedPortfolio';
 import { analyzeTradingWarzSetup, CandleOHLC } from '../utils/tradingWarzEngine';
 import { useAlpacaPaper, fetchAlpacaOptionContracts } from '../hooks/useAlpacaPaper';
+import { useMarketHealth } from '../hooks/useMarketHealth';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 import {
   alpacaPositionsToOptionsPositions,
   alpacaOrdersToOptionsHistory,
   alpacaOrdersToOptionsSessionLogs,
+  buildIdempotentClientOrderId,
 } from '../utils/alpacaJournalSync';
 import { downloadCSV } from '../utils/tradeJournal';
 import {
@@ -86,6 +89,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     submitOrder,
     closePosition,
   } = useAlpacaPaper({ pollMs: 30000 });
+  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
 
   const [account, setAccount] = useState<OptionsPortfolioAccount>(() => loadOptionsPortfolio());
   const [mainTab, setMainTab] = useState<'journal' | 'open-positions' | 'brain'>('journal');
@@ -113,6 +117,8 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   const overviewRef = useRef(overview);
   overviewRef.current = overview;
+  const marketHealthRef = useRef(marketHealth);
+  marketHealthRef.current = marketHealth;
   const accountRef = useRef<OptionsPortfolioAccount>(account);
   const autoCycleInFlightRef = useRef<boolean>(false);
   const cycleAbortRef = useRef<AbortController | null>(null);
@@ -184,11 +190,12 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     const settled = await Promise.all(
       targets.map(async (symbol) => {
         try {
-          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d&range=1mo`, {
-            signal,
-          });
-          if (!res.ok) return null;
-          const json = await res.json();
+          const resp = await fetchJsonSafe<{ candles?: any[] }>(
+            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d&range=1mo`,
+            { signal }
+          );
+          if (!resp.ok || !resp.data) return null;
+          const json = resp.data;
           const bars = Array.isArray(json?.candles) ? json.candles : [];
           if (bars.length < 5) return null;
           const latestClose = Number(bars[bars.length - 1]?.close);
@@ -261,8 +268,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
     let openSlots = Math.max(0, latestAccount.maxOpenPositions - currentOpenPositions.length);
     const optionsLevel = activeOverview.account.options_approved_level ?? 0;
+    const activeHealth = marketHealthRef.current || (await refreshMarketHealth(false));
+    const optionsCrashHalted =
+      activeHealth !== null &&
+      (activeHealth.current.safetyStatus === 'CRASH_DEFENSE' || !activeHealth.current.allowNewEntries);
 
-    if (openSlots > 0 && optionsLevel < 2) {
+    if (openSlots > 0 && optionsCrashHalted && activeHealth) {
+      const netVolStr =
+        activeHealth.current.netVolume1MBillions < 0
+          ? `-$${Math.abs(activeHealth.current.netVolume1MBillions).toFixed(1)}B`
+          : `+$${activeHealth.current.netVolume1MBillions.toFixed(1)}B`;
+      actionsLog.push(
+        `Market Health Crash Defense halted new short puts (Health ${activeHealth.current.score}/100 ${activeHealth.current.label}, VIX ${
+          activeHealth.current.vix !== null ? activeHealth.current.vix.toFixed(1) : 'N/A'
+        }, 1M Net Vol ${netVolStr})`
+      );
+    } else if (openSlots > 0 && optionsLevel < 2) {
       actionsLog.push(
         `Alpaca Paper Options Level ${optionsLevel} detected (Level 2+ required for cash-secured short puts). Enable Level 2 Options in Alpaca Paper settings to route short put orders.`
       );
@@ -272,6 +293,12 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         if (openUnderlyings.has(cand.symbol)) continue;
 
         const twAnalysis = analyzeTradingWarzSetup(cand.candles, cand.currentPrice);
+        if (
+          activeHealth?.current.safetyStatus === 'CAUTIOUS' &&
+          twAnalysis.setupGrade !== 'A+'
+        ) {
+          continue;
+        }
         if (
           twAnalysis.setupGrade !== 'A+' &&
           twAnalysis.setupGrade !== 'A' &&
@@ -296,12 +323,24 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         const chosen = tradable.find((c) => (c.close_price ?? 0) >= 0.15) || tradable[0];
         if (!chosen) continue;
 
+        const clientOrderId = buildIdempotentClientOrderId({
+          symbol: chosen.symbol,
+          side: 'sell',
+          qty: 1,
+          prefix: 'trullas_opt',
+        });
+        const hasDuplicateId = (activeOverview.orders || []).some(
+          (o) => o.client_order_id === clientOrderId
+        );
+        if (hasDuplicateId) continue;
+
         const orderRes = await submitOrder({
           symbol: chosen.symbol,
           side: 'sell',
           qty: 1,
           type: chosen.close_price && chosen.close_price > 0 ? 'limit' : 'market',
           time_in_force: 'day',
+          client_order_id: clientOrderId,
           ...(chosen.close_price && chosen.close_price > 0
             ? { limit_price: Number(chosen.close_price.toFixed(2)) }
             : {}),
@@ -637,6 +676,32 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                 • {account.isAutoPilotActive ? 'Auto-Pilot ACTIVE' : 'Auto-Pilot PAUSED'}
                 {lastSyncSummary ? ` • Journal synced (${lastSyncSummary.totalAlpacaEntries})` : ''}
               </span>
+              {marketHealth && (
+                <span
+                  data-testid="options-market-health-guard"
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-xs font-mono font-semibold border ${
+                    marketHealth.current.safetyStatus === 'SAFE_RISK_ON'
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                      : marketHealth.current.safetyStatus === 'CAUTIOUS'
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                  }`}
+                >
+                  <span>
+                    Market Guard: {marketHealth.current.score}/100 ({marketHealth.current.label}) · VIX{' '}
+                    {marketHealth.current.vix !== null ? marketHealth.current.vix.toFixed(1) : '—'} · 1M Net{' '}
+                    {marketHealth.current.netVolume1MBillions < 0
+                      ? `-$${Math.abs(marketHealth.current.netVolume1MBillions).toFixed(1)}B`
+                      : `+$${marketHealth.current.netVolume1MBillions.toFixed(1)}B`}{' '}
+                    ·{' '}
+                    {marketHealth.current.allowNewEntries
+                      ? marketHealth.current.safetyStatus === 'CAUTIOUS'
+                        ? 'A+ ONLY'
+                        : 'SAFE'
+                      : 'HALTED'}
+                  </span>
+                </span>
+              )}
             </div>
             <div className="mt-2 flex items-baseline space-x-3">
               <span className="text-3xl font-extrabold text-white font-mono tracking-tight">

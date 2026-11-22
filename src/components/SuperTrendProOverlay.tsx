@@ -43,6 +43,7 @@ interface SuperTrendProOverlayProps {
   report: SuperTrendProReport | null;
   toggles?: SuperTrendVisualToggles;
   onToggleLayer?: (key: keyof SuperTrendVisualToggles) => void;
+  onHideOverlay?: () => void;
   toolbarTopClass?: string;
   reservePriceLabelLane?: boolean;
 }
@@ -111,6 +112,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
   report,
   toggles: controlledToggles,
   onToggleLayer,
+  onHideOverlay,
   toolbarTopClass = 'top-2',
   reservePriceLabelLane = false,
 }) => {
@@ -560,7 +562,7 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
   };
 
   const d = report.dashboard;
-  const showLegendCard = toggles.legend && paneBox.paneHeight >= 325;
+  const showLegendCard = toggles.legend && paneBox.paneHeight >= 470;
 
   return (
     <>
@@ -579,6 +581,18 @@ export const SuperTrendProOverlay: React.FC<SuperTrendProOverlayProps> = ({
         <span className="text-emerald-400 font-bold flex items-center gap-1 pr-1.5 border-r border-zinc-700/80 shrink-0">
           <TrendingUp className="w-3 h-3" />
           <span>ST v9</span>
+          {onHideOverlay && (
+            <button
+              type="button"
+              onClick={onHideOverlay}
+              data-testid="hide-supertrend-eye-btn"
+              className="ml-0.5 p-0.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-amber-300 transition"
+              title="Hide SuperTrend v9 from chart without removing"
+              aria-label="Hide SuperTrend v9 from chart"
+            >
+              <Eye className="w-2.5 h-2.5" />
+            </button>
+          )}
         </span>
         {(
           [

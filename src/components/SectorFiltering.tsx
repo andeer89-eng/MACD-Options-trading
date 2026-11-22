@@ -29,6 +29,7 @@ import {
   getSectorPresets,
 } from '../utils/sectorMetrics';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 export interface SectorFilteringProps {
   currentWatchlist: string[];
@@ -70,14 +71,15 @@ export const SectorFiltering: React.FC<SectorFilteringProps> = ({
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await fetch('/api/sectors');
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.sectors) && data.sectors.length > 0) {
-        setSectors(data.sectors);
+      const resp = await fetchJsonSafe<{ sectors?: GicsSectorPerformance[]; error?: string }>(
+        '/api/sectors'
+      );
+      if (resp.ok && Array.isArray(resp.data?.sectors) && resp.data.sectors.length > 0) {
+        setSectors(resp.data.sectors);
         setLastUpdated(new Date());
         return;
       }
-      throw new Error(data.error || 'Live sector ETF quotes unavailable.');
+      throw new Error(resp.error || 'Live sector ETF quotes unavailable.');
     } catch (err: any) {
       setSectors([]);
       setFetchError(err?.message || 'Unable to load live GICS sector benchmarks.');

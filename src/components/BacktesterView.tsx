@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { BacktestResult, SimulatedTrade } from '../utils/backtestEngine';
 import { StrategyOptimizationReport, OptimizationCandidate } from '../utils/strategyOptimizer';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface BacktesterViewProps {
   onSelectSymbolForChart: (symbol: string) => void;
@@ -65,7 +66,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/backtest', {
+      const resp = await fetchJsonSafe<BacktestResult>('/api/backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -79,12 +80,11 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
+      if (!resp.ok || !resp.data) {
+        throw new Error(resp.error || `Server returned ${resp.status}`);
       }
 
-      const data: BacktestResult = await res.json();
-      setResult(data);
+      setResult(resp.data);
     } catch (err: any) {
       console.error('Backtest error:', err);
       setError(err.message || 'Failed to execute backtest');
@@ -97,7 +97,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
   const runStrategyOptimization = async () => {
     setOptimizing(true);
     try {
-      const res = await fetch('/api/optimize-strategy', {
+      const resp = await fetchJsonSafe<StrategyOptimizationReport>('/api/optimize-strategy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -111,12 +111,11 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Optimization server returned ${res.status}`);
+      if (!resp.ok || !resp.data) {
+        throw new Error(resp.error || `Optimization server returned ${resp.status}`);
       }
 
-      const data: StrategyOptimizationReport = await res.json();
-      setOptimizationReport(data);
+      setOptimizationReport(resp.data);
     } catch (err: any) {
       console.error('Strategy optimization error:', err);
     } finally {
@@ -1067,6 +1066,156 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                     </p>
                   </div>
                 </div>
+
+                {/* Walk-Forward Out-of-Sample & Deflated Sharpe Ratio (DSR) Audit */}
+                {(optimizationReport.walkForward || optimizationReport.deflatedSharpe) && (
+                  <div
+                    data-testid="optimizer-validation-audit"
+                    className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+                  >
+                    {optimizationReport.walkForward && (
+                      <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-zinc-200">
+                            <Layers className="w-4 h-4 text-cyan-400" />
+                            <span>Walk-Forward Validation (70% IS / 30% OOS)</span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                              !optimizationReport.walkForward.available
+                                ? 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                : optimizationReport.walkForward.passedOutOfSample
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            {!optimizationReport.walkForward.available
+                              ? 'Needs ≥ 90 Bars'
+                              : optimizationReport.walkForward.passedOutOfSample
+                              ? 'OOS Validated'
+                              : 'OOS Degraded'}
+                          </span>
+                        </div>
+
+                        {optimizationReport.walkForward.available ? (
+                          <div className="grid grid-cols-3 gap-3 bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-3 font-mono text-xs">
+                            <div>
+                              <span className="text-[10px] text-zinc-500 font-sans block">In-Sample Sharpe (70%)</span>
+                              <span className="text-sm font-bold text-indigo-300">
+                                {optimizationReport.walkForward.inSampleSharpe.toFixed(2)}
+                              </span>
+                              <span className="text-[10px] text-zinc-500 block font-sans">
+                                {optimizationReport.walkForward.inSampleTrades} trades
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-zinc-500 font-sans block">Out-of-Sample (30%)</span>
+                              <span
+                                className={`text-sm font-bold ${
+                                  optimizationReport.walkForward.outOfSampleSharpe >= 0
+                                    ? 'text-emerald-400'
+                                    : 'text-rose-400'
+                                }`}
+                              >
+                                {optimizationReport.walkForward.outOfSampleSharpe.toFixed(2)}
+                              </span>
+                              <span className="text-[10px] text-zinc-500 block font-sans">
+                                {optimizationReport.walkForward.outOfSampleTrades} trades ·{' '}
+                                {optimizationReport.walkForward.outOfSampleWinRatePct.toFixed(0)}% WR
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-zinc-500 font-sans block">OOS Net P&amp;L</span>
+                              <span
+                                className={`text-sm font-bold ${
+                                  optimizationReport.walkForward.outOfSampleNetPnl >= 0
+                                    ? 'text-emerald-400'
+                                    : 'text-rose-400'
+                                }`}
+                              >
+                                {optimizationReport.walkForward.outOfSampleNetPnl >= 0 ? '+' : ''}$
+                                {optimizationReport.walkForward.outOfSampleNetPnl.toFixed(2)}
+                              </span>
+                              <span className="text-[10px] text-zinc-500 block font-sans">
+                                Split {optimizationReport.walkForward.splitDate}
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <p className="text-[11px] text-zinc-400 leading-relaxed">
+                          {optimizationReport.walkForward.note}
+                        </p>
+                      </div>
+                    )}
+
+                    {optimizationReport.deflatedSharpe && (
+                      <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-zinc-200">
+                            <ShieldAlert className="w-4 h-4 text-amber-400" />
+                            <span>Deflated Sharpe Ratio (DSR) Overfit Audit</span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                              optimizationReport.deflatedSharpe.overfitRisk === 'LOW'
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                : optimizationReport.deflatedSharpe.overfitRisk === 'MODERATE'
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                            }`}
+                          >
+                            {optimizationReport.deflatedSharpe.overfitRisk} OVERFIT RISK
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-3 bg-zinc-950/70 border border-zinc-800/80 rounded-lg p-3 font-mono text-xs">
+                          <div>
+                            <span className="text-[10px] text-zinc-500 font-sans block">DSR Confidence</span>
+                            <span
+                              className={`text-sm font-bold ${
+                                optimizationReport.deflatedSharpe.deflatedSharpePct >= 70
+                                  ? 'text-emerald-400'
+                                  : optimizationReport.deflatedSharpe.deflatedSharpePct >= 45
+                                  ? 'text-amber-300'
+                                  : 'text-rose-400'
+                              }`}
+                            >
+                              {optimizationReport.deflatedSharpe.deflatedSharpePct.toFixed(1)}%
+                            </span>
+                            <span className="text-[10px] text-zinc-500 block font-sans">
+                              {optimizationReport.deflatedSharpe.isStatisticallySignificant
+                                ? '≥ 90% Significant'
+                                : 'Exploratory'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-500 font-sans block">Multiple Trials</span>
+                            <span className="text-sm font-bold text-zinc-200">
+                              N = {optimizationReport.deflatedSharpe.trialsTested}
+                            </span>
+                            <span className="text-[10px] text-zinc-500 block font-sans">
+                              Null SR₀: {optimizationReport.deflatedSharpe.benchmarkNullSharpe.toFixed(2)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-500 font-sans block">Return Moments</span>
+                            <span className="text-sm font-bold text-cyan-400">
+                              Skew {optimizationReport.deflatedSharpe.returnSkewness.toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-zinc-500 block font-sans">
+                              Kurt {optimizationReport.deflatedSharpe.returnKurtosis.toFixed(2)} (n={optimizationReport.deflatedSharpe.sampleTrades})
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-zinc-400 leading-relaxed">
+                          {optimizationReport.deflatedSharpe.summary}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Rationale & Optimization Leaderboard */}
                 <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-3">

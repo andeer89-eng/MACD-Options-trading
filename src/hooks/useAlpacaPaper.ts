@@ -9,6 +9,9 @@ import {
   updateJournalEntryInFirestore,
 } from '../utils/tradeJournal';
 import { auth } from '../lib/firebase';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
+import { recordAuditEventToLedger, computeConfigDigest } from '../utils/auditLedger';
+import { loadSettings } from '../utils/masterPlanCore';
 
 export interface AlpacaOptionContractDTO {
   id: string;
@@ -50,6 +53,16 @@ export function syncAlpacaOverviewToLocalJournal(overview: AlpacaOverviewDTO): J
 
   if (result.addedCount > 0 || result.updatedCount > 0) {
     saveJournalEntries(result.entries);
+    recordAuditEventToLedger({
+      eventType: 'ALPACA_JOURNAL_SYNCED',
+      symbol: 'PORTFOLIO',
+      configDigest: computeConfigDigest(loadSettings()),
+      payload: {
+        addedCount: result.addedCount,
+        updatedCount: result.updatedCount,
+        totalAlpacaEntries: result.totalAlpacaEntries,
+      },
+    });
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
@@ -114,18 +127,19 @@ export async function fetchAlpacaOptionContracts(params: {
   if (params.minStrike !== undefined) qs.set('minStrike', String(params.minStrike));
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
 
-  const res = await fetch(`/api/alpaca/options/contracts?${qs.toString()}`);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  const resp = await fetchJsonSafe<{ contracts?: AlpacaOptionContractDTO[]; error?: string }>(
+    `/api/alpaca/options/contracts?${qs.toString()}`
+  );
+  if (!resp.ok) {
     return {
       ok: false,
       contracts: [],
-      error: data?.error || `HTTP ${res.status}`,
+      error: resp.error || `HTTP ${resp.status}`,
     };
   }
   return {
     ok: true,
-    contracts: Array.isArray(data?.contracts) ? data.contracts : [],
+    contracts: Array.isArray(resp.data?.contracts) ? resp.data.contracts : [],
   };
 }
 
@@ -158,10 +172,17 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
     abortRef.current = controller;
 
     try {
-      const res = await fetch('/api/alpaca/overview', { signal: controller.signal });
-      const data = (await res.json()) as AlpacaOverviewDTO;
+      const resp = await fetchJsonSafe<AlpacaOverviewDTO>('/api/alpaca/overview', {
+        signal: controller.signal,
+      });
       if (!mountedRef.current || controller.signal.aborted) return null;
 
+      if (!resp.ok || !resp.data) {
+        setError(resp.error || 'Unable to connect to Alpaca Paper proxy.');
+        return null;
+      }
+
+      const data = resp.data;
       setOverview(data);
       setError(data.error || null);
 
@@ -202,17 +223,44 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
 
   const submitOrder = useCallback(
     async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
-      const res = await fetch('/api/alpaca/orders', {
+      const configDigest = computeConfigDigest(loadSettings());
+      const resp = await fetchJsonSafe<{ order?: any; error?: string }>('/api/alpaca/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        retryOnHtml: false,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, error: data?.error || `Alpaca order rejected (HTTP ${res.status})` };
+      if (!resp.ok) {
+        const errMsg = resp.error || `Alpaca order rejected (HTTP ${resp.status})`;
+        recordAuditEventToLedger({
+          eventType: 'ALPACA_ORDER_REJECTED',
+          symbol: payload.symbol,
+          clientOrderId: payload.client_order_id,
+          configDigest,
+          payload: {
+            side: payload.side,
+            qty: payload.qty,
+            type: payload.type || 'market',
+            error: errMsg,
+          },
+        });
+        return { ok: false, error: errMsg };
       }
+      recordAuditEventToLedger({
+        eventType: 'ALPACA_ORDER_SUBMITTED',
+        symbol: payload.symbol,
+        clientOrderId: payload.client_order_id || resp.data?.order?.client_order_id,
+        configDigest,
+        payload: {
+          orderId: String(resp.data?.order?.id || ''),
+          side: payload.side,
+          qty: payload.qty,
+          type: payload.type || 'market',
+          status: String(resp.data?.order?.status || 'accepted'),
+        },
+      });
       await refresh();
-      return { ok: true, order: data.order };
+      return { ok: true, order: resp.data?.order };
     },
     [refresh]
   );
@@ -222,33 +270,50 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
       symbol: string,
       opts?: { qty?: number; percentage?: number }
     ): Promise<{ ok: boolean; order?: any; error?: string }> => {
+      const configDigest = computeConfigDigest(loadSettings());
       const qs = new URLSearchParams();
       if (opts?.qty !== undefined && opts.qty > 0) qs.set('qty', String(opts.qty));
       else if (opts?.percentage !== undefined && opts.percentage > 0 && opts.percentage < 100) {
         qs.set('percentage', String(opts.percentage));
       }
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
-      const res = await fetch(`/api/alpaca/positions/${encodeURIComponent(symbol)}${suffix}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, error: data?.error || `Alpaca close rejected (HTTP ${res.status})` };
+      const resp = await fetchJsonSafe<{ order?: any; error?: string }>(
+        `/api/alpaca/positions/${encodeURIComponent(symbol)}${suffix}`,
+        {
+          method: 'DELETE',
+          retryOnHtml: false,
+        }
+      );
+      if (!resp.ok) {
+        return { ok: false, error: resp.error || `Alpaca close rejected (HTTP ${resp.status})` };
       }
+      recordAuditEventToLedger({
+        eventType: 'ALPACA_POSITION_CLOSED',
+        symbol,
+        configDigest,
+        payload: {
+          orderId: String(resp.data?.order?.id || ''),
+          percentage: opts?.percentage ?? 100,
+          qty: opts?.qty ?? null,
+        },
+      });
       await refresh();
-      return { ok: true, order: data.order };
+      return { ok: true, order: resp.data?.order };
     },
     [refresh]
   );
 
   const cancelOrder = useCallback(
     async (orderId: string): Promise<{ ok: boolean; error?: string }> => {
-      const res = await fetch(`/api/alpaca/orders/${encodeURIComponent(orderId)}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, error: data?.error || `Cancel rejected (HTTP ${res.status})` };
+      const resp = await fetchJsonSafe<{ error?: string }>(
+        `/api/alpaca/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: 'DELETE',
+          retryOnHtml: false,
+        }
+      );
+      if (!resp.ok) {
+        return { ok: false, error: resp.error || `Cancel rejected (HTTP ${resp.status})` };
       }
       await refresh();
       return { ok: true };

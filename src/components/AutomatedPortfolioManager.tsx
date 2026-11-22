@@ -62,6 +62,8 @@ import {
   selectAlpacaEquityCandidates,
 } from '../utils/alpacaJournalSync';
 import { useAlpacaPaper } from '../hooks/useAlpacaPaper';
+import { useMarketHealth } from '../hooks/useMarketHealth';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 import {
   ActiveMemoryState,
   loadActiveMemoryState,
@@ -89,6 +91,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     submitOrder,
     closePosition,
   } = useAlpacaPaper({ pollMs: 30000 });
+  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
 
   const [account, setAccount] = useState<PortfolioAccount>(() => loadAutomatedPortfolio());
   const [portfolioTab, setPortfolioTab] = useState<'positions' | 'analytics' | 'brain'>('positions');
@@ -142,6 +145,14 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     }));
 
     const orderLogs = alpacaOrdersToAutomatedLogs(eqOrders);
+    const mergedHistoryMap = new Map<string, AutomatedTradeLog>();
+    for (const c of closedLogs) mergedHistoryMap.set(c.id, c);
+    for (const o of orderLogs) {
+      if (!mergedHistoryMap.has(o.id)) mergedHistoryMap.set(o.id, o);
+    }
+    const combinedTradeHistory = Array.from(mergedHistoryMap.values()).sort((a, b) =>
+      b.timestamp.localeCompare(a.timestamp)
+    );
     const rawEquity = overview.account.equity;
     const rawUnrealized = livePositions.reduce((s, p) => s + p.unrealizedPnL, 0);
     const totalRealized = closedEqEntries.reduce((s, e) => s + (e.realizedPnL || 0), 0);
@@ -154,7 +165,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       realizedPnL: Number(totalRealized.toFixed(2)),
       unrealizedPnL: Number(rawUnrealized.toFixed(2)),
       positions: livePositions,
-      tradeHistory: closedLogs.length > 0 ? closedLogs : orderLogs,
+      tradeHistory: combinedTradeHistory,
       isAutoPilotActive: account.isAutoPilotActive,
       riskPerTradePercent: account.riskPerTradePercent,
       maxOpenPositions: account.maxOpenPositions,
@@ -220,9 +231,9 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
   useEffect(() => {
     let mounted = true;
-    fetch('/api/candles?symbol=SPY&timeframe=1d&range=3mo')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
+    fetchJsonSafe<{ candles?: any[] }>('/api/candles?symbol=SPY&timeframe=1d&range=3mo')
+      .then((resp) => {
+        const data = resp.ok ? resp.data : null;
         if (!mounted || !data?.candles || data.candles.length < 2) return;
         const first = Number(data.candles[0]?.close);
         const last = Number(data.candles[data.candles.length - 1]?.close);
@@ -253,6 +264,8 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
   const overviewRef = useRef(overview);
   overviewRef.current = overview;
+  const marketHealthRef = useRef(marketHealth);
+  marketHealthRef.current = marketHealth;
 
 
   const accountRef = useRef<PortfolioAccount>(account);
@@ -318,7 +331,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     try {
       let marketItems = scannerResultsRef.current;
       if (!marketItems || marketItems.length === 0) {
-        const res = await fetch('/api/scan', {
+        const scanResp = await fetchJsonSafe<{ results?: any[] }>('/api/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
@@ -327,23 +340,24 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             timeframe: '1d',
           }),
         });
-        if (res.ok) {
-          const data = await res.json();
-          marketItems = data.results || [];
+        if (scanResp.ok && scanResp.data) {
+          marketItems = scanResp.data.results || [];
         }
       }
 
       if (!isMountedRef.current || controller.signal.aborted) return;
 
+      const activeHealth = marketHealthRef.current || (await refreshMarketHealth(false));
       const masterSettings = {
         ...loadSettings(),
         maxRiskPerTradePct: accountRef.current.riskPerTradePercent || 1.0,
       };
-      const { ordersToPlace, positionsToClose } = selectAlpacaEquityCandidates(
+      const { ordersToPlace, positionsToClose, skippedByRiskGates } = selectAlpacaEquityCandidates(
         activeOverview,
         marketItems,
         masterSettings,
-        accountRef.current.maxOpenPositions || 5
+        accountRef.current.maxOpenPositions || 5,
+        { marketHealth: activeHealth }
       );
 
       let executedCount = 0;
@@ -366,6 +380,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
           qty: cand.qty,
           type: cand.type,
           time_in_force: cand.time_in_force,
+          client_order_id: cand.client_order_id,
         });
         if (orderRes.ok) {
           executedCount++;
@@ -384,8 +399,15 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       } else if (messages.length > 0) {
         setLastCycleMessage(`Alpaca Paper notices: ${messages.join(' • ')}`);
       } else {
+        const gateNote =
+          skippedByRiskGates.length > 0
+            ? ` Blocked by risk gates: ${skippedByRiskGates
+                .slice(0, 2)
+                .map((s) => `${s.symbol} (${s.reasons[0]})`)
+                .join('; ')}.`
+            : '';
         setLastCycleMessage(
-          `Alpaca Paper scan complete: Monitored ${activeOverview.equityPositions.length} open equity position(s). No new setups cleared all risk gates.`
+          `Alpaca Paper scan complete: Monitored ${activeOverview.equityPositions.length} open equity position(s). No new setups cleared all risk gates.${gateNote}`
         );
       }
     } catch (err) {
@@ -551,6 +573,30 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                 {overview?.paperEndpoint || 'https://paper-api.alpaca.markets'}
                 {lastSyncSummary ? ` • Journal synced (${lastSyncSummary.totalAlpacaEntries} Alpaca entries)` : ''}
               </span>
+              {marketHealth && (
+                <span
+                  data-testid="equities-market-health-guard"
+                  className={`inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold border ${
+                    marketHealth.current.safetyStatus === 'SAFE_RISK_ON'
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                      : marketHealth.current.safetyStatus === 'CAUTIOUS'
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                  }`}
+                >
+                  <span>
+                    Market Guard: {marketHealth.current.score}/100 ({marketHealth.current.label}) · VIX{' '}
+                    {marketHealth.current.vix !== null ? marketHealth.current.vix.toFixed(1) : '—'} · 1M Net{' '}
+                    {marketHealth.current.netVolume1MBillions < 0
+                      ? `-$${Math.abs(marketHealth.current.netVolume1MBillions).toFixed(1)}B`
+                      : `+$${marketHealth.current.netVolume1MBillions.toFixed(1)}B`}{' '}
+                    ·{' '}
+                    {marketHealth.current.allowNewEntries
+                      ? `${marketHealth.current.sizeMultiplier}x`
+                      : 'HALTED'}
+                  </span>
+                </span>
+              )}
             </div>
 
             <div className="flex items-baseline space-x-3 mt-1">
@@ -1441,7 +1487,15 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
               </div>
               <div className="text-[10px] text-emerald-500/90 mt-1 font-sans flex items-center gap-1">
                 <ShieldCheck className="w-3 h-3" />
-                <span>High Efficiency (&gt;2.0)</span>
+                <span>
+                  {analytics.sharpeRatio >= 2
+                    ? 'High Efficiency (>2.0)'
+                    : analytics.sharpeRatio >= 1
+                    ? 'Positive Risk-Adjusted'
+                    : analytics.totalTrades < 2
+                    ? 'Needs ≥ 2 Closed Trades'
+                    : 'Calibrating Risk-Adjusted'}
+                </span>
               </div>
             </div>
 

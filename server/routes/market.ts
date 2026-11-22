@@ -518,6 +518,26 @@ export function createMarketRouter(marketData: MarketDataService): Router {
     }
   });
 
+  // API 2.9915: Real-Data Market Health, 1M Fear & Greed History, VIX Regime & Net Volume Flow
+  router.get('/api/market-health', async (req: Request, res: Response) => {
+    marketData.incrementApiRequests();
+    try {
+      const forceRefresh = req.query.refresh === 'true';
+      const report = await marketData.fetchMarketHealthReport(forceRefresh);
+      if (!report) {
+        return res.status(503).json({
+          error: 'Live SPY, ^VIX, and sector ETF OHLCV feeds are temporarily unavailable for Market Health calculation.',
+        });
+      }
+      res.json(report);
+    } catch (err: any) {
+      res.status(503).json({
+        error: 'Failed to compute live Market Health report.',
+        message: err?.message,
+      });
+    }
+  });
+
   // API 2.992: Multi-dimensional Live Market State Heatmap Endpoint
   router.get('/api/heatmap', async (req: Request, res: Response) => {
     marketData.incrementApiRequests();

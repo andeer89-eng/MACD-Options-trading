@@ -4,7 +4,10 @@ import {
   parseOccOptionSymbol,
   mapAlpacaOrdersToJournalEntries,
   alpacaOrdersToOptionsHistory,
+  selectAlpacaEquityCandidates,
+  type AlpacaOverviewDTO,
 } from './alpacaJournalSync.ts';
+import { DEFAULT_SETTINGS } from './masterPlanCore.ts';
 import type { JournalEntry } from './tradeJournal.ts';
 
 describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
@@ -192,4 +195,191 @@ describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
     assert.equal(second.addedCount, 0);
     assert.equal(second.updatedCount, 0);
   });
+
+  it('selectAlpacaEquityCandidates enforces real sector exposure cap, blocks stale quotes, and sets deterministic client_order_id', () => {
+    const nowMs = Date.UTC(2026, 10, 21, 16, 0, 0);
+    const baseOverview: AlpacaOverviewDTO = {
+      configured: true,
+      mode: 'PAPER',
+      paperEndpoint: 'https://paper-api.alpaca.markets',
+      message: 'Connected',
+      fetchedAt: new Date(nowMs).toISOString(),
+      account: {
+        id: 'acct-1',
+        account_number: 'PA123456',
+        status: 'ACTIVE',
+        currency: 'USD',
+        cash: 65000,
+        buying_power: 65000,
+        options_buying_power: 65000,
+        options_approved_level: 2,
+        equity: 100000,
+        last_equity: 100000,
+        day_pnl: 250,
+        day_pnl_pct: 0.25,
+        pattern_day_trader: false,
+      },
+      positions: [],
+      equityPositions: [
+        {
+          asset_id: 'nvda-1',
+          symbol: 'NVDA',
+          asset_class: 'us_equity',
+          qty: 250,
+          side: 'long',
+          avg_entry_price: 135,
+          current_price: 140,
+          market_value: 35000, // 35% of $100k in Information Technology > 30% cap
+          cost_basis: 33750,
+          unrealized_pl: 1250,
+          unrealized_plpc: 3.7,
+          change_today: 1.1,
+        },
+      ],
+      optionPositions: [],
+      orders: [],
+      fills: [],
+    };
+
+    const marketItems = [
+      {
+        symbol: 'AAPL', // Information Technology -> must be blocked by 30% sector cap (35% held)
+        sector: 'Information Technology',
+        currentPrice: 220,
+        atr: 4.0,
+        fetchedAtMs: nowMs - 60_000,
+        setups: [{ type: 'BULLISH_TRIPLE', qualityScore: 88 }],
+      },
+      {
+        symbol: 'JPM', // Financials -> 0% held, but stale quote must block
+        sector: 'Financials',
+        currentPrice: 210,
+        atr: 3.5,
+        fetchedAtMs: nowMs - 2 * 60 * 60 * 1000, // 2h old > 45m limit
+        setups: [{ type: 'BULLISH_TRIPLE', qualityScore: 86 }],
+      },
+      {
+        symbol: 'XOM', // Energy -> 0% held, fresh quote -> must clear all gates!
+        sector: 'Energy',
+        currentPrice: 118,
+        atr: 2.2,
+        fetchedAtMs: nowMs - 120_000,
+        setups: [{ type: 'BULLISH_TRIPLE', qualityScore: 85 }],
+      },
+    ];
+
+    const res = selectAlpacaEquityCandidates(
+      baseOverview,
+      marketItems,
+      { ...DEFAULT_SETTINGS, maxSectorExposurePct: 30, maxRiskPerTradePct: 1.0 },
+      5,
+      { nowMs }
+    );
+
+    assert.equal(res.ordersToPlace.length, 1);
+    assert.equal(res.ordersToPlace[0].symbol, 'XOM');
+    assert.equal(res.ordersToPlace[0].sector, 'Energy');
+    assert.ok(res.ordersToPlace[0].client_order_id.startsWith('trullas_XOM_buy_'));
+
+    const aaplSkip = res.skippedByRiskGates.find((s) => s.symbol === 'AAPL');
+    assert.ok(aaplSkip && aaplSkip.reasons.some((r) => r.includes('Sector Exposure Within Cap')));
+
+    const jpmSkip = res.skippedByRiskGates.find((s) => s.symbol === 'JPM');
+    assert.ok(jpmSkip && jpmSkip.reasons.some((r) => r.includes('Live & Fresh Market Data')));
+
+    // Re-running when the exact client_order_id already exists in Alpaca orders suppresses duplicate
+    const dedupRes = selectAlpacaEquityCandidates(
+      {
+        ...baseOverview,
+        orders: [
+          {
+            id: 'ord-dup-1',
+            client_order_id: res.ordersToPlace[0].client_order_id,
+            symbol: 'XOM',
+            asset_class: 'us_equity',
+            side: 'buy',
+            qty: res.ordersToPlace[0].qty,
+            filled_qty: 0,
+            filled_avg_price: null,
+            type: 'market',
+            time_in_force: 'day',
+            limit_price: null,
+            stop_price: null,
+            status: 'filled',
+            submitted_at: new Date(nowMs).toISOString(),
+            filled_at: null,
+          },
+        ],
+      },
+      marketItems,
+      { ...DEFAULT_SETTINGS, maxSectorExposurePct: 30, maxRiskPerTradePct: 1.0 },
+      5,
+      { nowMs }
+    );
+    assert.equal(dedupRes.ordersToPlace.length, 0);
+    assert.ok(
+      dedupRes.skippedByRiskGates.some(
+        (s) => s.symbol === 'XOM' && s.reasons.some((r) => r.includes('idempotency key'))
+      )
+    );
+
+    // Market Health Crash Defense must block all new BUY candidates regardless of individual setup score
+    const crashHealth = {
+      isLive: true,
+      asOf: '2026-11-22',
+      dataSource: 'Test Feed',
+      universeCount: 14,
+      current: {
+        score: 21,
+        label: 'Extreme Fear' as const,
+        safetyStatus: 'CRASH_DEFENSE' as const,
+        allowNewEntries: false,
+        sizeMultiplier: 0,
+        vix: 31.4,
+        vix3m: 28.1,
+        vixTermStructure: 'BACKWARDATION' as const,
+        spyPrice: 540,
+        spyChangePct: -2.4,
+        spy5dReturnPct: -5.1,
+        netVolumeTodayBillions: -6.2,
+        buyingVolumeTodayBillions: 12.1,
+        sellingVolumeTodayBillions: 18.3,
+        netVolume1MBillions: -14.2,
+        buyingVolume1MBillions: 110,
+        sellingVolume1MBillions: 124.2,
+        buySellRatio1M: 0.89,
+        breadthPct: 18,
+        momentumScore: 15,
+        vixScore: 18,
+        volumeScore: 26,
+        breadthScore: 25,
+        reasons: ['Extreme market fear (Health Score 21/100 < 32)', 'VIX crisis elevation (31.4 >= 28)'],
+      },
+      snapshots: {
+        now: { date: '2026-11-22', score: 21, label: 'Extreme Fear' as const, vix: 31.4, netFlowBillions: -6.2 },
+        previousClose: null,
+        oneWeekAgo: null,
+        oneMonthAgo: null,
+        oneYearAgo: null,
+      },
+      history1M: [],
+      history1YCount: 252,
+    };
+
+    const crashRes = selectAlpacaEquityCandidates(
+      baseOverview,
+      marketItems,
+      { ...DEFAULT_SETTINGS, maxSectorExposurePct: 30, maxRiskPerTradePct: 1.0 },
+      5,
+      { nowMs, marketHealth: crashHealth }
+    );
+    assert.equal(crashRes.ordersToPlace.length, 0);
+    assert.equal(crashRes.marketHealthBlocked, true);
+    assert.ok(
+      crashRes.skippedByRiskGates.some(
+        (s) => s.symbol === 'XOM' && s.reasons.some((r) => r.includes('Market Health Crash Defense'))
+      )
+    );
+  });
 });
+

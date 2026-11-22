@@ -45,11 +45,14 @@ import {
   clusterStats,
   summarize,
 } from '../utils/trullasOutcomeEngine';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 import {
   buildShadowAuditReport,
   ShadowAuditReport,
 } from '../utils/shadowAudit';
 import type { Candle } from '../utils/trullasStrategy';
+import { useMarketHealth } from '../hooks/useMarketHealth';
+import { MarketHealthGaugePanel } from './MarketHealthGaugePanel';
 import {
   DailyWatchlistItem,
   loadDailyWatchlist,
@@ -127,6 +130,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const [spyStageScore, setSpyStageScore] = useState<number | null>(null);
   const [macroLoading, setMacroLoading] = useState<boolean>(true);
   const [macroError, setMacroError] = useState<string | null>(null);
+  const {
+    report: marketHealth,
+    loading: marketHealthLoading,
+    error: marketHealthError,
+    refresh: refreshMarketHealth,
+  } = useMarketHealth();
 
   // Real user watchlist & journal state
   const [savedWatchlist, setSavedWatchlist] = useState<DailyWatchlistItem[]>(loadDailyWatchlist);
@@ -194,12 +203,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
     });
   }, [liveSectors]);
 
-  // Dynamic Regime Score Calculation
+  // Dynamic Regime Score Calculation (unified with real 1M Market Health + VIX + Net Flow when available)
   const regimeScore = useMemo(() => {
+    if (marketHealth && marketHealth.isLive) {
+      return marketHealth.current.score;
+    }
     return Math.round(
       regimeComponents.reduce((acc, c) => acc + (c.weight * c.value) / 100, 0)
     );
-  }, [regimeComponents]);
+  }, [marketHealth, regimeComponents]);
 
   const regimeBand = useMemo(() => getRegimeBand(regimeScore), [regimeScore]);
 
@@ -210,31 +222,31 @@ export const TodayView: React.FC<TodayViewProps> = ({
     setMacroLoading(true);
     setMacroError(null);
     try {
-      const [secRes, cboeRes, spyRes] = await Promise.allSettled([
-        fetch('/api/sectors'),
-        fetch('/api/cboe/market-overview'),
-        fetch('/api/candles?symbol=SPY&timeframe=1wk&range=2y'),
+      const [secRes, cboeRes, spyRes] = await Promise.all([
+        fetchJsonSafe<{ sectors?: any[] }>('/api/sectors'),
+        fetchJsonSafe<{ marketOverview?: any }>('/api/cboe/market-overview'),
+        fetchJsonSafe<{ candles?: any[] }>('/api/candles?symbol=SPY&timeframe=1wk&range=2y'),
       ]);
 
       let anyOk = false;
-      if (secRes.status === 'fulfilled' && secRes.value.ok) {
-        const sData = await secRes.value.json();
+      if (secRes.ok && secRes.data) {
+        const sData = secRes.data;
         if (Array.isArray(sData.sectors) && sData.sectors.length > 0) {
           setLiveSectors(sData.sectors);
           anyOk = true;
         }
       }
 
-      if (cboeRes.status === 'fulfilled' && cboeRes.value.ok) {
-        const cbData = await cboeRes.value.json();
+      if (cboeRes.ok && cboeRes.data) {
+        const cbData = cboeRes.data;
         if (cbData.marketOverview) {
           setCboeOverview(cbData.marketOverview);
           anyOk = true;
         }
       }
 
-      if (spyRes.status === 'fulfilled' && spyRes.value.ok) {
-        const spyData = await spyRes.value.json();
+      if (spyRes.ok && spyRes.data) {
+        const spyData = spyRes.data;
         const candles = Array.isArray(spyData.candles) ? spyData.candles : [];
         if (candles.length >= 30) {
           const mapped = candles.map((c: any) => ({
@@ -543,10 +555,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
     try {
       const responses = await Promise.allSettled(
         benchmarkSymbols.map(async (sym) => {
-          const res = await fetch(`/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=2y`);
-          if (!res.ok) throw new Error(`HTTP ${res.status} for ${sym}`);
-          const data = await res.json();
-          const candles: Candle[] = Array.isArray(data.candles) ? data.candles : [];
+          const resp = await fetchJsonSafe<{ candles?: Candle[] }>(
+            `/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=2y`
+          );
+          if (!resp.ok || !resp.data) throw new Error(resp.error || `HTTP ${resp.status} for ${sym}`);
+          const candles: Candle[] = Array.isArray(resp.data.candles) ? resp.data.candles : [];
           return { sym, candles };
         })
       );
@@ -689,6 +702,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* 2.5 REAL MARKET HEALTH & 1-MONTH FEAR/GREED + VIX + NET VOLUME FLOW */}
+      <MarketHealthGaugePanel
+        report={marketHealth}
+        loading={marketHealthLoading}
+        error={marketHealthError}
+        onRefresh={() => refreshMarketHealth(true)}
+      />
 
       {/* 3. SIMULATION & CAPITAL SETTINGS PANEL (§1) */}
       <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 space-y-3 shadow-md">

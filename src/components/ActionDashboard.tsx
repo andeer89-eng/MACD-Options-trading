@@ -31,6 +31,7 @@ import {
   filterTradeAdviceList,
 } from '../utils/tradeActionEngine';
 import { DivergenceSetup } from '../utils/trullasStrategy';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface ActionDashboardProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -47,13 +48,27 @@ const ALL_ZONES: { zone: TradeActionZone; label: string }[] = [
   { zone: 'NEUTRAL_CHOP', label: 'Stand Aside / Chop' },
 ];
 
+const ZONE_PRIORITY: Record<TradeActionZone, number> = {
+  BREAKOUT_CONFIRMED: 0,
+  STRONG_BUY: 1,
+  PRE_BREAKOUT: 2,
+  HOLD_PROFIT: 3,
+  LATE_TO_BUY: 4,
+  SELL_TAKE_PROFIT: 5,
+  NEUTRAL_CHOP: 6,
+};
+
+const PAGE_SIZE = 24;
+
 export const ActionDashboard: React.FC<ActionDashboardProps> = ({
   onSelectSymbolForChart,
   onOpenCalculator,
 }) => {
   const [adviceList, setAdviceList] = useState<TradeAdvice[]>([]);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
 
   // Filters
   const [filters, setFilters] = useState<TradeAdviceFilters>(DEFAULT_TRADE_FILTERS);
@@ -62,8 +77,9 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
   // Fetch advice from API across full S&P 500 index
   const fetchAdvice = async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
-      const res = await fetch('/api/trade-advice', {
+      const resp = await fetchJsonSafe<{ advice?: TradeAdvice[]; error?: string }>('/api/trade-advice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -71,13 +87,15 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
           timeframe: '1d',
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAdviceList(data.advice || []);
+      if (resp.ok && resp.data) {
+        setAdviceList(resp.data.advice || []);
         setLastUpdated(new Date());
+      } else {
+        setErrorMsg(resp.error || 'Failed to retrieve live trade advice.');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load trade advice:', e);
+      setErrorMsg(e?.message || 'Unable to connect to /api/trade-advice endpoint.');
     } finally {
       setLoading(false);
     }
@@ -87,6 +105,10 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
   useEffect(() => {
     fetchAdvice();
   }, []);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [filters, selectedSector]);
 
   // Zone selection toggle
   const handleToggleZone = (zone: TradeActionZone) => {
@@ -125,11 +147,21 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
     return ['ALL', ...Array.from(set)];
   }, [adviceList]);
 
-  // Filtered advice
+  // Filtered & prioritized advice (actionable zones + confidence score first)
   const filteredAdvice = useMemo(() => {
     const withSector = { ...filters, sector: selectedSector };
-    return filterTradeAdviceList(adviceList, withSector);
+    return filterTradeAdviceList(adviceList, withSector).sort((a, b) => {
+      const pa = ZONE_PRIORITY[a.actionZone] ?? 99;
+      const pb = ZONE_PRIORITY[b.actionZone] ?? 99;
+      if (pa !== pb) return pa - pb;
+      return b.confidenceScore - a.confidenceScore;
+    });
   }, [adviceList, filters, selectedSector]);
+
+  const visibleAdvice = useMemo(
+    () => filteredAdvice.slice(0, visibleCount),
+    [filteredAdvice, visibleCount]
+  );
 
   // Zone breakdown counters
   const zoneCounts = useMemo(() => {
@@ -463,16 +495,33 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
           </div>
 
           <span className="font-mono text-emerald-400 text-[11px]">
-            Showing {filteredAdvice.length} of {adviceList.length} evaluated S&amp;P 500 constituents
+            Showing {visibleAdvice.length} of {filteredAdvice.length} matched ({adviceList.length} evaluated S&amp;P 500)
           </span>
 
         </div>
       </div>
 
+      {errorMsg && (
+        <div className="bg-rose-950/30 border border-rose-500/30 rounded-xl p-4 flex items-center justify-between gap-4 text-xs text-rose-300">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={fetchAdvice}
+            className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-semibold shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* ADVICE CARDS GRID */}
       {filteredAdvice.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {filteredAdvice.map((item) => {
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {visibleAdvice.map((item) => {
             const meta = getActionZoneMeta(item.actionZone);
             const isBull = item.trullasSetup ? item.trullasSetup.type.includes('BULL') : true;
 
@@ -650,6 +699,28 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             );
           })}
         </div>
+
+        {visibleAdvice.length < filteredAdvice.length && (
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              data-testid="action-zones-load-more"
+              onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-semibold border border-zinc-700 transition"
+            >
+              Load More (+{Math.min(PAGE_SIZE, filteredAdvice.length - visibleAdvice.length)})
+            </button>
+            <button
+              type="button"
+              data-testid="action-zones-show-all"
+              onClick={() => setVisibleCount(filteredAdvice.length)}
+              className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-xl text-xs font-medium border border-zinc-800 transition"
+            >
+              Show All ({filteredAdvice.length})
+            </button>
+          </div>
+        )}
+        </>
       ) : (
         <div className="p-12 text-center text-xs bg-zinc-900 border border-zinc-800 rounded-xl space-y-3">
           <Filter className="w-8 h-8 text-zinc-600 mx-auto" />

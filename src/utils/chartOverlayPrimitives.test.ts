@@ -10,6 +10,10 @@ import {
   resolveSetupPriceLineLabels,
   resolveSuperTrendHudLayout,
   resolveVisibleHudDock,
+  getVisibleIndicatorIds,
+  toggleHiddenIndicator,
+  areAllIndicatorsHidden,
+  toggleAllIndicatorsVisibility,
 } from './chartOverlayPrimitives.ts';
 
 describe('chartOverlayPrimitives', () => {
@@ -235,5 +239,41 @@ describe('chartOverlayPrimitives', () => {
     });
     assert.equal(narrow.priceLabelLanePx, 0);
     assert.equal(narrow.rightOffset, 68);
+
+    // Prevent Signals legend card from clipping below Pane 0 when height < 470px
+    const compactPane = resolveSuperTrendHudLayout({
+      totalWidth: 1100,
+      plotWidth: 1036,
+      paneHeight: 380,
+      reservePriceLabelLane: false,
+      showTable: true,
+      showLegend: true,
+    });
+    assert.equal(standard.showLegendCard, true);
+    assert.equal(compactPane.showLegendCard, false);
+  });
+
+  it('indicator visibility helpers hide and restore indicators without deleting active list', () => {
+    const active = ['supertrend-v9-pro', 'matrix-ai-pro'];
+    assert.deepEqual(getVisibleIndicatorIds(active, []), active);
+    assert.equal(areAllIndicatorsHidden(active, []), false);
+
+    // Hide single indicator
+    const hiddenOne = toggleHiddenIndicator([], 'supertrend-v9-pro');
+    assert.deepEqual(hiddenOne, ['supertrend-v9-pro']);
+    assert.deepEqual(getVisibleIndicatorIds(active, hiddenOne), ['matrix-ai-pro']);
+    assert.equal(areAllIndicatorsHidden(active, hiddenOne), false);
+
+    // Toggle all hidden for clean chart, then restore all
+    const hiddenAll = toggleAllIndicatorsVisibility(active, hiddenOne);
+    assert.equal(areAllIndicatorsHidden(active, hiddenAll), true);
+    assert.deepEqual(getVisibleIndicatorIds(active, hiddenAll), []);
+
+    const restoredAll = toggleAllIndicatorsVisibility(active, hiddenAll);
+    assert.equal(areAllIndicatorsHidden(active, restoredAll), false);
+    assert.deepEqual(getVisibleIndicatorIds(active, restoredAll), active);
+
+    // Un-hide single indicator
+    assert.deepEqual(toggleHiddenIndicator(hiddenOne, 'supertrend-v9-pro'), []);
   });
 });

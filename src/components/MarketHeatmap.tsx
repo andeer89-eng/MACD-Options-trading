@@ -49,6 +49,7 @@ import {
 } from '../utils/heatmapEngine';
 import { SP500_SECTORS } from '../data/sp500Universe';
 import { HeatmapCanvasWebGL } from './HeatmapCanvasWebGL';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface MarketHeatmapProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -111,15 +112,14 @@ export const MarketHeatmap: React.FC<MarketHeatmapProps> = ({
     setFetchError(null);
 
     try {
-      const res = await fetch(
+      const resp = await fetchJsonSafe<{ items?: HeatmapItem[]; error?: string }>(
         `/api/heatmap?timeframe=${timeframe}${isManualRefresh ? '&refresh=true' : ''}`
       );
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.items) && data.items.length > 0) {
-        setItems(data.items);
+      if (resp.ok && Array.isArray(resp.data?.items) && resp.data.items.length > 0) {
+        setItems(resp.data.items);
         setLastUpdated(new Date());
       } else {
-        throw new Error(data.error || 'Live heatmap data unavailable.');
+        throw new Error(resp.error || 'Live heatmap data unavailable.');
       }
     } catch (e: any) {
       setItems([]);

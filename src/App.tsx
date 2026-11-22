@@ -45,6 +45,7 @@ import {
 import { DivergenceSetup } from './utils/trullasStrategy';
 import { SP500_UNIVERSE } from './data/sp500Universe';
 import { deduplicateSymbols, generateStableAlertId } from './utils/dataFetcher';
+import { fetchJsonSafe } from './utils/safeFetchJson';
 import { useMarketStream } from './hooks/useMarketStream';
 
 type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
@@ -293,25 +294,50 @@ export default function App() {
 
     try {
       const uniqueTickers = deduplicateSymbols(tickersToScan);
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tickers: uniqueTickers, timeframe: tf }),
-        signal: controller.signal,
-      });
-      if (res.ok) {
-        const text = await res.text();
-        if (text.trim().startsWith('<')) {
-          throw new Error('Scan API returned HTML instead of JSON');
+      const BATCH_SIZE = 120;
+      const mergedBySymbol = new Map<string, any>();
+      const collectedResults: any[] = [];
+
+      for (let i = 0; i < uniqueTickers.length; i += BATCH_SIZE) {
+        if (controller.signal.aborted) break;
+        const batch = uniqueTickers.slice(i, i + BATCH_SIZE);
+        const scanResp = await fetchJsonSafe<{ results?: any[] }>('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers: batch, timeframe: tf }),
+          signal: controller.signal,
+          retryOnHtml: true,
+          retryDelayMs: 900,
+        });
+
+        if (controller.signal.aborted) break;
+        if (!scanResp.ok || !scanResp.data) {
+          continue;
         }
-        const data = JSON.parse(text);
-        setResults(data.results || []);
+
+        const batchRows = Array.isArray(scanResp.data.results) ? scanResp.data.results : [];
+        for (const row of batchRows) {
+          if (row?.symbol) {
+            mergedBySymbol.set(row.symbol, row);
+          }
+        }
+        if (batchRows.length > 0) {
+          setResults(Array.from(mergedBySymbol.values()));
+          setLastScanTime(new Date());
+        }
+      }
+
+      if (controller.signal.aborted) return;
+
+      collectedResults.push(...mergedBySymbol.values());
+      if (collectedResults.length > 0) {
+        setResults(collectedResults);
         setLastScanTime(new Date());
 
         let newFound = false;
         const newAlerts: AlertLogItem[] = [];
 
-        for (const item of data.results || []) {
+        for (const item of collectedResults) {
           for (let sIdx = 0; sIdx < (item.setups || []).length; sIdx++) {
             const s = item.setups[sIdx];
             const stableId = s.id || generateStableAlertId(s.symbol, s.type, Date.now(), sIdx);
@@ -362,7 +388,7 @@ export default function App() {
 
           const tgConfig = loadTelegramConfig();
           if (tgConfig.enabled && tgConfig.botToken && tgConfig.chatId) {
-            for (const item of data.results || []) {
+            for (const item of collectedResults) {
               for (const s of item.setups || []) {
                 if (s.qualityScore >= tgConfig.notifyMinQualityScore) {
                   const tgText = formatDivergenceTelegramAlert(s);
@@ -374,7 +400,7 @@ export default function App() {
         }
         if (prevSetupIds.current.size > 1500) {
           const activeSet = new Set<string>();
-          for (const item of data.results || []) {
+          for (const item of collectedResults) {
             for (const s of item.setups || []) {
               if (s.id) activeSet.add(s.id);
             }
@@ -384,7 +410,7 @@ export default function App() {
       }
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        console.error('Scan error:', err);
+        console.warn('Scan cycle skipped:', err?.message || err);
       }
     } finally {
       isScanningRef.current = false;

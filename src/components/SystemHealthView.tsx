@@ -26,6 +26,7 @@ import {
   formatUptime,
   createEmptyHealthData,
 } from '../utils/systemHealth';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 export const SystemHealthView: React.FC = () => {
   const [healthData, setHealthData] = useState<SystemHealthData>(() => createEmptyHealthData());
@@ -55,9 +56,9 @@ export const SystemHealthView: React.FC = () => {
     const controller = new AbortController();
     healthAbortRef.current = controller;
     try {
-      const res = await fetch('/api/system-health', { signal: controller.signal });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const resp = await fetchJsonSafe<any>('/api/system-health', { signal: controller.signal });
+      if (!resp.ok || !resp.data) throw new Error(resp.error || `HTTP ${resp.status}`);
+      const data = resp.data;
       if (!isMountedRef.current || controller.signal.aborted) return;
       const recentLatencies: number[] = Array.isArray(data.recentLatencies) ? data.recentLatencies : [];
       const historyMapped = recentLatencies.map((latencyMs, i) => ({
@@ -142,14 +143,11 @@ export const SystemHealthView: React.FC = () => {
     setPingResult(null);
     const start = Date.now();
     try {
-      const res = await fetch('/api/system-health/ping');
+      const resp = await fetchJsonSafe<{ pingMs?: number }>('/api/system-health/ping');
       const roundtrip = Date.now() - start;
       if (!isMountedRef.current) return;
-      if (res.ok) {
-        const data = await res.json();
-        if (isMountedRef.current) {
-          setPingResult({ pingMs: data.pingMs || roundtrip, ok: true, timestamp: Date.now() });
-        }
+      if (resp.ok && resp.data) {
+        setPingResult({ pingMs: resp.data.pingMs || roundtrip, ok: true, timestamp: Date.now() });
       } else {
         setPingResult({ pingMs: roundtrip, ok: false, timestamp: Date.now() });
       }
@@ -165,10 +163,11 @@ export const SystemHealthView: React.FC = () => {
   // Clear in-memory cache
   const handleClearCache = async () => {
     try {
-      const res = await fetch('/api/system-health/clear-cache', { method: 'POST' });
-      if (res.ok && isMountedRef.current) {
-        const data = await res.json();
-        setCacheClearNotice(`Successfully purged ${data.clearedCount} cached assets from in-memory cache.`);
+      const resp = await fetchJsonSafe<{ clearedCount?: number }>('/api/system-health/clear-cache', {
+        method: 'POST',
+      });
+      if (resp.ok && resp.data && isMountedRef.current) {
+        setCacheClearNotice(`Successfully purged ${resp.data.clearedCount ?? 0} cached assets from in-memory cache.`);
         fetchHealthData();
         if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
         noticeTimerRef.current = setTimeout(() => {

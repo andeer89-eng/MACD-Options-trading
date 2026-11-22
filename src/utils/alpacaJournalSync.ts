@@ -3,7 +3,10 @@ import type { AutomatedPosition, AutomatedTradeLog } from './automatedPortfolio.
 import { evaluateCboeOptionsConfluence } from './automatedPortfolio.ts';
 import type { OptionsPosition, OptionsTradeLog, OptionsTradeRecord } from './optionsAutomatedPortfolio.ts';
 import { getTradeExecutionRegime } from './marketSession.ts';
-import { canTrade, calculateLevels, MasterPlanSettings } from './masterPlanCore.ts';
+import { canTrade, calculateLevels, MasterPlanSettings, DataQuality } from './masterPlanCore.ts';
+import { SP500_UNIVERSE } from '../data/sp500Universe.ts';
+import { lookupGlobalCompany } from '../data/globalTickers.ts';
+import type { MarketHealthReport } from './marketHealthEngine.ts';
 
 export interface AlpacaAccountDTO {
   id: string;
@@ -584,11 +587,44 @@ export interface AlpacaEquityOrderCandidate {
   qty: number;
   type: 'market' | 'limit';
   time_in_force: 'day';
+  client_order_id: string;
+  sector: string;
   setupType: string;
   qualityScore: number;
   stopLoss: number;
   targetPrice: number;
   rationale: string;
+}
+
+export interface AlpacaRiskGateSkip {
+  symbol: string;
+  sector: string;
+  reasons: string[];
+}
+
+export function resolveEquitySector(symbol: string, explicitSector?: string): string {
+  if (explicitSector && explicitSector.trim() && explicitSector !== 'US Equities' && explicitSector !== 'Equities') {
+    return explicitSector.trim();
+  }
+  const sym = symbol.trim().toUpperCase();
+  const sp = SP500_UNIVERSE.find((c) => c.symbol.toUpperCase() === sym);
+  if (sp?.sector) return sp.sector;
+  const global = lookupGlobalCompany(sym);
+  if (global?.sector) return global.sector;
+  return explicitSector?.trim() || 'US Equities';
+}
+
+export function buildIdempotentClientOrderId(params: {
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  asOfIso?: string;
+  prefix?: string;
+}): string {
+  const datePart = (params.asOfIso || new Date().toISOString()).slice(0, 10).replace(/-/g, '');
+  const cleanSym = params.symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 18);
+  const tag = params.prefix || 'trullas';
+  return `${tag}_${cleanSym}_${params.side}_${params.qty}_${datePart}`.slice(0, 48);
 }
 
 export function selectAlpacaEquityCandidates(
@@ -599,16 +635,31 @@ export function selectAlpacaEquityCandidates(
     currentPrice: number;
     atr?: number;
     atrPercent?: number;
+    dataQuality?: DataQuality;
+    fetchedAtMs?: number;
+    stale?: boolean;
     setups?: any[];
   }>,
   settings: MasterPlanSettings,
-  maxOpenPositions: number
-): { ordersToPlace: AlpacaEquityOrderCandidate[]; positionsToClose: Array<{ symbol: string; percentage: number; reason: string }> } {
+  maxOpenPositions: number,
+  options?: {
+    nowMs?: number;
+    maxQuoteAgeMs?: number;
+    marketHealth?: MarketHealthReport | null;
+  }
+): {
+  ordersToPlace: AlpacaEquityOrderCandidate[];
+  positionsToClose: Array<{ symbol: string; percentage: number; reason: string }>;
+  skippedByRiskGates: AlpacaRiskGateSkip[];
+  marketHealthBlocked?: boolean;
+  marketHealthSummary?: string;
+} {
   const ordersToPlace: AlpacaEquityOrderCandidate[] = [];
   const positionsToClose: Array<{ symbol: string; percentage: number; reason: string }> = [];
+  const skippedByRiskGates: AlpacaRiskGateSkip[] = [];
 
   if (!overview.configured || !overview.account) {
-    return { ordersToPlace, positionsToClose };
+    return { ordersToPlace, positionsToClose, skippedByRiskGates };
   }
 
   // Evaluate open Alpaca equity positions against ATR stop / T2 target exits
@@ -630,6 +681,11 @@ export function selectAlpacaEquityCandidates(
       .filter((o) => ['new', 'accepted', 'pending_new', 'partially_filled'].includes(o.status))
       .map((o) => o.symbol.toUpperCase())
   );
+  const existingClientOrderIds = new Set(
+    overview.orders
+      .map((o) => o.client_order_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  );
 
   let remainingSlots = Math.max(0, maxOpenPositions - overview.equityPositions.length);
   let remainingBuyingPower = overview.account.buying_power;
@@ -640,6 +696,41 @@ export function selectAlpacaEquityCandidates(
     simCapitalUsd: accountEquity,
     dataQuality: 'live',
   };
+
+  // Track real sector notional exposure across held positions + newly queued buys
+  const sectorMapFromItems = new Map<string, string>();
+  for (const item of marketItems) {
+    sectorMapFromItems.set(item.symbol.toUpperCase(), resolveEquitySector(item.symbol, item.sector));
+  }
+  const sectorExposureDollars = new Map<string, number>();
+  for (const pos of overview.equityPositions) {
+    const sec = resolveEquitySector(pos.symbol, sectorMapFromItems.get(pos.symbol.toUpperCase()));
+    const mv = Math.abs(pos.market_value || pos.qty * pos.current_price || 0);
+    sectorExposureDollars.set(sec, (sectorExposureDollars.get(sec) || 0) + mv);
+  }
+
+  // Real daily loss % from Alpaca account day P&L
+  const dailyLossPct =
+    overview.account.day_pnl_pct < 0 ? Math.abs(overview.account.day_pnl_pct) : 0;
+
+  const nowMs = options?.nowMs ?? Date.now();
+  const maxQuoteAgeMs = options?.maxQuoteAgeMs ?? 45 * 60 * 1000;
+  const asOfIso = new Date(nowMs).toISOString();
+
+  const marketHealth = options?.marketHealth ?? null;
+  const resolvedRegimeScore = marketHealth ? marketHealth.current.score : 70;
+  const marketCrashBlocked =
+    marketHealth !== null &&
+    (marketHealth.current.safetyStatus === 'CRASH_DEFENSE' || !marketHealth.current.allowNewEntries);
+  const marketHealthSummary = marketHealth
+    ? `Health ${marketHealth.current.score}/100 (${marketHealth.current.label}), VIX ${
+        marketHealth.current.vix !== null ? marketHealth.current.vix.toFixed(1) : 'N/A'
+      }, 1M Net Vol ${
+        marketHealth.current.netVolume1MBillions < 0
+          ? `-$${Math.abs(marketHealth.current.netVolume1MBillions).toFixed(1)}B`
+          : `+$${marketHealth.current.netVolume1MBillions.toFixed(1)}B`
+      }`
+    : undefined;
 
   for (const item of marketItems) {
     if (remainingSlots <= 0 || remainingBuyingPower < 100) break;
@@ -652,6 +743,31 @@ export function selectAlpacaEquityCandidates(
     const isBull = String(mainSetup.type || '').includes('BULLISH');
     if (!isBull) continue; // Default cash/margin safe long entries unless explicitly enabled
 
+    const sector = resolveEquitySector(sym, item.sector);
+
+    if (marketCrashBlocked && marketHealth) {
+      skippedByRiskGates.push({
+        symbol: sym,
+        sector,
+        reasons: [
+          `Market Health Crash Defense: ${marketHealthSummary} (${marketHealth.current.reasons.join('; ')})`,
+        ],
+      });
+      continue;
+    }
+
+    const currentSectorDollars = sectorExposureDollars.get(sector) || 0;
+    const currentSectorExposurePct =
+      accountEquity > 0 ? Number(((currentSectorDollars / accountEquity) * 100).toFixed(2)) : 0;
+
+    const isStale =
+      Boolean(item.stale) ||
+      item.dataQuality === 'estimated' ||
+      (typeof item.fetchedAtMs === 'number' &&
+        Number.isFinite(item.fetchedAtMs) &&
+        nowMs - item.fetchedAtMs > maxQuoteAgeMs);
+    const itemDataQuality: DataQuality = isStale ? 'cached' : item.dataQuality || 'live';
+
     const atr = item.atr && item.atr > 0 ? item.atr : item.currentPrice * 0.02;
     const levels = calculateLevels({
       symbol: sym,
@@ -659,29 +775,82 @@ export function selectAlpacaEquityCandidates(
       currentPrice: item.currentPrice,
       atr14: atr,
       recentBars: [{ o: item.currentPrice, h: item.currentPrice + atr * 0.6, l: item.currentPrice - atr * 0.6, c: item.currentPrice }],
-      dataQuality: 'live',
+      dataQuality: itemDataQuality,
+      asOf: asOfIso,
     });
 
     const gate = canTrade({
       symbol: sym,
       direction: 'long',
-      sector: item.sector,
+      sector,
       setupScore: Number(mainSetup.qualityScore || 75),
       levels,
       currentPrice: item.currentPrice,
       marketOpenOverride: true, // Manual cycle click evaluates live setups cleanly; scheduler enforces NYSE hours
-      regimeScore: 70,
-      customSettings: effectiveSettings,
+      dailyLossPct,
+      currentSectorExposurePct,
+      regimeScore: resolvedRegimeScore,
+      customSettings: {
+        ...effectiveSettings,
+        dataQuality: itemDataQuality,
+      },
     });
 
-    if (!gate.allow || gate.suggestedQty < 1) continue;
-    const maxAffordable = Math.floor(remainingBuyingPower / item.currentPrice);
-    const qty = Math.min(gate.suggestedQty, maxAffordable);
-    if (qty < 1) continue;
+    if (!gate.allow || gate.suggestedQty < 1) {
+      if (gate.fails.length > 0) {
+        skippedByRiskGates.push({
+          symbol: sym,
+          sector,
+          reasons: gate.fails.map((f) => `${f.name}: ${f.detail}`),
+        });
+      }
+      continue;
+    }
 
-    remainingBuyingPower -= qty * item.currentPrice;
+    const maxAffordable = Math.floor(remainingBuyingPower / item.currentPrice);
+    // Also keep single incremental addition from breaching sector dollar cap if cap > 0
+    const maxSectorDollars = (accountEquity * effectiveSettings.maxSectorExposurePct) / 100;
+    const remainingSectorDollars = Math.max(0, maxSectorDollars - currentSectorDollars);
+    const maxQtyBySector =
+      effectiveSettings.maxSectorExposurePct > 0
+        ? Math.floor(remainingSectorDollars / item.currentPrice)
+        : gate.suggestedQty;
+
+    const qty = Math.min(gate.suggestedQty, maxAffordable, maxQtyBySector);
+    if (qty < 1) {
+      skippedByRiskGates.push({
+        symbol: sym,
+        sector,
+        reasons: [
+          maxQtyBySector < 1
+            ? `Sector Exposure Within Cap: adding 1 sh of ${sym} would breach ${effectiveSettings.maxSectorExposurePct.toFixed(0)}% ${sector} cap`
+            : `Insufficient Alpaca buying power for ${sym}`,
+        ],
+      });
+      continue;
+    }
+
+    const clientOrderId = buildIdempotentClientOrderId({
+      symbol: sym,
+      side: 'buy',
+      qty,
+      asOfIso,
+    });
+    if (existingClientOrderIds.has(clientOrderId)) {
+      skippedByRiskGates.push({
+        symbol: sym,
+        sector,
+        reasons: [`Duplicate order suppressed by idempotency key (${clientOrderId})`],
+      });
+      continue;
+    }
+
+    const notional = qty * item.currentPrice;
+    remainingBuyingPower -= notional;
     remainingSlots -= 1;
     openSymbols.add(sym);
+    existingClientOrderIds.add(clientOrderId);
+    sectorExposureDollars.set(sector, currentSectorDollars + notional);
 
     ordersToPlace.push({
       symbol: sym,
@@ -689,13 +858,23 @@ export function selectAlpacaEquityCandidates(
       qty,
       type: 'market',
       time_in_force: 'day',
+      client_order_id: clientOrderId,
+      sector,
       setupType: String(mainSetup.type || 'BULLISH_TRIPLE'),
       qualityScore: Number(mainSetup.qualityScore || 80),
       stopLoss: levels.stop.price,
       targetPrice: levels.targets[1]?.price || levels.targets[0]?.price || Number((item.currentPrice * 1.05).toFixed(2)),
-      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)}`,
+      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${
+        marketHealthSummary ? ` • ${marketHealthSummary}` : ''
+      }`,
     });
   }
 
-  return { ordersToPlace, positionsToClose };
+  return {
+    ordersToPlace,
+    positionsToClose,
+    skippedByRiskGates,
+    marketHealthBlocked: marketCrashBlocked,
+    marketHealthSummary,
+  };
 }

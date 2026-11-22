@@ -48,6 +48,7 @@ import {
 } from '../utils/trendSpiderUniverse';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
 import { BUILT_IN_INDICATORS } from '../utils/indicatorLibrary';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 function toWeeklyCandleData(raw: any[]): CandleData[] {
   if (!Array.isArray(raw)) return [];
@@ -126,22 +127,22 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
       setCandlesError(null);
       try {
         const rangeStr = `${backtestYears}y`;
-        const [symRes, spyRes] = await Promise.all([
-          fetch(`/api/candles?symbol=${encodeURIComponent(selectedSymbol)}&timeframe=1wk&range=${rangeStr}`),
-          fetch(`/api/candles?symbol=SPY&timeframe=1wk&range=${rangeStr}`),
+        const [symResp, spyResp] = await Promise.all([
+          fetchJsonSafe<{ candles?: any[]; error?: string }>(
+            `/api/candles?symbol=${encodeURIComponent(selectedSymbol)}&timeframe=1wk&range=${rangeStr}`
+          ),
+          fetchJsonSafe<{ candles?: any[] }>(
+            `/api/candles?symbol=SPY&timeframe=1wk&range=${rangeStr}`
+          ),
         ]);
 
-        if (!symRes.ok) {
-          throw new Error(`Unable to fetch live weekly candles for ${selectedSymbol}`);
+        if (!symResp.ok || !symResp.data) {
+          throw new Error(symResp.error || `Unable to fetch live weekly candles for ${selectedSymbol}`);
         }
-        const symJson = await symRes.json();
-        const mappedSym = toWeeklyCandleData(symJson.candles || []);
+        const mappedSym = toWeeklyCandleData(symResp.data.candles || []);
 
-        let mappedSpy: CandleData[] = [];
-        if (spyRes.ok) {
-          const spyJson = await spyRes.json();
-          mappedSpy = toWeeklyCandleData(spyJson.candles || []);
-        }
+        const mappedSpy: CandleData[] =
+          spyResp.ok && spyResp.data ? toWeeklyCandleData(spyResp.data.candles || []) : [];
 
         if (!cancelled) {
           setActiveCandles(mappedSym);
@@ -172,11 +173,12 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
   const fetchStageUniverse = useCallback(async (forceRefresh = false) => {
     setStageScanLoading(true);
     try {
-      const scanRes = await fetch(`/api/stage-scan${forceRefresh ? '?refresh=true' : ''}`);
+      const scanResp = await fetchJsonSafe<{ stages?: UniverseStageItem[] }>(
+        `/api/stage-scan${forceRefresh ? '?refresh=true' : ''}`
+      );
       let stageList: UniverseStageItem[] = [];
-      if (scanRes.ok) {
-        const scanJson = await scanRes.json();
-        stageList = Array.isArray(scanJson.stages) ? scanJson.stages : [];
+      if (scanResp.ok && scanResp.data) {
+        stageList = Array.isArray(scanResp.data.stages) ? scanResp.data.stages : [];
         setAllSp500Summaries(stageList);
       }
 
@@ -186,10 +188,11 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
       let spyRef: CandleData[] = [];
       if (missingSpot.length > 0) {
         try {
-          const spyRes = await fetch('/api/candles?symbol=SPY&timeframe=1wk&range=2y');
-          if (spyRes.ok) {
-            const spyJson = await spyRes.json();
-            spyRef = toWeeklyCandleData(spyJson.candles || []);
+          const spyResp = await fetchJsonSafe<{ candles?: any[] }>(
+            '/api/candles?symbol=SPY&timeframe=1wk&range=2y'
+          );
+          if (spyResp.ok && spyResp.data) {
+            spyRef = toWeeklyCandleData(spyResp.data.candles || []);
           }
         } catch {
           // Optional benchmark
@@ -199,10 +202,11 @@ export const TrendSpiderSuite: React.FC<TrendSpiderSuiteProps> = ({
       const fetchedMissing = await Promise.all(
         missingSpot.map(async (meta) => {
           try {
-            const res = await fetch(`/api/candles?symbol=${encodeURIComponent(meta.symbol)}&timeframe=1wk&range=2y`);
-            if (!res.ok) return null;
-            const json = await res.json();
-            return computeStageSummaryFromCandles(meta.symbol, toWeeklyCandleData(json.candles || []), spyRef);
+            const resp = await fetchJsonSafe<{ candles?: any[] }>(
+              `/api/candles?symbol=${encodeURIComponent(meta.symbol)}&timeframe=1wk&range=2y`
+            );
+            if (!resp.ok || !resp.data) return null;
+            return computeStageSummaryFromCandles(meta.symbol, toWeeklyCandleData(resp.data.candles || []), spyRef);
           } catch {
             return null;
           }

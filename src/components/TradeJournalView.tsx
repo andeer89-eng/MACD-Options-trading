@@ -52,6 +52,13 @@ import {
 } from '../utils/tradeJournal';
 import { parseBrokerCsvToJournalEntries } from '../utils/csvJournalImport';
 import { syncAlpacaOverviewToLocalJournal } from '../hooks/useAlpacaPaper';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
+import {
+  loadAuditLedger,
+  verifyAuditChain,
+  exportAuditLedgerJSON,
+  AuditChainVerification,
+} from '../utils/auditLedger';
 import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
@@ -131,35 +138,73 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [closeExitScreenshot, setCloseExitScreenshot] = useState<string>('');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [isSyncingAlpaca, setIsSyncingAlpaca] = useState<boolean>(false);
+  const [alpacaSyncStatus, setAlpacaSyncStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [auditVerification, setAuditVerification] = useState<AuditChainVerification>(() =>
+    verifyAuditChain(loadAuditLedger())
+  );
+
+  useEffect(() => {
+    const refreshAudit = () => setAuditVerification(verifyAuditChain(loadAuditLedger()));
+    window.addEventListener('trullas-audit-ledger-updated', refreshAudit);
+    return () => window.removeEventListener('trullas-audit-ledger-updated', refreshAudit);
+  }, []);
+
+  const handleExportAuditChain = () => {
+    const chain = loadAuditLedger();
+    const json = exportAuditLedgerJSON(chain);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stageledger_audit_chain_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    const check = verifyAuditChain(chain);
+    setAuditVerification(check);
+    setExportToast(
+      `Exported ${chain.length} hash-chained audit events (Integrity: ${check.valid ? 'VERIFIED' : 'BROKEN'}).`
+    );
+    setTimeout(() => setExportToast(null), 5000);
+  };
 
   // 1-Click CSV Import Modal State
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvImportText, setCsvImportText] = useState('');
 
-  const handleSyncAlpacaPaper = async () => {
-    setIsSyncingAlpaca(true);
+  const handleSyncAlpacaPaper = async (silent: boolean = false) => {
+    if (!silent) setIsSyncingAlpaca(true);
     try {
-      const res = await fetch('/api/alpaca/overview');
-      const data = await res.json();
+      const resp = await fetchJsonSafe<any>('/api/alpaca/overview');
+      const data = resp.ok ? resp.data : null;
       if (!data?.configured || !data?.account) {
-        setExportToast(
-          data?.message ||
-            'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env.'
-        );
-        setTimeout(() => setExportToast(null), 5000);
+        setAlpacaSyncStatus('disconnected');
+        if (!silent) {
+          setExportToast(
+            data?.message ||
+              resp.error ||
+              'Alpaca Paper is not configured. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in server .env.'
+          );
+          setTimeout(() => setExportToast(null), 5000);
+        }
         return;
       }
+      setAlpacaSyncStatus('connected');
       const syncResult = syncAlpacaOverviewToLocalJournal(data);
       setEntries(syncResult.entries);
-      setExportToast(
-        `Synced Alpaca Paper history: ${syncResult.addedCount} added, ${syncResult.updatedCount} updated (${syncResult.totalAlpacaEntries} total Alpaca records).`
-      );
-      setTimeout(() => setExportToast(null), 5000);
+      if (!silent || syncResult.addedCount > 0 || syncResult.updatedCount > 0) {
+        setExportToast(
+          `Synced Alpaca Paper history: ${syncResult.addedCount} added, ${syncResult.updatedCount} updated (${syncResult.totalAlpacaEntries} total Alpaca records).`
+        );
+        setTimeout(() => setExportToast(null), 5000);
+      }
     } catch {
-      setExportToast('Unable to reach /api/alpaca/overview to sync Alpaca Paper trades.');
-      setTimeout(() => setExportToast(null), 4500);
+      setAlpacaSyncStatus('disconnected');
+      if (!silent) {
+        setExportToast('Unable to reach /api/alpaca/overview to sync Alpaca Paper trades.');
+        setTimeout(() => setExportToast(null), 4500);
+      }
     } finally {
-      setIsSyncingAlpaca(false);
+      if (!silent) setIsSyncingAlpaca(false);
     }
   };
 
@@ -298,8 +343,15 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     };
     window.addEventListener('trullas-journal-updated', handleJournalUpdated);
 
+    // Silent Alpaca Paper sync on mount & every 30s while viewing Local Trade Journal
+    handleSyncAlpacaPaper(true);
+    const pollId = setInterval(() => {
+      handleSyncAlpacaPaper(true);
+    }, 30000);
+
     return () => {
       active = false;
+      clearInterval(pollId);
       window.removeEventListener('trullas-journal-updated', handleJournalUpdated);
     };
   }, [user]);
@@ -547,7 +599,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
-                  onClick={handleSyncAlpacaPaper}
+                  onClick={() => handleSyncAlpacaPaper(false)}
                   disabled={isSyncingAlpaca}
                   data-testid="sync-alpaca-journal-btn"
                   className="flex items-center space-x-2 px-3.5 py-2.5 bg-indigo-600/90 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition whitespace-nowrap"
@@ -643,11 +695,44 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-3 text-[11px] text-zinc-400 font-mono">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400 font-mono">
             <span>as of {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>
+            <span
+              className={`px-2 py-0.5 rounded border font-bold ${
+                alpacaSyncStatus === 'connected'
+                  ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                  : alpacaSyncStatus === 'disconnected'
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+              }`}
+            >
+              {alpacaSyncStatus === 'connected'
+                ? 'ALPACA PAPER SYNCED'
+                : alpacaSyncStatus === 'disconnected'
+                ? 'ALPACA PAPER DISCONNECTED'
+                : 'ALPACA CHECKING...'}
+            </span>
             <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
               {user ? 'CLOUD SYNC: FIRESTORE' : 'LOCAL LEDGER'}
             </span>
+            <button
+              type="button"
+              onClick={handleExportAuditChain}
+              data-testid="audit-chain-badge"
+              title={`Tamper-evident hash chain (${auditVerification.length} events, head ${auditVerification.headHash.slice(0, 8)}). Click to verify & export JSON.`}
+              className={`px-2 py-0.5 rounded border font-bold inline-flex items-center gap-1 transition cursor-pointer ${
+                auditVerification.valid
+                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                  : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+              }`}
+            >
+              <ShieldCheck className="w-3 h-3" />
+              <span>
+                {auditVerification.valid
+                  ? `AUDIT CHAIN (${auditVerification.length})`
+                  : `CHAIN ALERT #${auditVerification.brokenAtSequence ?? '?'}`}
+              </span>
+            </button>
           </div>
         </div>
 

@@ -30,6 +30,7 @@ import {
   executePineScriptIndicator,
 } from '../utils/pineScriptExecutor';
 import type { Candle } from '../utils/trullasStrategy';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface IndicatorLibraryViewProps {
   onSelectIndicatorForChart?: (indicator: CustomPineIndicator) => void;
@@ -109,13 +110,12 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
     try {
       let liveBars = validationCandlesRef.current;
       if (!liveBars || liveBars.length < 25) {
-        const candleRes = await fetch('/api/candles?symbol=AAPL&timeframe=1d&range=6mo');
-        if (candleRes.ok) {
-          const candleJson = await candleRes.json();
-          if (Array.isArray(candleJson?.candles) && candleJson.candles.length >= 25) {
-            liveBars = candleJson.candles;
-            validationCandlesRef.current = liveBars;
-          }
+        const candleResp = await fetchJsonSafe<{ candles?: Candle[] }>(
+          '/api/candles?symbol=AAPL&timeframe=1d&range=6mo'
+        );
+        if (candleResp.ok && Array.isArray(candleResp.data?.candles) && candleResp.data.candles.length >= 25) {
+          liveBars = candleResp.data.candles;
+          validationCandlesRef.current = liveBars;
         }
       }
 
@@ -127,7 +127,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
         return;
       }
 
-      const [execRes, apiRes] = await Promise.all([
+      const [execRes, apiResp] = await Promise.all([
         executePineScriptIndicator(
           {
             id: 'dry-run-validation',
@@ -137,7 +137,7 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
           liveBars,
           { symbol: 'AAPL', timeframe: '1d' }
         ),
-        fetch('/api/luxalgo/pinets-run', {
+        fetchJsonSafe<{ transpiledPreview?: string; error?: string }>('/api/luxalgo/pinets-run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -145,10 +145,9 @@ export const IndicatorLibraryView: React.FC<IndicatorLibraryViewProps> = ({
             candles: liveBars,
             pineCode: pasteCode,
           }),
-        })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null),
+        }).catch(() => null),
       ]);
+      const apiRes = apiResp?.ok ? apiResp.data : null;
 
       if (execRes.ok) {
         const parts = [

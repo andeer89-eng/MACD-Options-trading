@@ -46,6 +46,7 @@ interface QuantumMarketXrayOverlayProps {
   report: QmxReport | null;
   toggles?: QmxVisualToggles;
   onToggleLayer?: (key: keyof QmxVisualToggles) => void;
+  onHideOverlay?: () => void;
   toolbarTopClass?: string;
 }
 
@@ -69,6 +70,7 @@ export const QuantumMarketXrayOverlay: React.FC<QuantumMarketXrayOverlayProps> =
   report,
   toggles: controlledToggles,
   onToggleLayer,
+  onHideOverlay,
   toolbarTopClass = 'top-2',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -469,6 +471,18 @@ export const QuantumMarketXrayOverlay: React.FC<QuantumMarketXrayOverlayProps> =
         <span className="text-[#00FFA3] font-bold flex items-center gap-1 pr-1.5 border-r border-zinc-700/80 shrink-0">
           <Layers className="w-3 h-3" />
           <span>QMX</span>
+          {onHideOverlay && (
+            <button
+              type="button"
+              onClick={onHideOverlay}
+              data-testid="hide-qmx-eye-btn"
+              className="ml-0.5 p-0.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-amber-300 transition"
+              title="Hide Quantum QMX from chart without removing"
+              aria-label="Hide Quantum QMX from chart"
+            >
+              <Eye className="w-2.5 h-2.5" />
+            </button>
+          )}
         </span>
         {(
           [

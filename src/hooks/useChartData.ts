@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Candle, IndicatorPoint, DivergenceSetup } from '../utils/trullasStrategy';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 export interface FeedMetadata {
   isLiveFeed: boolean;
@@ -39,6 +40,30 @@ export function useChartData({
 
   const chartReqIdRef = useRef<number>(0);
   const chartAbortRef = useRef<AbortController | null>(null);
+  const ltfAbortRef = useRef<AbortController | null>(null);
+
+  const fetchLtfData = useCallback(async () => {
+    ltfAbortRef.current?.abort();
+    if (!isOfsActive || !(timeframe === '5m' || timeframe === '15m' || timeframe === '1h')) {
+      setLtfCandles([]);
+      return;
+    }
+    const controller = new AbortController();
+    ltfAbortRef.current = controller;
+    const ltfTf = timeframe === '1h' ? '5m' : '1m';
+    const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
+    try {
+      const ltfResp = await fetchJsonSafe<{ candles?: Candle[] }>(
+        `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`,
+        { signal: controller.signal }
+      );
+      if (controller.signal.aborted) return;
+      setLtfCandles(ltfResp.ok && Array.isArray(ltfResp.data?.candles) ? ltfResp.data.candles : []);
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return;
+      if (!controller.signal.aborted) setLtfCandles([]);
+    }
+  }, [isOfsActive, symbol, timeframe]);
 
   const loadChartData = useCallback(
     async (isBackground = false) => {
@@ -58,14 +83,19 @@ export function useChartData({
         };
         const reqRange = chartRange || rangeByTimeframe[timeframe] || '1y';
 
-        const res = await fetch(
+        const resp = await fetchJsonSafe<{
+          candles?: Candle[];
+          indicatorPoints?: IndicatorPoint[];
+          divergences?: DivergenceSetup[];
+          sec?: any;
+          feedMeta?: FeedMetadata;
+        }>(
           `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&range=${reqRange}`,
           { signal: controller.signal }
         );
         if (reqId !== chartReqIdRef.current) return;
-        if (res.ok) {
-          const data = await res.json();
-          if (reqId !== chartReqIdRef.current) return;
+        if (resp.ok && resp.data) {
+          const data = resp.data;
           setCandles(data.candles || []);
           setIndicatorPoints(data.indicatorPoints || []);
           setDivergences(data.divergences || []);
@@ -77,29 +107,8 @@ export function useChartData({
             setActiveSetup(null);
           }
         }
-
-        if (isOfsActive && (timeframe === '5m' || timeframe === '15m' || timeframe === '1h')) {
-          const ltfTf = timeframe === '1h' ? '5m' : '1m';
-          const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
-          try {
-            const ltfRes = await fetch(
-              `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`,
-              { signal: controller.signal }
-            );
-            if (reqId !== chartReqIdRef.current) return;
-            if (ltfRes.ok) {
-              const ltfJson = await ltfRes.json();
-              if (reqId !== chartReqIdRef.current) return;
-              setLtfCandles(Array.isArray(ltfJson.candles) ? ltfJson.candles : []);
-            } else {
-              setLtfCandles([]);
-            }
-          } catch (err) {
-            if ((err as Error)?.name === 'AbortError') return;
-            if (reqId === chartReqIdRef.current) setLtfCandles([]);
-          }
-        } else {
-          setLtfCandles([]);
+        if (isBackground) {
+          void fetchLtfData();
         }
       } catch (e) {
         if ((e as Error)?.name === 'AbortError') return;
@@ -108,7 +117,7 @@ export function useChartData({
         if (!isBackground && reqId === chartReqIdRef.current) setLoading(false);
       }
     },
-    [symbol, timeframe, chartRange, isOfsActive]
+    [symbol, timeframe, chartRange, fetchLtfData]
   );
 
   // Auto-refresh countdown timer (every 15s)
@@ -135,37 +144,17 @@ export function useChartData({
   useEffect(() => {
     return () => {
       chartAbortRef.current?.abort();
+      ltfAbortRef.current?.abort();
     };
   }, []);
 
-  // Load LTF bars immediately when OFS toggles ON on intraday timeframes
+  // Load LTF bars cleanly whenever OFS status, symbol, or timeframe changes
   useEffect(() => {
-    if (!isOfsActive || !(timeframe === '5m' || timeframe === '15m' || timeframe === '1h')) {
-      setLtfCandles([]);
-      return;
-    }
-    const controller = new AbortController();
-    let cancelled = false;
-    const ltfTf = timeframe === '1h' ? '5m' : '1m';
-    const ltfRange = ltfTf === '1m' ? '5d' : '1mo';
-    fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${ltfTf}&range=${ltfRange}`, {
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (!cancelled) {
-          setLtfCandles(Array.isArray(json?.candles) ? json.candles : []);
-        }
-      })
-      .catch((err) => {
-        if ((err as Error)?.name === 'AbortError') return;
-        if (!cancelled) setLtfCandles([]);
-      });
+    void fetchLtfData();
     return () => {
-      cancelled = true;
-      controller.abort();
+      ltfAbortRef.current?.abort();
     };
-  }, [isOfsActive, symbol, timeframe]);
+  }, [fetchLtfData]);
 
   return {
     loading,

@@ -16,6 +16,7 @@ import {
   createUnavailableCboeOverview,
 } from '../utils/cboeOptionsEngine';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface CboeOptionsAnalyticsProps {
   initialSymbol?: string;
@@ -81,14 +82,18 @@ export const CboeOptionsAnalytics: React.FC<CboeOptionsAnalyticsProps> = ({
       if (isManualRefresh) params.set('refresh', 'true');
       if (expirationOverride) params.set('expiration', expirationOverride);
 
-      const res = await fetch(`/api/cboe-options?${params.toString()}`, {
+      const resp = await fetchJsonSafe<{
+        marketOverview?: CboeMarketOverview;
+        optionsSummary?: TickerOptionsSummary;
+        error?: string;
+      }>(`/api/cboe-options?${params.toString()}`, {
         signal: controller.signal,
       });
-      const data = await res.json();
       if (reqId !== reqIdRef.current) return;
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status} fetching CBOE options`);
+      if (!resp.ok || !resp.data) {
+        throw new Error(resp.error || `HTTP ${resp.status} fetching CBOE options`);
       }
+      const data = resp.data;
 
       if (data.marketOverview) {
         setMarketOverview(data.marketOverview);

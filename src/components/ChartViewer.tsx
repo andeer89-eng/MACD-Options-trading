@@ -29,6 +29,7 @@ import {
   Calculator,
   Sliders,
   Eye,
+  EyeOff,
   Info,
   Sparkles,
   RotateCcw,
@@ -46,11 +47,12 @@ import {
   Columns,
   Square,
   BarChart2,
+  BarChart3,
   LineChart,
   CheckSquare,
 } from 'lucide-react';
 import { Candle, IndicatorPoint, DivergenceSetup } from '../utils/trullasStrategy';
-import { calculateNadarayaWatsonEnvelope } from '../utils/luxalgoIndicators';
+import { calculateNadarayaWatsonEnvelope, calculateSmartMoneyConcepts } from '../utils/luxalgoIndicators';
 import { getCompanyName } from '../data/sp500Universe';
 import {
   loadAllIndicators,
@@ -89,6 +91,10 @@ import {
   resolveFibPriceLineLabel,
   resolveSetupPriceLineLabels,
   resolveVisibleHudDock,
+  getVisibleIndicatorIds,
+  toggleHiddenIndicator,
+  areAllIndicatorsHidden,
+  toggleAllIndicatorsVisibility,
 } from '../utils/chartOverlayPrimitives';
 import { calculateSuperTrendPro, SuperTrendProReport } from '../utils/superTrendPro';
 import {
@@ -96,6 +102,14 @@ import {
   SuperTrendVisualToggles,
   DEFAULT_SUPERTREND_TOGGLES,
 } from './SuperTrendProOverlay';
+import {
+  computeVolumeProfile,
+  analyzeChartWithPoc,
+  VolumeProfileResult,
+} from '../utils/volumeProfileEngine';
+import { VolumeProfileOverlay } from './VolumeProfileOverlay';
+import { ChartPocReaderPanel } from './chart/ChartPocReaderPanel';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 import { useChartData } from '../hooks/useChartData';
 import { useChartShortcuts } from '../hooks/useChartShortcuts';
 import { IndicatorsPickerModal, DataAuthenticityModal } from './chart/ChartModals';
@@ -132,6 +146,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
   // Indicator Modal & Active Indicators State
   const ACTIVE_INDICATORS_STORAGE_KEY = 'stageledger_active_chart_indicators';
+  const HIDDEN_INDICATORS_STORAGE_KEY = 'stageledger_hidden_chart_indicators';
   const [showIndicatorModal, setShowIndicatorModal] = useState(false);
   const [indicatorSearch, setIndicatorSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -148,6 +163,19 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       // ignore storage errors
     }
     return ['supertrend-v9-pro', 'matrix-ai-pro'];
+  });
+  const [hiddenIndicatorIds, setHiddenIndicatorIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(HIDDEN_INDICATORS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return [];
   });
 
   // Live Bucharest & ET Clocks
@@ -183,6 +211,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const [qmxToggles, setQmxToggles] = useState<QmxVisualToggles>(DEFAULT_QMX_TOGGLES);
   const [superTrendToggles, setSuperTrendToggles] = useState<SuperTrendVisualToggles>(DEFAULT_SUPERTREND_TOGGLES);
   const [preferredHud, setPreferredHud] = useState<OverlayHudKind>('ofs');
+  const [showVolumeProfile, setShowVolumeProfile] = useState<boolean>(true);
+  const [visibleVolumeProfile, setVisibleVolumeProfile] = useState<VolumeProfileResult | null>(null);
 
   // Universal Pine Script runtime results keyed by indicator ID
   const [pineResultsMap, setPineResultsMap] = useState<Record<string, PineExecutionResult>>({});
@@ -217,7 +247,21 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     rsi?: number;
   } | null>(null);
 
-  const isOfsActive = activeCustomIndicatorIds.some(
+  const visibleCustomIndicatorIds = useMemo(
+    () => getVisibleIndicatorIds(activeCustomIndicatorIds, hiddenIndicatorIds),
+    [activeCustomIndicatorIds, hiddenIndicatorIds]
+  );
+
+  const allIndicatorsHidden = useMemo(
+    () => areAllIndicatorsHidden(activeCustomIndicatorIds, hiddenIndicatorIds),
+    [activeCustomIndicatorIds, hiddenIndicatorIds]
+  );
+
+  const isOfsDataNeeded = activeCustomIndicatorIds.some(
+    (id) => id.toLowerCase().includes('ofs') || id.toLowerCase().includes('order-flow-strategy')
+  );
+
+  const isOfsActive = visibleCustomIndicatorIds.some(
     (id) => id.toLowerCase().includes('ofs') || id.toLowerCase().includes('order-flow-strategy')
   );
 
@@ -234,9 +278,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     setAutoRefresh,
     countdown,
     loadChartData,
-  } = useChartData({ symbol, timeframe, chartRange, isOfsActive });
+  } = useChartData({ symbol, timeframe, chartRange, isOfsActive: isOfsDataNeeded });
 
-  const isQmxActive = activeCustomIndicatorIds.some((id) => {
+  const isQmxActive = visibleCustomIndicatorIds.some((id) => {
     const norm = id.toLowerCase();
     if (norm.includes('qmx') || norm.includes('quantum')) return true;
     const matchInd = libraryIndicators.find((l) => l.id === id);
@@ -246,7 +290,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     return false;
   });
 
-  const isSuperTrendActive = activeCustomIndicatorIds.some((id) =>
+  const isSuperTrendActive = visibleCustomIndicatorIds.some((id) =>
     id.toLowerCase().includes('supertrend')
   );
   const hasSuperTrendRightHud =
@@ -402,7 +446,28 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     setAutoScale,
   });
 
-  // Toggle Custom Indicator
+  // Persist hidden indicators cleanly
+  const updateHiddenIndicators = (updater: (prev: string[]) => string[]) => {
+    setHiddenIndicatorIds((prev) => {
+      const next = updater(prev);
+      try {
+        localStorage.setItem(HIDDEN_INDICATORS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  const toggleIndicatorVisibility = (id: string) => {
+    updateHiddenIndicators((prev) => toggleHiddenIndicator(prev, id));
+  };
+
+  const toggleAllIndicatorsEye = () => {
+    updateHiddenIndicators((prev) => toggleAllIndicatorsVisibility(activeCustomIndicatorIds, prev));
+  };
+
+  // Toggle Custom Indicator (Add / Full Remove)
   const toggleIndicator = (id: string) => {
     const norm = id.toLowerCase();
     const wasActive = activeCustomIndicatorIds.includes(id);
@@ -413,6 +478,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         setPreferredHud('qmx');
       }
     }
+    updateHiddenIndicators((prev) => prev.filter((item) => item !== id));
     setActiveCustomIndicatorIds((prev) => {
       const next = prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id];
       try {
@@ -970,8 +1036,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       }
     }
 
-    // 8. Render Active Custom Indicators from Library (Universal PineTS + Flagship Fallbacks)
-    for (const customId of activeCustomIndicatorIds) {
+    // 8. Render Visible Custom Indicators from Library (Universal PineTS + Flagship Fallbacks)
+    for (const customId of visibleCustomIndicatorIds) {
       if (isFlagshipCustomId(customId)) {
         // Flagship overlays (SuperTrendProOverlay, OrderFlowOverlay, QuantumMarketXrayOverlay) render their own full suites
         continue;
@@ -1305,6 +1371,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     activeSetup,
     showLuxAlgoNWE,
     activeCustomIndicatorIds,
+    visibleCustomIndicatorIds,
     pineResultsMap,
     customPriceLines,
     candleStyle,
@@ -1415,15 +1482,11 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                 return;
               }
               try {
-                const res = await fetch(
+                const resp = await fetchJsonSafe<{ candles?: any[] }>(
                   `/api/candles?symbol=${encodeURIComponent(cellSym)}&timeframe=${encodeURIComponent(timeframe)}`
                 );
-                if (!res.ok) {
-                  extraBarsMap[cellSym] = [];
-                  return;
-                }
-                const payload = await res.json();
-                extraBarsMap[cellSym] = Array.isArray(payload?.candles) ? toVelaBars(payload.candles) : [];
+                extraBarsMap[cellSym] =
+                  resp.ok && Array.isArray(resp.data?.candles) ? toVelaBars(resp.data.candles) : [];
               } catch {
                 extraBarsMap[cellSym] = [];
               }
@@ -1480,14 +1543,14 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     return matchesSearch && matchesCategory;
   });
 
-  // Active Pine Script overlay results routed to universal canvas/table renderer
+  // Visible Pine Script overlay results routed to universal canvas/table renderer
   const activePineOverlayResults = useMemo(
     () =>
-      activeCustomIndicatorIds
+      visibleCustomIndicatorIds
         .filter((id) => !isFlagshipCustomId(id))
         .map((id) => pineResultsMap[id])
         .filter((r): r is PineExecutionResult => Boolean(r && r.ok && r.overlay)),
-    [activeCustomIndicatorIds, pineResultsMap, libraryIndicators]
+    [visibleCustomIndicatorIds, pineResultsMap, libraryIndicators]
   );
 
   // Order Flow Strategy Report (full Auction + LTF + Footprint + Liquidity + Trade Engine)
@@ -1508,6 +1571,47 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     return calculateSuperTrendPro(uniqueChartCandles, { symbol, timeframe });
   }, [isSuperTrendActive, uniqueChartCandles, symbol, timeframe]);
 
+  // NWE & SMC Context + Automated Chart & POC Structural Reading
+  const nweResult = useMemo(() => {
+    if (uniqueChartCandles.length < 5) return null;
+    return calculateNadarayaWatsonEnvelope(uniqueChartCandles, 8.0, 2.5);
+  }, [uniqueChartCandles]);
+
+  const smcResult = useMemo(() => {
+    if (uniqueChartCandles.length < 20) return null;
+    return calculateSmartMoneyConcepts(uniqueChartCandles);
+  }, [uniqueChartCandles]);
+
+  const effectiveVolumeProfile = useMemo(() => {
+    if (uniqueChartCandles.length === 0) return null;
+    return (
+      visibleVolumeProfile ||
+      computeVolumeProfile(uniqueChartCandles, { rows: 48, valueAreaPct: 0.7 })
+    );
+  }, [visibleVolumeProfile, uniqueChartCandles]);
+
+  const chartPocReading = useMemo(() => {
+    return analyzeChartWithPoc({
+      symbol,
+      timeframe,
+      candles: uniqueChartCandles,
+      profile: effectiveVolumeProfile,
+      indicatorPoints,
+      activeSetup,
+      nwe: nweResult,
+      smc: smcResult,
+    });
+  }, [
+    symbol,
+    timeframe,
+    uniqueChartCandles,
+    effectiveVolumeProfile,
+    indicatorPoints,
+    activeSetup,
+    nweResult,
+    smcResult,
+  ]);
+
   type ActiveIndicatorSummaryPill = {
     id: string;
     name: string;
@@ -1515,21 +1619,27 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     summaryValue?: string;
     summaryStatus: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     isError?: boolean;
+    isHidden: boolean;
   };
 
   // Calculate summary values for active indicators (Flagship + Any Imported Pine Script)
   const activeCustomSummaries: ActiveIndicatorSummaryPill[] = activeCustomIndicatorIds
     .map((id): ActiveIndicatorSummaryPill | null => {
+      const isHidden = hiddenIndicatorIds.includes(id);
       const norm = id.toLowerCase();
-      if (norm.includes('supertrend') && superTrendReport) {
-        const d = superTrendReport.dashboard;
-        return {
-          id,
-          name: 'SuperTrend v9 PRO',
-          color: d.isBull ? '#10b981' : '#ef4444',
-          summaryValue: `${d.trendLabel} · RSI ${d.rsi.toFixed(1)} · ${d.emaOrderText}`,
-          summaryStatus: d.isBull ? 'BULLISH' : 'BEARISH',
-        };
+      if (norm.includes('supertrend')) {
+        const stRep = superTrendReport ?? calculateSuperTrendPro(uniqueChartCandles, { symbol, timeframe });
+        const d = stRep?.dashboard;
+        if (d) {
+          return {
+            id,
+            name: 'SuperTrend v9 PRO',
+            color: d.isBull ? '#10b981' : '#ef4444',
+            summaryValue: `${d.trendLabel} · RSI ${d.rsi.toFixed(1)} · ${d.emaOrderText}`,
+            summaryStatus: d.isBull ? 'BULLISH' : 'BEARISH',
+            isHidden,
+          };
+        }
       }
       if (norm.includes('ofs') || norm.includes('order-flow-strategy')) {
         const ofsSummary = calculateOrderFlowCustomIndicator(uniqueChartCandles, ltfCandles, symbol, timeframe);
@@ -1539,6 +1649,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           color: ofsSummary.color,
           summaryValue: ofsSummary.summaryValue,
           summaryStatus: ofsSummary.summaryStatus ?? 'NEUTRAL',
+          isHidden,
         };
       }
       if (norm.includes('qmx') || norm.includes('quantum')) {
@@ -1552,6 +1663,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           summaryValue: `${d.phase} · Bull ${d.scores.bullishEvidencePct}% / Bear ${d.scores.bearishEvidencePct}%`,
           summaryStatus:
             d.marketBias === 'Bullish' ? 'BULLISH' : d.marketBias === 'Bearish' ? 'BEARISH' : 'NEUTRAL',
+          isHidden,
         };
       }
       const matchInd = libraryIndicators.find((l) => l.id === id);
@@ -1565,6 +1677,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           summaryValue: `${d.phase} · Bull ${d.scores.bullishEvidencePct}% / Bear ${d.scores.bearishEvidencePct}%`,
           summaryStatus:
             d.marketBias === 'Bullish' ? 'BULLISH' : d.marketBias === 'Bearish' ? 'BEARISH' : 'NEUTRAL',
+          isHidden,
         };
       }
 
@@ -1578,6 +1691,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             summaryValue: `Error: ${(pineRes.error || 'Compilation failed').slice(0, 56)}`,
             summaryStatus: 'NEUTRAL',
             isError: true,
+            isHidden,
           };
         }
         return {
@@ -1586,6 +1700,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           color: pineRes.plots[0]?.color || '#38bdf8',
           summaryValue: pineRes.summaryValue,
           summaryStatus: pineRes.summaryStatus,
+          isHidden,
         };
       }
 
@@ -1597,6 +1712,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           color: fallback.color,
           summaryValue: fallback.summaryValue,
           summaryStatus: fallback.summaryStatus ?? 'NEUTRAL',
+          isHidden,
         };
       }
       if (matchInd) {
@@ -1606,6 +1722,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           color: '#38bdf8',
           summaryValue: 'Compiling Pine Script...',
           summaryStatus: 'NEUTRAL',
+          isHidden,
         };
       }
       return null;
@@ -1624,14 +1741,11 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     try {
       let testCandles = uniqueChartCandles;
       if (testCandles.length < 25) {
-        const resCandles = await fetch(
+        const resCandles = await fetchJsonSafe<{ candles?: Candle[] }>(
           `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&range=6mo`
         );
-        if (resCandles.ok) {
-          const payload = await resCandles.json();
-          if (Array.isArray(payload?.candles)) {
-            testCandles = payload.candles;
-          }
+        if (resCandles.ok && Array.isArray(resCandles.data?.candles)) {
+          testCandles = resCandles.data.candles;
         }
       }
       if (testCandles.length < 25) {
@@ -2042,6 +2156,20 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
               <Activity className="w-3 h-3 text-emerald-400" />
               <span>Quantum QMX {isQmxActive ? 'ON' : 'OFF'}</span>
             </button>
+            <button
+              data-testid="toggle-vp-btn"
+              type="button"
+              onClick={() => setShowVolumeProfile((prev) => !prev)}
+              className={`px-2.5 py-1 rounded font-medium transition flex items-center space-x-1 ${
+                showVolumeProfile
+                  ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 shadow-md shadow-amber-500/10'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Toggle Visible-Range Volume Profile (POC / VAH / VAL / HVN / LVN)"
+            >
+              <BarChart3 className="w-3 h-3 text-amber-400" />
+              <span>Vol Profile {showVolumeProfile ? 'ON' : 'OFF'}</span>
+            </button>
           </div>
 
           {/* Vela Workspace Layout Selector (visible when workspace active) */}
@@ -2147,36 +2275,80 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             <div
               key={ind.id}
               data-testid={`active-indicator-pill-${ind.id}`}
-              className={`flex items-center space-x-1.5 px-2 py-0.5 bg-zinc-900 rounded-md text-[11px] border ${
-                ind.isError ? 'border-rose-500/60 bg-rose-950/30' : 'border-zinc-700/80'
+              className={`flex items-center space-x-1.5 px-2 py-0.5 bg-zinc-900 rounded-md text-[11px] border transition ${
+                ind.isHidden
+                  ? 'opacity-60 border-zinc-800 text-zinc-500'
+                  : ind.isError
+                    ? 'border-rose-500/60 bg-rose-950/30'
+                    : 'border-zinc-700/80'
               }`}
             >
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: ind.color }}></span>
-              <span className="text-white font-semibold">{ind.name}</span>
+              <span
+                className="w-2 h-2 rounded-full transition"
+                style={{ backgroundColor: ind.isHidden ? '#52525b' : ind.color }}
+              ></span>
+              <span className={`font-semibold ${ind.isHidden ? 'text-zinc-400 line-through' : 'text-white'}`}>
+                {ind.name}
+              </span>
               <span
                 className={`px-1 text-[9px] rounded font-bold ${
-                  ind.isError
-                    ? 'bg-rose-500/20 text-rose-300'
-                    : 'bg-emerald-500/20 text-emerald-300'
+                  ind.isHidden
+                    ? 'bg-zinc-800 text-zinc-400'
+                    : ind.isError
+                      ? 'bg-rose-500/20 text-rose-300'
+                      : 'bg-emerald-500/20 text-emerald-300'
                 }`}
               >
-                {ind.isError ? '[Pine Error]' : '[Custom]'}
+                {ind.isHidden ? '[Hidden]' : ind.isError ? '[Pine Error]' : '[Custom]'}
               </span>
-              {ind.summaryValue && (
+              {ind.summaryValue && !ind.isHidden && (
                 <span className={`font-bold ${ind.isError ? 'text-rose-300' : 'text-zinc-400'}`}>
                   {ind.summaryValue}
                 </span>
               )}
               <button
+                type="button"
+                data-testid={`toggle-visibility-indicator-${ind.id}`}
+                onClick={() => toggleIndicatorVisibility(ind.id)}
+                className={`p-0.5 rounded ml-1 transition ${
+                  ind.isHidden
+                    ? 'text-amber-400 hover:text-emerald-300 hover:bg-zinc-800'
+                    : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800'
+                }`}
+                aria-label={`${ind.isHidden ? 'Show' : 'Hide'} ${ind.name}`}
+                title={`${ind.isHidden ? 'Show' : 'Hide'} ${ind.name} on chart (without removing)`}
+              >
+                {ind.isHidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
                 onClick={() => toggleIndicator(ind.id)}
-                className="text-zinc-500 hover:text-rose-400 ml-1 transition"
+                className="text-zinc-500 hover:text-rose-400 p-0.5 rounded hover:bg-zinc-800 transition"
                 aria-label={`Remove ${ind.name}`}
-                title={`Remove ${ind.name}`}
+                title={`Remove ${ind.name} completely`}
               >
                 <X className="w-3 h-3" />
               </button>
             </div>
           ))}
+          <button
+            type="button"
+            data-testid="toggle-all-indicators-bar-btn"
+            onClick={toggleAllIndicatorsEye}
+            className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-sans font-bold border transition ${
+              allIndicatorsHidden
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-emerald-500/15 hover:text-emerald-300 hover:border-emerald-500/40'
+                : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
+            }`}
+            title={
+              allIndicatorsHidden
+                ? 'Restore all hidden indicators onto the chart'
+                : 'Hide all indicators temporarily for a clean chart view'
+            }
+          >
+            {allIndicatorsHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            <span>{allIndicatorsHidden ? 'Show All' : 'Clean Chart'}</span>
+          </button>
         </div>
       )}
 
@@ -2317,8 +2489,35 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                   )}
                 </div>
 
-                {/* Zoom & Fit Action Buttons */}
+                {/* Zoom, Indicator Visibility Eye & Fit Action Buttons */}
                 <div className="flex items-center space-x-1">
+                  {activeCustomIndicatorIds.length > 0 && (
+                    <button
+                      type="button"
+                      data-testid="chart-clean-eye-btn"
+                      onClick={toggleAllIndicatorsEye}
+                      className={`px-1.5 py-1 rounded transition flex items-center gap-1 text-[10px] font-sans font-bold border ${
+                        allIndicatorsHidden
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-emerald-500/20 hover:text-emerald-300 hover:border-emerald-500/40'
+                          : 'text-zinc-300 border-transparent hover:bg-zinc-800 hover:text-white'
+                      }`}
+                      title={
+                        allIndicatorsHidden
+                          ? 'Show hidden indicators on chart'
+                          : 'Hide all indicators temporarily for a clean chart'
+                      }
+                      aria-label={allIndicatorsHidden ? 'Show chart indicators' : 'Hide chart indicators'}
+                    >
+                      {allIndicatorsHidden ? (
+                        <EyeOff className="w-3.5 h-3.5 text-amber-300" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                      <span className="hidden md:inline">
+                        {allIndicatorsHidden ? 'Indicators Off' : 'Indicators'}
+                      </span>
+                    </button>
+                  )}
                   <button
                     onClick={handleZoomIn}
                     className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded transition"
@@ -2354,77 +2553,79 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
           {/* Chart Display Canvas with Left Drawing Toolbar (flex-1 min-h-0 in fullscreen prevents bottom RSI clipping!) */}
           <div className={`relative ${isExpanded ? 'flex-1 min-h-0' : 'h-[calc(100vh-200px)] min-h-[600px]'} w-full rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800/80 flex`}>
-            {/* TRADINGVIEW-STYLE LEFT DRAWING TOOLBAR */}
-            <div className="w-10 bg-zinc-900/90 border-r border-zinc-800 flex flex-col items-center py-2 space-y-2 z-10 select-none">
-              <button
-                onClick={() => setActiveDrawTool('crosshair')}
-                className={`p-2 rounded hover:bg-zinc-800 transition ${
-                  activeDrawTool === 'crosshair' ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400'
-                }`}
-                title="Crosshair Tool"
-              >
-                <Crosshair className="w-4 h-4" />
-              </button>
+            {/* TRADINGVIEW-STYLE LEFT DRAWING TOOLBAR (hidden in Multi-Chart Vela Workspace which renders its own) */}
+            {chartMode === 'vela-pro' && (
+              <div className="w-10 bg-zinc-900/90 border-r border-zinc-800 flex flex-col items-center py-2 space-y-2 z-10 select-none">
+                <button
+                  onClick={() => setActiveDrawTool('crosshair')}
+                  className={`p-2 rounded hover:bg-zinc-800 transition ${
+                    activeDrawTool === 'crosshair' ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400'
+                  }`}
+                  title="Crosshair Tool"
+                >
+                  <Crosshair className="w-4 h-4" />
+                </button>
 
-              <button
-                onClick={() => {
-                  if (activeDrawTool === 'hline') {
-                    handleAddPriceLine();
-                    setActiveDrawTool('crosshair');
-                  } else {
-                    setActiveDrawTool('hline');
-                  }
-                }}
-                className={`p-2 rounded hover:bg-zinc-800 transition ${
-                  activeDrawTool === 'hline' ? 'bg-sky-500/20 text-sky-400' : 'text-zinc-400 hover:text-sky-400'
-                }`}
-                title="Horizontal S/R Ray — Click chart to place at price level (or click icon twice for spot price)"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => {
+                    if (activeDrawTool === 'hline') {
+                      handleAddPriceLine();
+                      setActiveDrawTool('crosshair');
+                    } else {
+                      setActiveDrawTool('hline');
+                    }
+                  }}
+                  className={`p-2 rounded hover:bg-zinc-800 transition ${
+                    activeDrawTool === 'hline' ? 'bg-sky-500/20 text-sky-400' : 'text-zinc-400 hover:text-sky-400'
+                  }`}
+                  title="Horizontal S/R Ray — Click chart to place at price level (or click icon twice for spot price)"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
 
-              <button
-                onClick={() => setShowFibOverlay(!showFibOverlay)}
-                className={`p-2 rounded hover:bg-zinc-800 transition ${
-                  showFibOverlay ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-400'
-                }`}
-                title="Toggle Fibonacci Retracement Grid (0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%)"
-              >
-                <GitCommit className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => setShowFibOverlay(!showFibOverlay)}
+                  className={`p-2 rounded hover:bg-zinc-800 transition ${
+                    showFibOverlay ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-400'
+                  }`}
+                  title="Toggle Fibonacci Retracement Grid (0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%)"
+                >
+                  <GitCommit className="w-4 h-4" />
+                </button>
 
-              <button
-                onClick={() => setShowRulerHUD(!showRulerHUD)}
-                className={`p-2 rounded hover:bg-zinc-800 transition ${
-                  showRulerHUD ? 'bg-sky-500/20 text-sky-400' : 'text-zinc-400'
-                }`}
-                title="Toggle Range Measurement Ruler"
-              >
-                <Ruler className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => setShowRulerHUD(!showRulerHUD)}
+                  className={`p-2 rounded hover:bg-zinc-800 transition ${
+                    showRulerHUD ? 'bg-sky-500/20 text-sky-400' : 'text-zinc-400'
+                  }`}
+                  title="Toggle Range Measurement Ruler"
+                >
+                  <Ruler className="w-4 h-4" />
+                </button>
 
-              <button
-                onClick={() => {
-                  if (activeSetup && onOpenCalculator) {
-                    onOpenCalculator(activeSetup);
-                  }
-                }}
-                className="p-2 rounded hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 transition"
-                title="Long/Short Risk-Reward Calculator"
-              >
-                <Target className="w-4 h-4" />
-              </button>
+                <button
+                  onClick={() => {
+                    if (activeSetup && onOpenCalculator) {
+                      onOpenCalculator(activeSetup);
+                    }
+                  }}
+                  className="p-2 rounded hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 transition"
+                  title="Long/Short Risk-Reward Calculator"
+                >
+                  <Target className="w-4 h-4" />
+                </button>
 
-              <div className="w-6 border-b border-zinc-800 my-1"></div>
+                <div className="w-6 border-b border-zinc-800 my-1"></div>
 
-              <button
-                onClick={handleClearDrawings}
-                className="p-2 rounded hover:bg-rose-500/20 text-zinc-500 hover:text-rose-400 transition"
-                title="Clear All Custom S/R Lines & Drawings"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
+                <button
+                  onClick={handleClearDrawings}
+                  className="p-2 rounded hover:bg-rose-500/20 text-zinc-500 hover:text-rose-400 transition"
+                  title="Clear All Custom S/R Lines & Drawings"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {/* CANVAS CONTAINER + DOCKED ORDER FLOW / QMX HUD */}
             <div className="flex-1 relative h-full min-h-0 flex min-w-0 overflow-hidden">
@@ -2446,6 +2647,12 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                         onToggleLayer={(key) =>
                           setOfsToggles((prev) => ({ ...prev, [key]: !prev[key] }))
                         }
+                        onHideOverlay={() => {
+                          const ofsId = visibleCustomIndicatorIds.find(
+                            (id) => id.toLowerCase().includes('ofs') || id.toLowerCase().includes('order-flow-strategy')
+                          );
+                          if (ofsId) toggleIndicatorVisibility(ofsId);
+                        }}
                         toolbarTopClass="top-2"
                       />
                     )}
@@ -2459,6 +2666,15 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                         onToggleLayer={(key) =>
                           setQmxToggles((prev) => ({ ...prev, [key]: !prev[key] }))
                         }
+                        onHideOverlay={() => {
+                          const qmxId = visibleCustomIndicatorIds.find((id) => {
+                            const norm = id.toLowerCase();
+                            if (norm.includes('qmx') || norm.includes('quantum')) return true;
+                            const m = libraryIndicators.find((l) => l.id === id);
+                            return Boolean(m && (m.name.toLowerCase().includes('quantum') || m.name.toLowerCase().includes('qmx')));
+                          });
+                          if (qmxId) toggleIndicatorVisibility(qmxId);
+                        }}
                         toolbarTopClass={isOfsActive && ofsReport ? 'top-9' : 'top-2'}
                       />
                     )}
@@ -2472,6 +2688,12 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                         onToggleLayer={(key) =>
                           setSuperTrendToggles((prev) => ({ ...prev, [key]: !prev[key] }))
                         }
+                        onHideOverlay={() => {
+                          const stId = visibleCustomIndicatorIds.find((id) =>
+                            id.toLowerCase().includes('supertrend')
+                          );
+                          if (stId) toggleIndicatorVisibility(stId);
+                        }}
                         reservePriceLabelLane={hasRightEdgeSetupPriceLines}
                         toolbarTopClass={
                           isOfsActive && ofsReport && isQmxActive && qmxReport
@@ -2482,6 +2704,23 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                         }
                       />
                     )}
+                    <VolumeProfileOverlay
+                      chart={chartApi}
+                      mainSeries={mainSeriesApi}
+                      containerRef={chartContainerRef}
+                      candles={uniqueChartCandles}
+                      visible={showVolumeProfile}
+                      rightPaddingPx={
+                        isSuperTrendActive && superTrendToggles.table
+                          ? hasRightEdgeSetupPriceLines
+                            ? 294
+                            : 204
+                          : hasRightEdgeSetupPriceLines
+                            ? 104
+                            : 12
+                      }
+                      onProfileUpdate={setVisibleVolumeProfile}
+                    />
                     {activePineOverlayResults.length > 0 && (
                       <PineScriptOverlay
                         chart={chartApi}
@@ -2647,9 +2886,10 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           )}
         </div>
 
-        {/* Right col: Setup Blueprint & SEC Filing Insight (Hidden when in expanded fullscreen) */}
+        {/* Right col: Chart & POC Reader + Setup Blueprint + SEC Filing Insight (Hidden when in expanded fullscreen) */}
         {!isExpanded && (
           <div className="space-y-4">
+            <ChartPocReaderPanel reading={chartPocReading} />
             {activeSetup ? (
               <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-xl">
                 <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800">

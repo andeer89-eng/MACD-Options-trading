@@ -26,6 +26,7 @@ import {
   getSectorPresets,
 } from '../utils/sectorMetrics';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 interface SectorPerformanceViewProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -51,12 +52,13 @@ export const SectorPerformanceView: React.FC<SectorPerformanceViewProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(force ? '/api/sectors?refresh=true' : '/api/sectors');
-      const data = await res.json();
-      if (!res.ok || !Array.isArray(data.sectors) || data.sectors.length === 0) {
-        throw new Error(data.error || 'Live sector ETF feed unavailable.');
+      const resp = await fetchJsonSafe<{ sectors?: GicsSectorPerformance[]; error?: string }>(
+        force ? '/api/sectors?refresh=true' : '/api/sectors'
+      );
+      if (!resp.ok || !Array.isArray(resp.data?.sectors) || resp.data.sectors.length === 0) {
+        throw new Error(resp.error || 'Live sector ETF feed unavailable.');
       }
-      setSectors(data.sectors);
+      setSectors(resp.data.sectors);
     } catch (err: any) {
       setSectors([]);
       setErrorMsg(err?.message || 'Unable to load live SPDR sector ETF quotes.');

@@ -46,6 +46,7 @@ interface OrderFlowOverlayProps {
   report: OfsReport | null;
   toggles?: OfsVisualToggles;
   onToggleLayer?: (key: keyof OfsVisualToggles) => void;
+  onHideOverlay?: () => void;
   toolbarTopClass?: string;
 }
 
@@ -69,6 +70,7 @@ export const OrderFlowOverlay: React.FC<OrderFlowOverlayProps> = ({
   report,
   toggles: controlledToggles,
   onToggleLayer,
+  onHideOverlay,
   toolbarTopClass = 'top-2',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -776,6 +778,18 @@ export const OrderFlowOverlay: React.FC<OrderFlowOverlayProps> = ({
         <span className="text-[#00E5FF] font-bold flex items-center gap-1 pr-1.5 border-r border-zinc-700/80 shrink-0">
           <Layers className="w-3 h-3" />
           <span>OFS</span>
+          {onHideOverlay && (
+            <button
+              type="button"
+              onClick={onHideOverlay}
+              data-testid="hide-ofs-eye-btn"
+              className="ml-0.5 p-0.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-amber-300 transition"
+              title="Hide Order Flow from chart without removing"
+              aria-label="Hide Order Flow from chart"
+            >
+              <Eye className="w-2.5 h-2.5" />
+            </button>
+          )}
         </span>
         {(
           [

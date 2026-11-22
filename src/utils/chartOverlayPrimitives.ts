@@ -435,6 +435,44 @@ export function resolveSuperTrendHudLayout(params: {
     priceLabelLanePx,
     effectiveLabelWidth,
     hudWidthPx,
-    showLegendCard: showLegend && paneHeight >= 325,
+    showLegendCard: showLegend && paneHeight >= 470,
   };
+}
+
+export function getVisibleIndicatorIds(
+  activeIds: string[],
+  hiddenIds: string[]
+): string[] {
+  if (!hiddenIds || hiddenIds.length === 0) return activeIds;
+  const hiddenSet = new Set(hiddenIds);
+  return activeIds.filter((id) => !hiddenSet.has(id));
+}
+
+export function toggleHiddenIndicator(
+  hiddenIds: string[],
+  id: string
+): string[] {
+  if (hiddenIds.includes(id)) {
+    return hiddenIds.filter((item) => item !== id);
+  }
+  return [...hiddenIds, id];
+}
+
+export function areAllIndicatorsHidden(
+  activeIds: string[],
+  hiddenIds: string[]
+): boolean {
+  if (activeIds.length === 0) return false;
+  const hiddenSet = new Set(hiddenIds);
+  return activeIds.every((id) => hiddenSet.has(id));
+}
+
+export function toggleAllIndicatorsVisibility(
+  activeIds: string[],
+  hiddenIds: string[]
+): string[] {
+  if (activeIds.length === 0) return hiddenIds;
+  return areAllIndicatorsHidden(activeIds, hiddenIds)
+    ? hiddenIds.filter((id) => !activeIds.includes(id))
+    : Array.from(new Set([...hiddenIds, ...activeIds]));
 }

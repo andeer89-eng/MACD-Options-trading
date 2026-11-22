@@ -45,6 +45,22 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(createStreamRouter(marketData, { pulseIntervalMs: options.streamPulseIntervalMs }));
   app.use(createAlpacaRouter(alpaca));
 
+  // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API route not found' });
+  });
+  app.use(
+    '/api',
+    (
+      err: any,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction
+    ) => {
+      res.status(err?.status || 500).json({ error: err?.message || 'Internal API error' });
+    }
+  );
+
   if (options.attachFrontend) {
     if (!isProduction) {
       const vite = await createViteServer({
