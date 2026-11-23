@@ -14,6 +14,7 @@ import {
   toggleHiddenIndicator,
   areAllIndicatorsHidden,
   toggleAllIndicatorsVisibility,
+  resolveActiveIndicatorsVisibility,
 } from './chartOverlayPrimitives.ts';
 
 describe('chartOverlayPrimitives', () => {
@@ -275,5 +276,38 @@ describe('chartOverlayPrimitives', () => {
 
     // Un-hide single indicator
     assert.deepEqual(toggleHiddenIndicator(hiddenOne, 'supertrend-v9-pro'), []);
+  });
+
+  it('resolveActiveIndicatorsVisibility keeps Inst Buy Zone visible when custom indicators are individually hidden', () => {
+    // Only 1 custom indicator active + Inst Zones active; hiding the custom indicator must NOT hide Inst Zones
+    const res1 = resolveActiveIndicatorsVisibility({
+      activeCustomIds: ['supertrend-v9-pro'],
+      hiddenCustomIds: ['supertrend-v9-pro'],
+      showInstitutionalZones: true,
+      isInstZonesHidden: false,
+    });
+    assert.equal(res1.hasAnyLayer, true);
+    assert.equal(res1.instZonesVisible, true);
+    assert.equal(res1.allHidden, false);
+
+    // Hiding Inst Zones alone leaves allHidden false if SuperTrend is still visible
+    const res2 = resolveActiveIndicatorsVisibility({
+      activeCustomIds: ['supertrend-v9-pro'],
+      hiddenCustomIds: [],
+      showInstitutionalZones: true,
+      isInstZonesHidden: true,
+    });
+    assert.equal(res2.instZonesVisible, false);
+    assert.equal(res2.allHidden, false);
+
+    // Hiding BOTH switches allHidden to true (Clean Chart -> Show All)
+    const res3 = resolveActiveIndicatorsVisibility({
+      activeCustomIds: ['supertrend-v9-pro'],
+      hiddenCustomIds: ['supertrend-v9-pro'],
+      showInstitutionalZones: true,
+      isInstZonesHidden: true,
+    });
+    assert.equal(res3.instZonesVisible, false);
+    assert.equal(res3.allHidden, true);
   });
 });

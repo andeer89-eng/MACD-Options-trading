@@ -366,6 +366,15 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(closeRes.status, 200);
       const closeBody = (await closeRes.json()) as any;
       assert.equal(closeBody.order.id, 'ord-close-77');
+
+      const fullCloseRes = await fetch(`${baseUrl}/api/alpaca/positions/NVDA`, {
+        method: 'DELETE',
+      });
+      assert.equal(fullCloseRes.status, 200);
+      const fullCloseCall = calls.find(
+        (c) => c.method === 'DELETE' && c.url.includes('/v2/positions/NVDA?cancel_orders=true')
+      );
+      assert.ok(fullCloseCall, 'Expected full closePosition to send cancel_orders=true to Alpaca');
     });
   });
 });

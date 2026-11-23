@@ -1,5 +1,7 @@
 import { Candle } from './trullasStrategy';
 import { calculateOrderFlowStrategy, OFS_COLORS } from './orderFlowStrategy';
+import { calculateSuperKumoMpro } from './superKumoMpro';
+import { calculateVolumeSpikeDetector } from './volumeSpikeDetector';
 
 export interface CalculatedIndicatorSeries {
   id: string;
@@ -562,6 +564,107 @@ export function calculateQuantumMarketXrayCustomIndicator(
   };
 }
 
+export function calculateSuperKumoCustomIndicator(candles: Candle[]): CalculatedIndicatorSeries {
+  if (candles.length === 0) {
+    return {
+      id: 'superkumo-mpro',
+      name: 'SuperKumo MPro',
+      isCustom: true,
+      overlay: true,
+      paneIndex: 0,
+      color: '#10b981',
+      plots: [],
+    };
+  }
+  const rep = calculateSuperKumoMpro(candles);
+  const d = rep.dashboard;
+  const dirStatus: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = d.trend === 'UP' ? 'BULLISH' : 'BEARISH';
+  return {
+    id: 'superkumo-mpro',
+    name: 'SuperKumo MPro',
+    isCustom: true,
+    overlay: true,
+    paneIndex: 0,
+    color: d.trend === 'UP' ? '#10b981' : '#f43f5e',
+    summaryValue: `${d.trend} · ${d.lastSignalText}${d.trailStop !== null ? ` · Trail $${d.trailStop.toFixed(2)}` : ''}`,
+    summaryStatus: dirStatus,
+    plots: [
+      {
+        name: 'Tenkan (9)',
+        type: 'line',
+        color: '#14b8a6',
+        lineWidth: 1,
+        points: rep.bars.map((b) => ({ time: b.time, value: b.tenkan })),
+      },
+      {
+        name: 'Kijun (26)',
+        type: 'line',
+        color: '#f97316',
+        lineWidth: 1,
+        points: rep.bars.map((b) => ({ time: b.time, value: b.kijun })),
+      },
+    ],
+  };
+}
+
+export function calculateVolumeSpikeCustomIndicator(candles: Candle[]): CalculatedIndicatorSeries {
+  if (candles.length === 0) {
+    return {
+      id: 'volume-spike-change-pro',
+      name: 'Volume Spike & Change Detector Pro',
+      isCustom: true,
+      overlay: false,
+      paneIndex: 3,
+      color: '#10b981',
+      plots: [],
+    };
+  }
+  const rep = calculateVolumeSpikeDetector(candles);
+  const d = rep.dashboard;
+  const sentStatus: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    d.mtfSentimentScore >= 2 ? 'BULLISH' : d.mtfSentimentScore <= -2 ? 'BEARISH' : 'NEUTRAL';
+  const sign = d.mtfSentimentScore > 0 ? '+' : '';
+  return {
+    id: 'volume-spike-change-pro',
+    name: 'Volume Spike & Change Detector Pro',
+    isCustom: true,
+    overlay: false,
+    paneIndex: 3,
+    color: d.mtfSentimentScore >= 0 ? '#10b981' : '#f43f5e',
+    summaryValue: `Sent ${sign}${d.mtfSentimentScore}/10 (${d.sentimentLabel}) · Z ${d.zScore.toFixed(2)}σ · Buy ${d.buyPct.toFixed(0)}%${d.isChurn ? ' · CHURN' : ''}`,
+    summaryStatus: sentStatus,
+    plots: [
+      {
+        name: 'Buy Volume (+)',
+        type: 'histogram',
+        color: '#10b981',
+        points: rep.bars.map((b) => ({
+          time: b.time,
+          value: Math.round(b.buyVol),
+          color: b.isSpike ? (b.isBuyDom ? '#00e676' : '#6ee7b7') : 'rgba(16, 185, 129, 0.78)',
+        })),
+      },
+      {
+        name: 'Sell Volume (-)',
+        type: 'histogram',
+        color: '#f43f5e',
+        points: rep.bars.map((b) => ({
+          time: b.time,
+          value: -Math.round(b.sellVol),
+          color: b.isSpike ? (!b.isBuyDom ? '#ff1744' : '#fda4af') : 'rgba(244, 63, 94, 0.78)',
+        })),
+      },
+      {
+        name: 'Volume MA (20)',
+        type: 'line',
+        color: '#94a3b8',
+        lineWidth: 2,
+        points: rep.bars.map((b) => ({ time: b.time, value: Math.round(b.volMA) })),
+      },
+    ],
+  };
+}
+
 /**
  * Dispatches calculation for a custom indicator by ID
  */
@@ -570,6 +673,12 @@ export function calculateCustomIndicatorById(
   candles: Candle[]
 ): CalculatedIndicatorSeries | null {
   const norm = id.toLowerCase();
+  if (norm.includes('superkumo')) {
+    return calculateSuperKumoCustomIndicator(candles);
+  }
+  if (norm.includes('volume-spike')) {
+    return calculateVolumeSpikeCustomIndicator(candles);
+  }
   if (norm.includes('qmx') || norm.includes('quantum')) {
     return calculateQuantumMarketXrayCustomIndicator(candles);
   }

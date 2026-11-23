@@ -57,6 +57,8 @@ import {
   OptionsTradeRecord,
 } from '../utils/optionsAutomatedPortfolio';
 import { analyzeTradingWarzSetup, CandleOHLC } from '../utils/tradingWarzEngine';
+import { analyzeMarketStructuralContext } from '../utils/marketStructuralContext';
+import type { Candle } from '../utils/trullasStrategy';
 import { useAlpacaPaper, fetchAlpacaOptionContracts } from '../hooks/useAlpacaPaper';
 import { useMarketHealth } from '../hooks/useMarketHealth';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
@@ -66,6 +68,7 @@ import {
   alpacaOrdersToOptionsSessionLogs,
   buildIdempotentClientOrderId,
 } from '../utils/alpacaJournalSync';
+import { cancelWorkingOrdersForContract } from '../utils/deterministicOrderPipeline';
 import { downloadCSV } from '../utils/tradeJournal';
 import {
   getMarketSessionStatus,
@@ -88,6 +91,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     refresh: refreshAlpaca,
     submitOrder,
     closePosition,
+    cancelOrder,
   } = useAlpacaPaper({ pollMs: 30000 });
   const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
 
@@ -191,7 +195,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       targets.map(async (symbol) => {
         try {
           const resp = await fetchJsonSafe<{ candles?: any[] }>(
-            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d&range=1mo`,
+            `/api/candles?symbol=${encodeURIComponent(symbol)}&timeframe=1d&range=6mo`,
             { signal }
           );
           if (!resp.ok || !resp.data) return null;
@@ -200,14 +204,24 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           if (bars.length < 5) return null;
           const latestClose = Number(bars[bars.length - 1]?.close);
           if (!Number.isFinite(latestClose) || latestClose <= 0) return null;
+          const normalizedCandles: Candle[] = bars.map((b: any, idx: number) => ({
+            timestamp: Number(b.timestamp ?? Date.now() - (bars.length - idx) * 86400000),
+            dateStr: String(b.dateStr ?? ''),
+            open: Number(b.open ?? b.close),
+            high: Number(b.high ?? b.close),
+            low: Number(b.low ?? b.close),
+            close: Number(b.close),
+            volume: Number(b.volume ?? 0),
+          }));
           return {
             symbol,
             currentPrice: latestClose,
-            candles: bars.map((b: any) => ({
-              open: Number(b.open ?? b.close),
-              high: Number(b.high ?? b.close),
-              low: Number(b.low ?? b.close),
-              close: Number(b.close),
+            fullCandles: normalizedCandles,
+            candles: normalizedCandles.map((b) => ({
+              open: b.open,
+              high: b.high,
+              low: b.low,
+              close: b.close,
             })) as CandleOHLC[],
           };
         } catch {
@@ -246,10 +260,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       latestAccount.profitTakePercent
     );
 
-    // 1. Evaluate open Alpaca OCC option positions for TP / expiration exits
+    // 1. Evaluate open Alpaca OCC option positions for TP / expiration exits (Deterministic: #1 Cancel -> #2 Close)
     for (const pos of currentOpenPositions) {
       if (pos.unrealizedPnLPercent >= latestAccount.profitTakePercent || pos.dteDaysRemaining <= 0) {
-        const res = await closePosition(pos.contract);
+        const cancelRes = await cancelWorkingOrdersForContract({
+          symbol: pos.contract,
+          openOrders: activeOverview.orders || [],
+          cancelOrder,
+        });
+        if (!cancelRes.ok) {
+          actionsLog.push(`Halted close ${pos.contract}: ${cancelRes.errors[0]}`);
+          continue;
+        }
+        if (cancelRes.cancelledCount > 0) {
+          actionsLog.push(`Cancelled ${cancelRes.cancelledCount} working order(s) on ${pos.contract}`);
+        }
+        const res = await closePosition(pos.contract, { cancelOrders: true });
         if (res.ok) {
           actionsLog.push(`Buy-to-Close ${pos.contract} (${pos.unrealizedPnLPercent.toFixed(1)}% profit)`);
         } else if (res.error) {
@@ -293,6 +319,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         if (openUnderlyings.has(cand.symbol)) continue;
 
         const twAnalysis = analyzeTradingWarzSetup(cand.candles, cand.currentPrice);
+        const structural = analyzeMarketStructuralContext({
+          symbol: cand.symbol,
+          dailyCandles: cand.fullCandles,
+        });
+        if (structural?.regime === 'IN_VOLUME_GAP') {
+          actionsLog.push(
+            `Skipped ${cand.symbol} short put (LVN Volume Gap air pocket $${structural.activeVolumeGap?.low.toFixed(0)}–$${structural.activeVolumeGap?.high.toFixed(0)})`
+          );
+          continue;
+        }
+        if (structural && structural.mtfVolumeSentiment <= -6 && !structural.isChurnAbsorption) {
+          actionsLog.push(
+            `Skipped ${cand.symbol} short put (Heavy MTF Vol Sell ${structural.mtfVolumeSentiment}/10 without absorption)`
+          );
+          continue;
+        }
         if (
           activeHealth?.current.safetyStatus === 'CAUTIOUS' &&
           twAnalysis.setupGrade !== 'A+'
@@ -307,12 +349,17 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           continue;
         }
 
+        const anchoredMaxStrike =
+          structural?.recommendedPutFloor && Number.isFinite(structural.recommendedPutFloor)
+            ? Number(Math.min(twAnalysis.recommendedPutStrike, structural.recommendedPutFloor * 0.995).toFixed(2))
+            : twAnalysis.recommendedPutStrike;
+
         const chainRes = await fetchAlpacaOptionContracts({
           underlying: cand.symbol,
           type: 'put',
           minDte: latestAccount.minDte,
           maxDte: latestAccount.minDte + 14,
-          maxStrike: twAnalysis.recommendedPutStrike,
+          maxStrike: anchoredMaxStrike,
           limit: 12,
         });
         if (!chainRes.ok || chainRes.contracts.length === 0) continue;
@@ -630,7 +677,12 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     if (!positionToClose) return;
     const contractSymbol = positionToClose.contract;
     setPositionToClose(null);
-    const res = await closePosition(contractSymbol);
+    await cancelWorkingOrdersForContract({
+      symbol: contractSymbol,
+      openOrders: overviewRef.current?.orders || [],
+      cancelOrder,
+    });
+    const res = await closePosition(contractSymbol, { cancelOrders: true });
     if (res.ok) {
       setCycleFeedbackMessage(`Submitted Alpaca Paper close for ${contractSymbol}. Real fills synced to Local Trade Journal.`);
     } else {
@@ -700,6 +752,22 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                         : 'SAFE'
                       : 'HALTED'}
                   </span>
+                </span>
+              )}
+              {marketHealth?.structuralContext?.spy && (
+                <span
+                  data-testid="options-structural-guard"
+                  className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-mono font-semibold border ${
+                    marketHealth.structuralContext.spy.regime === 'IN_VOLUME_GAP'
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : marketHealth.structuralContext.spy.regime === 'AT_INSTITUTIONAL_BUY_ZONE'
+                        ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+                        : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                  }`}
+                >
+                  Put Floor Anchor: {marketHealth.structuralContext.spy.recommendedPutFloor
+                    ? `$${marketHealth.structuralContext.spy.recommendedPutFloor.toFixed(0)} (${marketHealth.structuralContext.spy.regime.replace(/_/g, ' ')})`
+                    : marketHealth.structuralContext.spy.regime.replace(/_/g, ' ')}
                 </span>
               )}
             </div>

@@ -1,12 +1,17 @@
 import React from 'react';
 import { BarChart3, Target, ShieldAlert, Sparkles, Compass } from 'lucide-react';
 import type { ChartPocReading } from '../../utils/volumeProfileEngine';
+import type { MarketStructuralSummary } from '../../utils/marketStructuralContext';
 
 interface ChartPocReaderPanelProps {
   reading: ChartPocReading | null;
+  structuralReading?: MarketStructuralSummary | null;
 }
 
-export const ChartPocReaderPanel: React.FC<ChartPocReaderPanelProps> = ({ reading }) => {
+export const ChartPocReaderPanel: React.FC<ChartPocReaderPanelProps> = ({
+  reading,
+  structuralReading,
+}) => {
   if (!reading) {
     return (
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-400 shadow-xl">
@@ -134,6 +139,34 @@ export const ChartPocReaderPanel: React.FC<ChartPocReaderPanelProps> = ({ readin
               ${reading.nearestLvnVacuum.toFixed(2)}
             </span>
           </div>
+        )}
+        {structuralReading && (
+          <>
+            <div className="flex items-center justify-between py-1 border-b border-zinc-800/60">
+              <span className="text-zinc-400 font-sans">Inst. Buy Zone:</span>
+              <span className="text-sky-300 font-semibold">
+                {structuralReading.institutionalBuyZone
+                  ? `$${structuralReading.institutionalBuyZone.low.toFixed(2)}–$${structuralReading.institutionalBuyZone.high.toFixed(2)}`
+                  : '—'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1 border-b border-zinc-800/60">
+              <span className="text-zinc-400 font-sans">MTF Vol Sentiment:</span>
+              <span
+                className={`font-semibold ${
+                  structuralReading.mtfVolumeSentiment >= 2
+                    ? 'text-emerald-300'
+                    : structuralReading.mtfVolumeSentiment <= -2
+                      ? 'text-rose-300'
+                      : 'text-zinc-300'
+                }`}
+              >
+                {structuralReading.mtfVolumeSentiment > 0 ? '+' : ''}
+                {structuralReading.mtfVolumeSentiment}/10 ({structuralReading.volumeSentimentLabel})
+                {structuralReading.isChurnAbsorption ? ' · CHURN' : ''}
+              </span>
+            </div>
+          </>
         )}
       </div>
 

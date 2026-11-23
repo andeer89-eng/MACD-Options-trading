@@ -9,6 +9,10 @@
  */
 
 import type { Candle } from './trullasStrategy.ts';
+import {
+  analyzeMarketStructuralContext,
+  type MarketStructuralSummary,
+} from './marketStructuralContext.ts';
 
 export type SentimentLabel =
   | 'Extreme Fear'
@@ -87,6 +91,10 @@ export interface MarketHealthReport {
   };
   history1M: MarketHealthDailyPoint[];
   history1YCount: number;
+  structuralContext?: {
+    spy: MarketStructuralSummary | null;
+    qqq: MarketStructuralSummary | null;
+  };
 }
 
 export interface MarketHealthInputs {
@@ -96,6 +104,8 @@ export interface MarketHealthInputs {
   tltCandles?: Candle[];
   flowBenchmarkCandles: Record<string, Candle[]>; // SPY, QQQ, IWM + 11 SPDR Sector ETFs
   sectorEtfs?: Record<string, Candle[]>;
+  spyWeeklyCandles?: Candle[];
+  qqqWeeklyCandles?: Candle[];
 }
 
 function clamp(val: number, min: number, max: number): number {
@@ -441,6 +451,21 @@ export function computeMarketHealthReport(inputs: MarketHealthInputs): MarketHea
       ? 'BACKWARDATION'
       : 'FLAT';
 
+  const qqqDaily = inputs.flowBenchmarkCandles?.['QQQ'] || [];
+  const spyStructural = analyzeMarketStructuralContext({
+    symbol: 'SPY',
+    dailyCandles: spy,
+    weeklyCandles: inputs.spyWeeklyCandles,
+  });
+  const qqqStructural =
+    qqqDaily.length >= 15
+      ? analyzeMarketStructuralContext({
+          symbol: 'QQQ',
+          dailyCandles: qqqDaily,
+          weeklyCandles: inputs.qqqWeeklyCandles,
+        })
+      : null;
+
   return {
     isLive: true,
     asOf: latest.date,
@@ -481,5 +506,9 @@ export function computeMarketHealthReport(inputs: MarketHealthInputs): MarketHea
     },
     history1M,
     history1YCount: dailySeries.length,
+    structuralContext: {
+      spy: spyStructural,
+      qqq: qqqStructural,
+    },
   };
 }

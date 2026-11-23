@@ -7,6 +7,12 @@ import { canTrade, calculateLevels, MasterPlanSettings, DataQuality } from './ma
 import { SP500_UNIVERSE } from '../data/sp500Universe.ts';
 import { lookupGlobalCompany } from '../data/globalTickers.ts';
 import type { MarketHealthReport } from './marketHealthEngine.ts';
+import type { MarketStructuralSummary } from './marketStructuralContext.ts';
+import {
+  BotQueuedCandidate,
+  mergeQueuedCandidatesWithMarketItems,
+} from './botCandidateQueue.ts';
+import type { ReversalCloseRequest } from './deterministicOrderPipeline.ts';
 
 export interface AlpacaAccountDTO {
   id: string;
@@ -638,6 +644,7 @@ export function selectAlpacaEquityCandidates(
     dataQuality?: DataQuality;
     fetchedAtMs?: number;
     stale?: boolean;
+    structuralContext?: MarketStructuralSummary | null;
     setups?: any[];
   }>,
   settings: MasterPlanSettings,
@@ -646,32 +653,61 @@ export function selectAlpacaEquityCandidates(
     nowMs?: number;
     maxQuoteAgeMs?: number;
     marketHealth?: MarketHealthReport | null;
+    queuedCandidates?: BotQueuedCandidate[];
   }
 ): {
   ordersToPlace: AlpacaEquityOrderCandidate[];
-  positionsToClose: Array<{ symbol: string; percentage: number; reason: string }>;
+  positionsToClose: Array<{ symbol: string; percentage: number; reason: string; isReversal?: boolean }>;
+  reversalRequests: ReversalCloseRequest[];
   skippedByRiskGates: AlpacaRiskGateSkip[];
   marketHealthBlocked?: boolean;
   marketHealthSummary?: string;
 } {
   const ordersToPlace: AlpacaEquityOrderCandidate[] = [];
-  const positionsToClose: Array<{ symbol: string; percentage: number; reason: string }> = [];
+  const positionsToClose: Array<{ symbol: string; percentage: number; reason: string; isReversal?: boolean }> = [];
+  const reversalRequests: ReversalCloseRequest[] = [];
   const skippedByRiskGates: AlpacaRiskGateSkip[] = [];
 
   if (!overview.configured || !overview.account) {
-    return { ordersToPlace, positionsToClose, skippedByRiskGates };
+    return { ordersToPlace, positionsToClose, reversalRequests, skippedByRiskGates };
   }
 
-  // Evaluate open Alpaca equity positions against ATR stop / T2 target exits
-  const heldPositions = alpacaPositionsToAutomatedPositions(overview.equityPositions, overview.orders, marketItems);
+  const effectiveMarketItems =
+    options?.queuedCandidates && options.queuedCandidates.length > 0
+      ? mergeQueuedCandidatesWithMarketItems(options.queuedCandidates, marketItems)
+      : marketItems;
+
+  const activeQueuedBySymbol = new Map<string, BotQueuedCandidate>();
+  for (const qc of options?.queuedCandidates || []) {
+    if (qc.status === 'QUEUED') {
+      activeQueuedBySymbol.set(qc.symbol.toUpperCase(), qc);
+    }
+  }
+
+  // Evaluate open Alpaca equity positions against ATR stop / T2 target exits + queued opposite reversals
+  const heldPositions = alpacaPositionsToAutomatedPositions(overview.equityPositions, overview.orders, effectiveMarketItems);
   for (const pos of heldPositions) {
     const isBull = pos.direction === 'BULLISH';
     const hitStop = isBull ? pos.currentPrice <= pos.stopLoss : pos.currentPrice >= pos.stopLoss;
     const hitT2 = isBull ? pos.currentPrice >= pos.target2 : pos.currentPrice <= pos.target2;
+    const queuedOpposite = activeQueuedBySymbol.get(pos.symbol.toUpperCase());
+    const isOppositeReversal =
+      queuedOpposite &&
+      ((isBull && queuedOpposite.direction === 'BEARISH') ||
+        (!isBull && queuedOpposite.direction === 'BULLISH'));
+
     if (hitStop) {
       positionsToClose.push({ symbol: pos.symbol, percentage: 100, reason: `ATR stop-loss triggered at $${pos.currentPrice.toFixed(2)}` });
     } else if (hitT2) {
       positionsToClose.push({ symbol: pos.symbol, percentage: 100, reason: `Target 2 reached at $${pos.currentPrice.toFixed(2)}` });
+    } else if (isOppositeReversal && queuedOpposite) {
+      const reason = `Reversal exit (${queuedOpposite.source} queued ${queuedOpposite.direction} ${queuedOpposite.setupType})`;
+      positionsToClose.push({ symbol: pos.symbol, percentage: 100, reason, isReversal: true });
+      reversalRequests.push({
+        symbol: pos.symbol,
+        targetDirection: queuedOpposite.direction,
+        reason,
+      });
     }
   }
 
@@ -732,18 +768,40 @@ export function selectAlpacaEquityCandidates(
       }`
     : undefined;
 
-  for (const item of marketItems) {
+  for (const item of effectiveMarketItems) {
     if (remainingSlots <= 0 || remainingBuyingPower < 100) break;
     const sym = item.symbol.toUpperCase();
     if (sym.includes('=F') || sym.includes('-USD') || sym.includes('=X')) continue;
-    if (openSymbols.has(sym) || pendingSymbols.has(sym)) continue;
+
+    const sector = resolveEquitySector(sym, item.sector);
+    if (openSymbols.has(sym) || pendingSymbols.has(sym)) {
+      if (activeQueuedBySymbol.has(sym)) {
+        skippedByRiskGates.push({
+          symbol: sym,
+          sector,
+          reasons: [
+            openSymbols.has(sym)
+              ? `Position already open in ${sym} (duplicate entry blocked)`
+              : `Working order already pending in ${sym}`,
+          ],
+        });
+      }
+      continue;
+    }
 
     const mainSetup = item.setups?.[0];
     if (!mainSetup || !item.currentPrice || item.currentPrice <= 0) continue;
     const isBull = String(mainSetup.type || '').includes('BULLISH');
-    if (!isBull) continue; // Default cash/margin safe long entries unless explicitly enabled
-
-    const sector = resolveEquitySector(sym, item.sector);
+    if (!isBull) {
+      if (activeQueuedBySymbol.has(sym)) {
+        skippedByRiskGates.push({
+          symbol: sym,
+          sector,
+          reasons: ['Long-only equity gate: BEARISH queued signals only exit existing longs (no naked shorts)'],
+        });
+      }
+      continue;
+    }
 
     if (marketCrashBlocked && marketHealth) {
       skippedByRiskGates.push({
@@ -751,6 +809,34 @@ export function selectAlpacaEquityCandidates(
         sector,
         reasons: [
           `Market Health Crash Defense: ${marketHealthSummary} (${marketHealth.current.reasons.join('; ')})`,
+        ],
+      });
+      continue;
+    }
+
+    const candStructural =
+      item.structuralContext ??
+      (sym === 'SPY'
+        ? marketHealth?.structuralContext?.spy ?? null
+        : sym === 'QQQ'
+          ? marketHealth?.structuralContext?.qqq ?? null
+          : null);
+    const broadIndexInGap =
+      marketHealth?.structuralContext?.spy?.regime === 'IN_VOLUME_GAP' &&
+      marketHealth?.structuralContext?.qqq?.regime === 'IN_VOLUME_GAP';
+
+    if (
+      candStructural?.regime === 'IN_VOLUME_GAP' ||
+      (broadIndexInGap && candStructural?.regime !== 'AT_INSTITUTIONAL_BUY_ZONE')
+    ) {
+      const gapDesc = candStructural?.activeVolumeGap
+        ? `$${candStructural.activeVolumeGap.low.toFixed(2)}–$${candStructural.activeVolumeGap.high.toFixed(2)} LVN air pocket`
+        : 'SPY/QQQ LVN Volume Gap vacuum';
+      skippedByRiskGates.push({
+        symbol: sym,
+        sector,
+        reasons: [
+          `Volume Gap Guard: ${sym} blocked inside ${gapDesc} (awaiting HVN / Institutional Buy Zone floor)`,
         ],
       });
       continue;
@@ -852,6 +938,12 @@ export function selectAlpacaEquityCandidates(
     existingClientOrderIds.add(clientOrderId);
     sectorExposureDollars.set(sector, currentSectorDollars + notional);
 
+    const structuralTag = candStructural
+      ? candStructural.regime === 'AT_INSTITUTIONAL_BUY_ZONE' && candStructural.institutionalBuyZone
+        ? ` • Inst. Buy Zone $${candStructural.institutionalBuyZone.low.toFixed(2)}–$${candStructural.institutionalBuyZone.high.toFixed(2)}${candStructural.isChurnAbsorption ? ' (Churn Absorption)' : ''}`
+        : ` • Vol Sent ${candStructural.mtfVolumeSentiment >= 0 ? '+' : ''}${candStructural.mtfVolumeSentiment}/10`
+      : '';
+
     ordersToPlace.push({
       symbol: sym,
       side: 'buy',
@@ -864,7 +956,7 @@ export function selectAlpacaEquityCandidates(
       qualityScore: Number(mainSetup.qualityScore || 80),
       stopLoss: levels.stop.price,
       targetPrice: levels.targets[1]?.price || levels.targets[0]?.price || Number((item.currentPrice * 1.05).toFixed(2)),
-      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${
+      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${structuralTag}${
         marketHealthSummary ? ` • ${marketHealthSummary}` : ''
       }`,
     });
@@ -873,6 +965,7 @@ export function selectAlpacaEquityCandidates(
   return {
     ordersToPlace,
     positionsToClose,
+    reversalRequests,
     skippedByRiskGates,
     marketHealthBlocked: marketCrashBlocked,
     marketHealthSummary,

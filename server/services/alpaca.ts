@@ -584,17 +584,29 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     };
   }
 
-  async function closePosition(symbol: string, opts: { qty?: number; percentage?: number } = {}) {
+  async function closePosition(
+    symbol: string,
+    opts: { qty?: number; percentage?: number; cancel_orders?: boolean } = {}
+  ) {
     const cleanSym = symbol.trim().toUpperCase();
     if (!cleanSym) {
       throw new AlpacaApiError(400, 'Position symbol is required.');
     }
     const qs = new URLSearchParams();
+    const isPartial =
+      (opts.qty !== undefined && Number.isFinite(opts.qty) && opts.qty > 0) ||
+      (opts.percentage !== undefined && Number.isFinite(opts.percentage) && opts.percentage > 0 && opts.percentage < 100);
+
     if (opts.qty !== undefined && Number.isFinite(opts.qty) && opts.qty > 0) {
       qs.set('qty', String(opts.qty));
     } else if (opts.percentage !== undefined && Number.isFinite(opts.percentage) && opts.percentage > 0 && opts.percentage < 100) {
       qs.set('percentage', String(opts.percentage));
     }
+
+    if (opts.cancel_orders === true || (opts.cancel_orders !== false && !isPartial)) {
+      qs.set('cancel_orders', 'true');
+    }
+
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const order = await alpacaRequest<any>(`/v2/positions/${encodeURIComponent(cleanSym)}${suffix}`, {
       method: 'DELETE',

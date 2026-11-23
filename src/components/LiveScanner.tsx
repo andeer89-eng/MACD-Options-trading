@@ -25,6 +25,7 @@ import {
   EyeOff,
   Check,
   Info,
+  Bot,
 } from 'lucide-react';
 import {
   SP500_UNIVERSE,
@@ -39,6 +40,13 @@ import { evaluateCandidate360Confluence } from '../utils/confluenceScoringEngine
 import { computeStageSummaryFromCandles } from '../utils/trendSpiderUniverse';
 import { CandleData } from '../utils/trendSpiderEngine';
 import { evaluateSignalWeighting } from '../utils/signalWeightingEngine';
+import {
+  BOT_QUEUE_EVENT,
+  enqueueBotCandidate,
+  isAlpacaEquityEligibleSymbol,
+  loadBotCandidateQueue,
+  removeQueuedBotCandidate,
+} from '../utils/botCandidateQueue';
 
 function toStageCandles(raw?: Candle[]): CandleData[] {
   if (!Array.isArray(raw)) return [];
@@ -112,6 +120,27 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   const [sp500SearchQuery, setSp500SearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showMarketOverview, setShowMarketOverview] = useState(false);
+  const [queuedBotSymbols, setQueuedBotSymbols] = useState<string[]>(() =>
+    loadBotCandidateQueue()
+      .filter((q) => q.status === 'QUEUED')
+      .map((q) => q.symbol.toUpperCase())
+  );
+
+  React.useEffect(() => {
+    const syncQueue = () => {
+      setQueuedBotSymbols(
+        loadBotCandidateQueue()
+          .filter((q) => q.status === 'QUEUED')
+          .map((q) => q.symbol.toUpperCase())
+      );
+    };
+    window.addEventListener(BOT_QUEUE_EVENT, syncQueue);
+    window.addEventListener('storage', syncQueue);
+    return () => {
+      window.removeEventListener(BOT_QUEUE_EVENT, syncQueue);
+      window.removeEventListener('storage', syncQueue);
+    };
+  }, []);
 
   // Filter S&P 500 Universe by symbol or company name or sector
   const matchedUniverseTickers = React.useMemo(() => {
@@ -1089,11 +1118,13 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                               {weighting.confidenceScore}% Conf
                             </span>
                           </div>
-                          <span className="text-[9px] text-zinc-500 block">
+                          <span className="text-[9px] text-zinc-500 block tabular-nums">
                             r = {weighting.rollingCorrelation >= 0 ? '+' : ''}{weighting.rollingCorrelation.toFixed(2)} &bull;{' '}
                             {weighting.hasHistoricalSample
                               ? `${weighting.historicalAccuracyPct}% (${weighting.totalHistoricalSignals})`
                               : '0 prior hits'}
+                            {' · '}HR-N={weighting.excursionQuantiles.analogCount}
+                            {!weighting.excursionQuantiles.sampleSufficient && ' (low n)'}
                           </span>
                         </>
                       ) : (
@@ -1153,6 +1184,49 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                       Scale Plan
                     </button>
                   )}
+
+                  {isAlpacaEquityEligibleSymbol(item.symbol) && (
+                    <button
+                      type="button"
+                      data-testid={`queue-bot-${item.symbol}`}
+                      onClick={() => {
+                        const symUpper = item.symbol.toUpperCase();
+                        if (queuedBotSymbols.includes(symUpper)) {
+                          removeQueuedBotCandidate(symUpper);
+                          return;
+                        }
+                        const isBear = Boolean(mainSetup?.type?.includes('BEARISH'));
+                        enqueueBotCandidate({
+                          symbol: symUpper,
+                          direction: isBear ? 'BEARISH' : 'BULLISH',
+                          source: 'SCANNER',
+                          setupType: mainSetup?.type || 'SCANNER_SIGNAL',
+                          qualityScore: mainSetup?.qualityScore ?? 75,
+                          currentPrice: item.currentPrice,
+                          atr: item.atr,
+                          sector: item.sector,
+                          hrN: weighting?.excursionQuantiles?.analogCount,
+                        });
+                      }}
+                      className={`flex items-center space-x-1 px-2.5 py-1.5 rounded text-xs font-semibold border transition ${
+                        queuedBotSymbols.includes(item.symbol.toUpperCase())
+                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                          : 'bg-zinc-950 hover:bg-zinc-800 text-zinc-300 border-zinc-700 hover:border-emerald-500/40'
+                      }`}
+                      title={
+                        queuedBotSymbols.includes(item.symbol.toUpperCase())
+                          ? `${item.symbol} queued for Auto-Bot (click to remove)`
+                          : `Queue ${item.symbol} for Auto-Bot (evaluated through canTrade() + Market Health)`
+                      }
+                    >
+                      {queuedBotSymbols.includes(item.symbol.toUpperCase()) ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Bot className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                      <span>{queuedBotSymbols.includes(item.symbol.toUpperCase()) ? 'Queued' : 'Queue Bot'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1189,8 +1263,36 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                       &bull; Volume Exhaustion: YES
                     </span>
                   </div>
-                  <div className="text-zinc-400 font-mono">
-                    R:R Ratio = <strong className="text-white">1:{mainSetup.riskRewardRatio}</strong>
+                  <div className="flex flex-wrap items-center gap-3 text-zinc-400 font-mono tabular-nums">
+                    {weighting && weighting.excursionQuantiles.analogCount > 0 && (
+                      <span
+                        data-testid={`excursion-quantiles-${item.symbol}`}
+                        className="text-[11px] text-zinc-300"
+                        title="Empirical 25-bar forward excursion quantiles from same-direction historical analogs on real OHLCV bars"
+                      >
+                        HR-N={weighting.excursionQuantiles.analogCount}
+                        {!weighting.excursionQuantiles.sampleSufficient ? ' (n<10)' : ''}
+                        {' · '}
+                        <span className="text-emerald-400">MFE p80 +{weighting.excursionQuantiles.mfeP80Pct}%</span>
+                        {' · '}
+                        <span className="text-rose-400">MAE p50 -{weighting.excursionQuantiles.maeP50Pct}%</span>
+                        {weighting.excursionQuantiles.tp1WithinMfeP80 !== null && (
+                          <span
+                            className={
+                              weighting.excursionQuantiles.tp1WithinMfeP80
+                                ? ' text-emerald-400'
+                                : ' text-amber-400'
+                            }
+                          >
+                            {' · '}
+                            {weighting.excursionQuantiles.tp1WithinMfeP80 ? 'TP1≤p80' : 'TP1>p80'}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    <span>
+                      R:R Ratio = <strong className="text-white">1:{mainSetup.riskRewardRatio}</strong>
+                    </span>
                   </div>
                 </div>
               )}

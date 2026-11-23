@@ -98,6 +98,77 @@ wMid = ta.ema(hl2, 21)
 plot(wMid, "Order Flow Core", color=deltaPct >= 0 ? color.aqua : color.purple, linewidth=2)`,
   },
   {
+    id: 'superkumo-mpro',
+    name: 'SuperKumo MPro',
+    author: 'Community Trader (Pine v6)',
+    description:
+      'Ichimoku Kumo Cloud (9/26/52/26) fused with Supertrend (10, 3.0), ADX chop filter, merged Pivot & HTF Support/Resistance bands, Early/Confirmed/PB/DCA signals, and ratcheting Trail Stop.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 1060000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("SuperKumo MPro", overlay=true, max_boxes_count=50, max_labels_count=100, max_lines_count=10)
+
+convLen    = input.int(9,  "Conversion Line Length", minval=1, group="Ichimoku")
+baseLen    = input.int(26, "Base Line Length",       minval=1, group="Ichimoku")
+spanBLen   = input.int(52, "Leading Span B Length",  minval=1, group="Ichimoku")
+disp       = input.int(26, "Displacement",           minval=1, group="Ichimoku")
+atrLen     = input.int(10, "ATR Length",             minval=1, group="Supertrend")
+factor     = input.float(3.0, "Factor",              minval=0.1, step=0.1, group="Supertrend")
+adxMin     = input.float(20.0, "ADX Chop Threshold", minval=1, group="Filters")
+minRoomMult = input.float(1.0, "Min S/R Room (ATR)", minval=0, group="S/R Zones")
+
+tenkan = math.avg(ta.highest(high, convLen), ta.lowest(low, convLen))
+kijun  = math.avg(ta.highest(high, baseLen), ta.lowest(low, baseLen))
+spanA  = math.avg(tenkan, kijun)
+spanB  = math.avg(ta.highest(high, spanBLen), ta.lowest(low, spanBLen))
+[st, dir] = ta.supertrend(factor, atrLen)
+
+plot(tenkan, "Tenkan", color=color.teal)
+plot(kijun, "Kijun", color=color.orange)
+p1 = plot(spanA, "Span A", offset=disp, color=color.green)
+p2 = plot(spanB, "Span B", offset=disp, color=color.red)
+fill(p1, p2, color=spanA > spanB ? color.new(color.green, 82) : color.new(color.red, 82))`,
+  },
+  {
+    id: 'volume-spike-change-pro',
+    name: 'Volume Spike & Change Detector Pro',
+    author: 'Community Trader (Pine v6)',
+    description:
+      'Directional Buy vs Sell volume decomposition, Z-score volume spikes (>2σ), narrow-range Churn/Absorption markers, CVD, Weekly/Monthly delta changes, and -10..+10 MTF Volume Sentiment.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 1030000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Volume Spike & Change Detector Pro", shorttitle="Vol Spike Pro", overlay=false)
+
+maLen     = input.int(20, "Volume MA Length", minval=5, group="Volume & Spike Detection")
+spikeMult = input.float(2.0, "Spike Z-Score Threshold", minval=1.0, step=0.1, group="Volume & Spike Detection")
+atrLen    = input.int(14, "ATR Length for Churn Detection", minval=5, group="Volume & Spike Detection")
+churnMult = input.float(0.5, "Max Range Ratio for Churn (x ATR)", minval=0.1, step=0.1, group="Volume & Spike Detection")
+
+barRange = math.max(high - low, 1e-9)
+buyVol   = high - low > 1e-9 ? volume * (close - low) / barRange : volume * 0.5
+sellVol  = volume - buyVol
+volMA    = ta.sma(volume, maLen)
+volStd   = ta.stdev(volume, maLen)
+zScore   = volStd > 0 ? (volume - volMA) / volStd : 0.0
+isSpike  = zScore > spikeMult
+isChurn  = isSpike and (high - low) < ta.atr(atrLen) * churnMult
+
+plot(buyVol, "Buy Volume", color=color.green, style=plot.style_columns)
+plot(-sellVol, "Sell Volume", color=color.red, style=plot.style_columns)
+plot(volMA, "Volume MA", color=color.gray, linewidth=2)`,
+  },
+  {
     id: 'lux-nwe-v5',
     name: 'LuxAlgo Nadaraya-Watson Envelope (NWE)',
     author: 'LuxAlgo (Alex Grover)',

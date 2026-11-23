@@ -4,6 +4,7 @@ import {
   calculatePearsonCorrelation,
   calculateRollingPriceMacdCorrelation,
   computeEmpiricalHistoricalAccuracy,
+  computeEmpiricalExcursionQuantiles,
   evaluateSignalWeighting,
 } from './signalWeightingEngine';
 import { Candle, DivergenceSetup } from './trullasStrategy';
@@ -55,8 +56,8 @@ describe('Signal Weighting Engine Unit Tests', () => {
     assert.strictEqual(withJournal.totalSignals, 10);
   });
 
-  test('evaluateSignalWeighting assigns confidence score and signal grade', () => {
-    const candles = buildDeterministicCandles(65);
+  test('evaluateSignalWeighting assigns confidence score, signal grade, and excursion quantiles', () => {
+    const candles = buildDeterministicCandles(160);
     const setup: DivergenceSetup = {
       id: 'test-1',
       symbol: 'NVDA',
@@ -88,5 +89,40 @@ describe('Signal Weighting Engine Unit Tests', () => {
     assert.strictEqual(weighted.hasHistoricalSample, true);
     assert.ok(weighted.totalHistoricalSignals >= 5);
     assert.ok(weighted.historicalAccuracyPct >= 0 && weighted.historicalAccuracyPct <= 100);
+
+    assert.ok(weighted.excursionQuantiles !== undefined);
+    assert.ok(weighted.excursionQuantiles.mfeP80Pct >= weighted.excursionQuantiles.mfeP50Pct);
+    assert.ok(weighted.excursionQuantiles.maeP80Pct >= weighted.excursionQuantiles.maeP50Pct);
+    assert.strictEqual(
+      weighted.excursionQuantiles.sampleSufficient,
+      weighted.excursionQuantiles.analogCount >= 10
+    );
+  });
+
+  test('computeEmpiricalExcursionQuantiles enforces zero-lookahead walk-forward invariance', () => {
+    const fullCandles = buildDeterministicCandles(240);
+    const splitIdx = 150;
+
+    const asOfFull = computeEmpiricalExcursionQuantiles(fullCandles, 'NVDA', '1d', {
+      direction: 'BULLISH',
+      asOfBarIndex: splitIdx,
+      currentTriggerPrice: 140,
+      currentStopLoss: 134,
+      currentTp1: 144,
+    });
+
+    const truncated = computeEmpiricalExcursionQuantiles(
+      fullCandles.slice(0, splitIdx + 1),
+      'NVDA',
+      '1d',
+      {
+        direction: 'BULLISH',
+        currentTriggerPrice: 140,
+        currentStopLoss: 134,
+        currentTp1: 144,
+      }
+    );
+
+    assert.deepStrictEqual(asOfFull, truncated);
   });
 });

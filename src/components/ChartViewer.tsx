@@ -50,6 +50,8 @@ import {
   BarChart3,
   LineChart,
   CheckSquare,
+  Bot,
+  Check,
 } from 'lucide-react';
 import { Candle, IndicatorPoint, DivergenceSetup } from '../utils/trullasStrategy';
 import { calculateNadarayaWatsonEnvelope, calculateSmartMoneyConcepts } from '../utils/luxalgoIndicators';
@@ -93,8 +95,7 @@ import {
   resolveVisibleHudDock,
   getVisibleIndicatorIds,
   toggleHiddenIndicator,
-  areAllIndicatorsHidden,
-  toggleAllIndicatorsVisibility,
+  resolveActiveIndicatorsVisibility,
 } from '../utils/chartOverlayPrimitives';
 import { calculateSuperTrendPro, SuperTrendProReport } from '../utils/superTrendPro';
 import {
@@ -109,10 +110,22 @@ import {
 } from '../utils/volumeProfileEngine';
 import { VolumeProfileOverlay } from './VolumeProfileOverlay';
 import { ChartPocReaderPanel } from './chart/ChartPocReaderPanel';
+import { calculateSuperKumoMpro, SuperKumoReport } from '../utils/superKumoMpro';
+import { SuperKumoOverlay } from './SuperKumoOverlay';
+import { calculateVolumeSpikeDetector, VolumeSpikeReport } from '../utils/volumeSpikeDetector';
+import { analyzeMarketStructuralContext, MarketStructuralSummary } from '../utils/marketStructuralContext';
+import { StructuralZonesOverlay } from './StructuralZonesOverlay';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 import { useChartData } from '../hooks/useChartData';
 import { useChartShortcuts } from '../hooks/useChartShortcuts';
 import { IndicatorsPickerModal, DataAuthenticityModal } from './chart/ChartModals';
+import {
+  BOT_QUEUE_EVENT,
+  enqueueBotCandidate,
+  isAlpacaEquityEligibleSymbol,
+  loadBotCandidateQueue,
+  removeQueuedBotCandidate,
+} from '../utils/botCandidateQueue';
 
 interface ChartViewerProps {
   initialSymbol?: string;
@@ -212,6 +225,17 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const [superTrendToggles, setSuperTrendToggles] = useState<SuperTrendVisualToggles>(DEFAULT_SUPERTREND_TOGGLES);
   const [preferredHud, setPreferredHud] = useState<OverlayHudKind>('ofs');
   const [showVolumeProfile, setShowVolumeProfile] = useState<boolean>(true);
+  const [showInstitutionalZones, setShowInstitutionalZones] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const saved = localStorage.getItem('stageledger_show_inst_zones');
+      if (saved !== null) return saved === 'true';
+    } catch {
+      // ignore storage errors
+    }
+    return true;
+  });
+  const [isInstZonesHidden, setIsInstZonesHidden] = useState<boolean>(false);
   const [visibleVolumeProfile, setVisibleVolumeProfile] = useState<VolumeProfileResult | null>(null);
 
   // Universal Pine Script runtime results keyed by indicator ID
@@ -252,10 +276,18 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     [activeCustomIndicatorIds, hiddenIndicatorIds]
   );
 
-  const allIndicatorsHidden = useMemo(
-    () => areAllIndicatorsHidden(activeCustomIndicatorIds, hiddenIndicatorIds),
-    [activeCustomIndicatorIds, hiddenIndicatorIds]
+  const indicatorsVisibility = useMemo(
+    () =>
+      resolveActiveIndicatorsVisibility({
+        activeCustomIds: activeCustomIndicatorIds,
+        hiddenCustomIds: hiddenIndicatorIds,
+        showInstitutionalZones,
+        isInstZonesHidden,
+      }),
+    [activeCustomIndicatorIds, hiddenIndicatorIds, showInstitutionalZones, isInstZonesHidden]
   );
+
+  const allIndicatorsHidden = indicatorsVisibility.allHidden;
 
   const isOfsDataNeeded = activeCustomIndicatorIds.some(
     (id) => id.toLowerCase().includes('ofs') || id.toLowerCase().includes('order-flow-strategy')
@@ -293,6 +325,12 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const isSuperTrendActive = visibleCustomIndicatorIds.some((id) =>
     id.toLowerCase().includes('supertrend')
   );
+  const isSuperKumoActive = visibleCustomIndicatorIds.some((id) =>
+    id.toLowerCase().includes('superkumo')
+  );
+  const isVolumeSpikeActive = visibleCustomIndicatorIds.some((id) =>
+    id.toLowerCase().includes('volume-spike')
+  );
   const hasSuperTrendRightHud =
     isSuperTrendActive && (superTrendToggles.table || superTrendToggles.legend);
 
@@ -318,6 +356,28 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     };
     window.addEventListener('stageledger:indicators-changed', handleSync);
     return () => window.removeEventListener('stageledger:indicators-changed', handleSync);
+  }, []);
+
+  const [queuedBotSymbols, setQueuedBotSymbols] = useState<string[]>(() =>
+    loadBotCandidateQueue()
+      .filter((q) => q.status === 'QUEUED')
+      .map((q) => q.symbol.toUpperCase())
+  );
+
+  useEffect(() => {
+    const syncBotQueue = () => {
+      setQueuedBotSymbols(
+        loadBotCandidateQueue()
+          .filter((q) => q.status === 'QUEUED')
+          .map((q) => q.symbol.toUpperCase())
+      );
+    };
+    window.addEventListener(BOT_QUEUE_EVENT, syncBotQueue);
+    window.addEventListener('storage', syncBotQueue);
+    return () => {
+      window.removeEventListener(BOT_QUEUE_EVENT, syncBotQueue);
+      window.removeEventListener('storage', syncBotQueue);
+    };
   }, []);
 
   // Strictly sorted, deduplicated candles shared across chart, Pine runtime & flagship overlays
@@ -346,6 +406,8 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   const isFlagshipCustomId = (id: string) => {
     const norm = id.toLowerCase();
     if (norm.includes('supertrend')) return true;
+    if (norm.includes('superkumo')) return true;
+    if (norm.includes('volume-spike')) return true;
     if (norm.includes('ofs') || norm.includes('order-flow-strategy')) return true;
     if (norm.includes('qmx') || norm.includes('quantum')) return true;
     const matchInd = libraryIndicators.find((l) => l.id === id);
@@ -464,7 +526,16 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
   };
 
   const toggleAllIndicatorsEye = () => {
-    updateHiddenIndicators((prev) => toggleAllIndicatorsVisibility(activeCustomIndicatorIds, prev));
+    const nextHide = !allIndicatorsHidden;
+    if (showInstitutionalZones) {
+      setIsInstZonesHidden(nextHide);
+    }
+    updateHiddenIndicators((prev) => {
+      if (nextHide) {
+        return Array.from(new Set([...prev, ...activeCustomIndicatorIds]));
+      }
+      return prev.filter((id) => !activeCustomIndicatorIds.includes(id));
+    });
   };
 
   // Toggle Custom Indicator (Add / Full Remove)
@@ -1038,8 +1109,85 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
     // 8. Render Visible Custom Indicators from Library (Universal PineTS + Flagship Fallbacks)
     for (const customId of visibleCustomIndicatorIds) {
+      if (customId.toLowerCase().includes('volume-spike')) {
+        const vsRep = calculateVolumeSpikeDetector(uniqueCandles);
+        if (vsRep.bars.length > 0) {
+          const buyHist = chart.addSeries(HistogramSeries, {
+            priceFormat: { type: 'volume' },
+            priceLineVisible: false,
+          }, 3);
+          buyHist.setData(
+            vsRep.bars.map((b) => ({
+              time: b.time as any,
+              value: Math.round(b.buyVol),
+              color: b.isSpike ? (b.isBuyDom ? '#00e676' : '#6ee7b7') : 'rgba(16, 185, 129, 0.78)',
+            }))
+          );
+          buyHist.createPriceLine({
+            price: 0,
+            color: '#52525b',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: false,
+            title: '0',
+          });
+
+          const sellHist = chart.addSeries(HistogramSeries, {
+            priceFormat: { type: 'volume' },
+            priceLineVisible: false,
+          }, 3);
+          sellHist.setData(
+            vsRep.bars.map((b) => ({
+              time: b.time as any,
+              value: -Math.round(b.sellVol),
+              color: b.isSpike ? (!b.isBuyDom ? '#ff1744' : '#fda4af') : 'rgba(244, 63, 94, 0.78)',
+            }))
+          );
+
+          const volMaLine = chart.addSeries(LineSeries, {
+            color: '#94a3b8',
+            lineWidth: 2,
+            priceFormat: { type: 'volume' },
+            priceLineVisible: false,
+          }, 3);
+          volMaLine.setData(
+            vsRep.bars.map((b) => ({
+              time: b.time as any,
+              value: Math.round(b.volMA),
+            }))
+          );
+
+          const spikeMarkers: any[] = [];
+          let lastMarkerIdx = -10;
+          for (let idx = 0; idx < vsRep.bars.length; idx++) {
+            const b = vsRep.bars[idx];
+            if (!b.isSpike && !b.isChurn) continue;
+            if (!b.isChurn && idx - lastMarkerIdx < 4 && b.zScore < 2.8) continue;
+            lastMarkerIdx = idx;
+            spikeMarkers.push({
+              time: b.time as any,
+              position: (b.isBuyDom ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+              color: b.isChurn ? '#38bdf8' : '#f59e0b',
+              shape: (b.isChurn ? 'circle' : b.isBuyDom ? 'arrowUp' : 'arrowDown') as
+                | 'circle'
+                | 'arrowUp'
+                | 'arrowDown',
+              text: b.isChurn ? 'CHURN' : `Z${b.zScore.toFixed(1)}`,
+            });
+          }
+          if (spikeMarkers.length > 0) {
+            try {
+              createSeriesMarkers(volMaLine, spikeMarkers.slice(-9));
+            } catch {
+              // ignore marker edge cases
+            }
+          }
+        }
+        continue;
+      }
+
       if (isFlagshipCustomId(customId)) {
-        // Flagship overlays (SuperTrendProOverlay, OrderFlowOverlay, QuantumMarketXrayOverlay) render their own full suites
+        // Flagship overlays (SuperTrendProOverlay, SuperKumoOverlay, OrderFlowOverlay, QuantumMarketXrayOverlay) render their own full suites
         continue;
       }
 
@@ -1280,7 +1428,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
           panes[2].setStretchFactor(1.0); // RSI pane
         }
         if (panes[3] && typeof panes[3].setStretchFactor === 'function') {
-          panes[3].setStretchFactor(0.9); // Custom sub-pane if any
+          panes[3].setStretchFactor(1.25); // Custom sub-pane (Volume Spike & Change Pro)
         }
       }
     } catch {
@@ -1571,6 +1719,27 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     return calculateSuperTrendPro(uniqueChartCandles, { symbol, timeframe });
   }, [isSuperTrendActive, uniqueChartCandles, symbol, timeframe]);
 
+  // SuperKumo MPro Report (Ichimoku Kumo, Supertrend, ADX Chop, S/R Zones, Trail Stop)
+  const superKumoReport: SuperKumoReport | null = useMemo(() => {
+    if (!isSuperKumoActive || uniqueChartCandles.length === 0) return null;
+    return calculateSuperKumoMpro(uniqueChartCandles);
+  }, [isSuperKumoActive, uniqueChartCandles]);
+
+  // Volume Spike & Change Detector Pro Report (Buy/Sell split, Z-Score, Churn, Weekly/Monthly MTF Sentiment)
+  const volumeSpikeReport: VolumeSpikeReport | null = useMemo(() => {
+    if (!isVolumeSpikeActive || uniqueChartCandles.length === 0) return null;
+    return calculateVolumeSpikeDetector(uniqueChartCandles);
+  }, [isVolumeSpikeActive, uniqueChartCandles]);
+
+  // Institutional Buy Zone & LVN Volume Gap Structural Context (Feature 2)
+  const marketStructuralSummary: MarketStructuralSummary | null = useMemo(() => {
+    if (uniqueChartCandles.length < 15) return null;
+    return analyzeMarketStructuralContext({
+      symbol,
+      dailyCandles: uniqueChartCandles,
+    });
+  }, [symbol, uniqueChartCandles]);
+
   // NWE & SMC Context + Automated Chart & POC Structural Reading
   const nweResult = useMemo(() => {
     if (uniqueChartCandles.length < 5) return null;
@@ -1627,6 +1796,32 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
     .map((id): ActiveIndicatorSummaryPill | null => {
       const isHidden = hiddenIndicatorIds.includes(id);
       const norm = id.toLowerCase();
+      if (norm.includes('superkumo')) {
+        const skRep = superKumoReport ?? calculateSuperKumoMpro(uniqueChartCandles);
+        const d = skRep.dashboard;
+        return {
+          id,
+          name: 'SuperKumo MPro',
+          color: d.trend === 'UP' ? '#10b981' : '#f43f5e',
+          summaryValue: `${d.trend} · ${d.lastSignalText}${d.trailStop !== null ? ` · Trail $${d.trailStop.toFixed(2)}` : ''}`,
+          summaryStatus: d.trend === 'UP' ? 'BULLISH' : 'BEARISH',
+          isHidden,
+        };
+      }
+      if (norm.includes('volume-spike')) {
+        const vsRep = volumeSpikeReport ?? calculateVolumeSpikeDetector(uniqueChartCandles);
+        const d = vsRep.dashboard;
+        const sign = d.mtfSentimentScore > 0 ? '+' : '';
+        return {
+          id,
+          name: 'Volume Spike & Change Detector Pro',
+          color: d.mtfSentimentScore >= 0 ? '#10b981' : '#f43f5e',
+          summaryValue: `Sent ${sign}${d.mtfSentimentScore}/10 (${d.sentimentLabel}) · Z ${d.zScore.toFixed(2)}σ · Buy ${d.buyPct.toFixed(0)}%`,
+          summaryStatus:
+            d.mtfSentimentScore >= 2 ? 'BULLISH' : d.mtfSentimentScore <= -2 ? 'BEARISH' : 'NEUTRAL',
+          isHidden,
+        };
+      }
       if (norm.includes('supertrend')) {
         const stRep = superTrendReport ?? calculateSuperTrendPro(uniqueChartCandles, { symbol, timeframe });
         const d = stRep?.dashboard;
@@ -2170,6 +2365,29 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
               <BarChart3 className="w-3 h-3 text-amber-400" />
               <span>Vol Profile {showVolumeProfile ? 'ON' : 'OFF'}</span>
             </button>
+            <button
+              data-testid="toggle-inst-zones-btn"
+              type="button"
+              onClick={() => {
+                const next = !showInstitutionalZones;
+                setShowInstitutionalZones(next);
+                try {
+                  localStorage.setItem('stageledger_show_inst_zones', String(next));
+                } catch {
+                  // ignore storage errors
+                }
+                if (next) setIsInstZonesHidden(false);
+              }}
+              className={`px-2.5 py-1 rounded font-medium transition flex items-center space-x-1 ${
+                showInstitutionalZones
+                  ? 'bg-sky-500/20 text-sky-300 font-bold border border-sky-500/40 shadow-md shadow-sky-500/10'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Toggle Institutional Buy Zone & Volume Gap (LVN) Structural Overlays"
+            >
+              <Layers className="w-3 h-3 text-sky-400" />
+              <span>Inst Zones {showInstitutionalZones ? 'ON' : 'OFF'}</span>
+            </button>
           </div>
 
           {/* Vela Workspace Layout Selector (visible when workspace active) */}
@@ -2209,6 +2427,53 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </button>
+
+          {(() => {
+            const symUpper = symbol.trim().toUpperCase();
+            const isQueued = queuedBotSymbols.includes(symUpper);
+            const eligible = isAlpacaEquityEligibleSymbol(symUpper) && Boolean(currentCandle?.close && currentCandle.close > 0);
+            const isBear = Boolean(activeSetup?.type?.includes('BEARISH'));
+            return (
+              <button
+                type="button"
+                data-testid="chart-queue-bot-btn"
+                disabled={!eligible}
+                onClick={() => {
+                  if (!eligible || !currentCandle) return;
+                  if (isQueued) {
+                    removeQueuedBotCandidate(symUpper);
+                    return;
+                  }
+                  enqueueBotCandidate({
+                    symbol: symUpper,
+                    direction: isBear ? 'BEARISH' : 'BULLISH',
+                    source: 'CHART',
+                    setupType: activeSetup?.type || 'CHART_SIGNAL',
+                    qualityScore: activeSetup?.qualityScore ?? 75,
+                    currentPrice: currentCandle.close,
+                    atr: activeSetup
+                      ? Number((Math.abs(activeSetup.triggerPrice - activeSetup.stopLoss) / 1.2).toFixed(4))
+                      : undefined,
+                  });
+                }}
+                className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isQueued
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                    : 'bg-zinc-950 text-zinc-200 border-zinc-700 hover:border-emerald-500/40 hover:text-emerald-300'
+                }`}
+                title={
+                  !isAlpacaEquityEligibleSymbol(symUpper)
+                    ? 'Only US Equities/ETFs can be queued for Alpaca Paper Auto-Bot'
+                    : isQueued
+                    ? `${symUpper} is queued for Auto-Bot (click to remove)`
+                    : `Queue ${symUpper} (${isBear ? 'BEARISH' : 'BULLISH'}) into Auto-Bot candidate queue (protected by canTrade() + Market Health)`
+                }
+              >
+                {isQueued ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Bot className="w-3.5 h-3.5 text-emerald-400" />}
+                <span>{isQueued ? 'Queued for Bot' : 'Queue for Bot'}</span>
+              </button>
+            );
+          })()}
         </div>
 
         {/* Right: Live Quote Pill & EXPAND FULLSCREEN BUTTON */}
@@ -2266,7 +2531,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
       </div>
 
       {/* 3. ACTIVE CUSTOM INDICATORS PILLS BAR */}
-      {activeCustomSummaries.length > 0 && (
+      {(activeCustomSummaries.length > 0 || showInstitutionalZones) && (
         <div className={`flex flex-wrap items-center gap-2 text-xs font-mono bg-zinc-950 ${isExpanded ? 'px-2.5 py-1 shrink-0' : 'px-3 py-2'} rounded-lg border border-zinc-800`}>
           <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-sans font-bold">
             Active Indicators:
@@ -2331,6 +2596,49 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
               </button>
             </div>
           ))}
+          {showInstitutionalZones && (
+            <div
+              data-testid="active-indicator-pill-inst-zones"
+              className={`flex items-center space-x-1.5 px-2 py-0.5 bg-zinc-900 rounded-md text-[11px] border transition ${
+                isInstZonesHidden
+                  ? 'opacity-60 border-zinc-800 text-zinc-500'
+                  : 'border-sky-500/40'
+              }`}
+            >
+              <span
+                className="w-2 h-2 rounded-full transition"
+                style={{ backgroundColor: isInstZonesHidden ? '#52525b' : '#38bdf8' }}
+              ></span>
+              <span className={`font-semibold ${isInstZonesHidden ? 'text-zinc-400 line-through' : 'text-white'}`}>
+                Inst Buy Zone &amp; Vol Gap
+              </span>
+              {isInstZonesHidden ? (
+                <span className="px-1 text-[9px] rounded font-bold bg-zinc-800 text-zinc-400">
+                  [Hidden]
+                </span>
+              ) : (
+                marketStructuralSummary?.institutionalBuyZone && (
+                  <span className="font-bold text-sky-300">
+                    ${marketStructuralSummary.institutionalBuyZone.low.toFixed(2)}–${marketStructuralSummary.institutionalBuyZone.high.toFixed(2)}
+                  </span>
+                )
+              )}
+              <button
+                type="button"
+                data-testid="toggle-visibility-inst-zones"
+                onClick={() => setIsInstZonesHidden((prev) => !prev)}
+                className={`p-0.5 rounded ml-1 transition ${
+                  isInstZonesHidden
+                    ? 'text-amber-400 hover:text-emerald-300 hover:bg-zinc-800'
+                    : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800'
+                }`}
+                aria-label={`${isInstZonesHidden ? 'Show' : 'Hide'} Institutional Buy Zone & Volume Gap overlays`}
+                title="Toggle Institutional Buy Zone & Volume Gap eye visibility"
+              >
+                {isInstZonesHidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          )}
           <button
             type="button"
             data-testid="toggle-all-indicators-bar-btn"
@@ -2491,7 +2799,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
 
                 {/* Zoom, Indicator Visibility Eye & Fit Action Buttons */}
                 <div className="flex items-center space-x-1">
-                  {activeCustomIndicatorIds.length > 0 && (
+                  {indicatorsVisibility.hasAnyLayer && (
                     <button
                       type="button"
                       data-testid="chart-clean-eye-btn"
@@ -2721,6 +3029,41 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                       }
                       onProfileUpdate={setVisibleVolumeProfile}
                     />
+                    <StructuralZonesOverlay
+                      chart={chartApi}
+                      mainSeries={mainSeriesApi}
+                      containerRef={chartContainerRef}
+                      structural={marketStructuralSummary}
+                      visible={indicatorsVisibility.instZonesVisible}
+                      rightPaddingPx={
+                        isSuperTrendActive && superTrendToggles.table
+                          ? hasRightEdgeSetupPriceLines
+                            ? 294
+                            : 204
+                          : hasRightEdgeSetupPriceLines
+                            ? 104
+                            : 12
+                      }
+                    />
+                    {isSuperKumoActive && superKumoReport && (
+                      <SuperKumoOverlay
+                        chart={chartApi}
+                        mainSeries={mainSeriesApi}
+                        containerRef={chartContainerRef}
+                        report={superKumoReport}
+                        visible={isSuperKumoActive}
+                        rightPaddingPx={
+                          isSuperTrendActive && superTrendToggles.table
+                            ? hasRightEdgeSetupPriceLines
+                              ? 294
+                              : 204
+                            : hasRightEdgeSetupPriceLines
+                              ? 104
+                              : 12
+                        }
+                      />
+                    )}
+                    {/* Pro telemetry HUD cards docked cleanly beneath chart canvas (zero Pane 3 overlap) */}
                     {activePineOverlayResults.length > 0 && (
                       <PineScriptOverlay
                         chart={chartApi}
@@ -2858,6 +3201,100 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             </div>
           </div>
 
+          {!isExpanded && ((isSuperKumoActive && superKumoReport) || (isVolumeSpikeActive && volumeSpikeReport)) && (
+            <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 shrink-0">
+              {isSuperKumoActive && superKumoReport && (
+                <div
+                  data-testid="superkumo-hud-card"
+                  className="bg-zinc-950/90 border border-zinc-800 rounded-lg px-3 py-2 text-[11px] font-mono tabular-nums shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2 pb-1 mb-1.5 border-b border-zinc-800/80">
+                    <span className="font-bold text-zinc-200">SuperKumo MPro</span>
+                    <span className={superKumoReport.dashboard.trend === 'UP' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {superKumoReport.dashboard.trend} {superKumoReport.dashboard.trend === 'UP' ? '▲' : '▼'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-zinc-400">
+                    <div className="flex justify-between gap-2">
+                      <span>Last:</span>
+                      <span className="text-zinc-100 truncate">{superKumoReport.dashboard.lastSignalText}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Trail Stop:</span>
+                      <span className="text-zinc-100">{superKumoReport.dashboard.trailStop !== null ? `$${superKumoReport.dashboard.trailStop.toFixed(2)}` : '—'}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Tenkan / Kijun:</span>
+                      <span className="text-zinc-100">${superKumoReport.dashboard.tenkan.toFixed(2)} / ${superKumoReport.dashboard.kijun.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>ADX / Room:</span>
+                      <span className={superKumoReport.dashboard.roomUpOk ? 'text-emerald-300' : 'text-amber-300'}>
+                        {superKumoReport.dashboard.adx.toFixed(1)} · {superKumoReport.dashboard.roomUpOk ? 'Room OK' : 'Tight S/R'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isVolumeSpikeActive && volumeSpikeReport && (
+                <div
+                  data-testid="volume-spike-hud-card"
+                  className="bg-zinc-950/90 border border-zinc-800 rounded-lg px-3 py-2 text-[11px] font-mono tabular-nums shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2 pb-1 mb-1.5 border-b border-zinc-800/80">
+                    <span className="font-bold text-zinc-200">Vol Spike &amp; Change Pro</span>
+                    <span
+                      className={`font-bold ${
+                        volumeSpikeReport.dashboard.mtfSentimentScore >= 2
+                          ? 'text-emerald-400'
+                          : volumeSpikeReport.dashboard.mtfSentimentScore <= -2
+                            ? 'text-rose-400'
+                            : 'text-amber-300'
+                      }`}
+                    >
+                      {volumeSpikeReport.dashboard.mtfSentimentScore > 0 ? '+' : ''}
+                      {volumeSpikeReport.dashboard.mtfSentimentScore}/10 {volumeSpikeReport.dashboard.sentimentLabel}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-zinc-400">
+                    <div className="flex justify-between gap-2">
+                      <span>Z-Score / MA:</span>
+                      <span className={volumeSpikeReport.dashboard.isSpike ? 'text-amber-300 font-bold' : 'text-zinc-100'}>
+                        {volumeSpikeReport.dashboard.zScore.toFixed(2)}σ ({volumeSpikeReport.dashboard.pctOfMa}% MA)
+                        {volumeSpikeReport.dashboard.isChurn ? ' · CHURN' : ''}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Buy / Sell:</span>
+                      <span className="text-zinc-100">
+                        <strong className="text-emerald-400">{volumeSpikeReport.dashboard.buyPct.toFixed(0)}%</strong>
+                        {' / '}
+                        <strong className="text-rose-400">{volumeSpikeReport.dashboard.sellPct.toFixed(0)}%</strong>
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Wk Delta:</span>
+                      <span className="text-zinc-100">
+                        {volumeSpikeReport.dashboard.weekDeltaChgPct !== null
+                          ? `${volumeSpikeReport.dashboard.weekDeltaChgPct >= 0 ? '+' : ''}${volumeSpikeReport.dashboard.weekDeltaChgPct.toFixed(0)}%`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span>Mo Delta:</span>
+                      <span className="text-zinc-100">
+                        {volumeSpikeReport.dashboard.monthDeltaChgPct !== null
+                          ? `${volumeSpikeReport.dashboard.monthDeltaChgPct >= 0 ? '+' : ''}${volumeSpikeReport.dashboard.monthDeltaChgPct.toFixed(0)}%`
+                          : '—'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Indicator Footnotes / Legend (hidden in fullscreen so 100% of vertical space goes to Candles/MACD/RSI/Time Axis) */}
           {!isExpanded && (
             <div className="mt-2.5 pt-2 border-t border-zinc-800 flex flex-wrap items-center justify-between text-[11px] text-zinc-500 gap-2 shrink-0">
@@ -2889,7 +3326,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
         {/* Right col: Chart & POC Reader + Setup Blueprint + SEC Filing Insight (Hidden when in expanded fullscreen) */}
         {!isExpanded && (
           <div className="space-y-4">
-            <ChartPocReaderPanel reading={chartPocReading} />
+            <ChartPocReaderPanel reading={chartPocReading} structuralReading={marketStructuralSummary} />
             {activeSetup ? (
               <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-xl">
                 <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800">

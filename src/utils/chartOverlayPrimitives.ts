@@ -476,3 +476,26 @@ export function toggleAllIndicatorsVisibility(
     ? hiddenIds.filter((id) => !activeIds.includes(id))
     : Array.from(new Set([...hiddenIds, ...activeIds]));
 }
+
+export function resolveActiveIndicatorsVisibility(params: {
+  activeCustomIds: string[];
+  hiddenCustomIds: string[];
+  showInstitutionalZones: boolean;
+  isInstZonesHidden: boolean;
+}): {
+  hasAnyLayer: boolean;
+  instZonesVisible: boolean;
+  allHidden: boolean;
+} {
+  const { activeCustomIds, hiddenCustomIds, showInstitutionalZones, isInstZonesHidden } = params;
+  const hasCustom = activeCustomIds.length > 0;
+  const hasAnyLayer = hasCustom || showInstitutionalZones;
+  const customAllHidden = !hasCustom || areAllIndicatorsHidden(activeCustomIds, hiddenCustomIds);
+  const instZonesHiddenIfActive = !showInstitutionalZones || isInstZonesHidden;
+  return {
+    hasAnyLayer,
+    instZonesVisible: showInstitutionalZones && !isInstZonesHidden,
+    allHidden: hasAnyLayer && customAllHidden && instZonesHiddenIfActive,
+  };
+}
+

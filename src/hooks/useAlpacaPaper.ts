@@ -268,13 +268,18 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
   const closePosition = useCallback(
     async (
       symbol: string,
-      opts?: { qty?: number; percentage?: number }
+      opts?: { qty?: number; percentage?: number; cancelOrders?: boolean }
     ): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const configDigest = computeConfigDigest(loadSettings());
       const qs = new URLSearchParams();
       if (opts?.qty !== undefined && opts.qty > 0) qs.set('qty', String(opts.qty));
       else if (opts?.percentage !== undefined && opts.percentage > 0 && opts.percentage < 100) {
         qs.set('percentage', String(opts.percentage));
+      }
+      if (opts?.cancelOrders === true) {
+        qs.set('cancel_orders', 'true');
+      } else if (opts?.cancelOrders === false) {
+        qs.set('cancel_orders', 'false');
       }
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
       const resp = await fetchJsonSafe<{ order?: any; error?: string }>(

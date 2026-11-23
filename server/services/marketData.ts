@@ -777,9 +777,11 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
       const volSymbols = ['^VIX', '^VIX3M', 'TLT'];
 
       const allSymbols = [...benchmarkSymbols, ...volSymbols, ...sectorEtfs];
-      const results = await Promise.all(
-        allSymbols.map((sym) => fetchYahooData(sym, '1d', '1y', 20))
-      );
+      const [results, spyWeeklyCandles, qqqWeeklyCandles] = await Promise.all([
+        Promise.all(allSymbols.map((sym) => fetchYahooData(sym, '1d', '1y', 20))),
+        fetchYahooData('SPY', '1wk', '2y', 10),
+        fetchYahooData('QQQ', '1wk', '2y', 10),
+      ]);
 
       const bySym = new Map<string, Candle[]>();
       allSymbols.forEach((sym, idx) => {
@@ -813,6 +815,8 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
         tltCandles: bySym.get('TLT') || [],
         flowBenchmarkCandles,
         sectorEtfs: sectorMap,
+        spyWeeklyCandles,
+        qqqWeeklyCandles,
       });
 
       cachedMarketHealth = { timestamp: now, data: report };

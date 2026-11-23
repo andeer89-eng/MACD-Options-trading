@@ -35,6 +35,7 @@ import {
   Award,
   Scale,
   Target,
+  Trash2,
 } from 'lucide-react';
 import { getMarketSessionStatus } from '../utils/marketSession';
 import {
@@ -61,6 +62,19 @@ import {
   parseOccOptionSymbol,
   selectAlpacaEquityCandidates,
 } from '../utils/alpacaJournalSync';
+import {
+  buildDeterministicOrderPlan,
+  executeDeterministicOrderPlan,
+} from '../utils/deterministicOrderPipeline';
+import {
+  BotQueuedCandidate,
+  BOT_QUEUE_EVENT,
+  clearBotCandidateQueue,
+  loadBotCandidateQueue,
+  markBotCandidateOutcome,
+  removeQueuedBotCandidate,
+  saveBotCandidateQueue,
+} from '../utils/botCandidateQueue';
 import { useAlpacaPaper } from '../hooks/useAlpacaPaper';
 import { useMarketHealth } from '../hooks/useMarketHealth';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
@@ -90,10 +104,14 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     refresh: refreshAlpaca,
     submitOrder,
     closePosition,
+    cancelOrder,
   } = useAlpacaPaper({ pollMs: 30000 });
   const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
 
   const [account, setAccount] = useState<PortfolioAccount>(() => loadAutomatedPortfolio());
+  const [queuedCandidates, setQueuedCandidates] = useState<BotQueuedCandidate[]>(() =>
+    loadBotCandidateQueue()
+  );
   const [portfolioTab, setPortfolioTab] = useState<'positions' | 'analytics' | 'brain'>('positions');
   const [chartMode, setChartMode] = useState<'equity' | 'drawdown' | 'combined'>('combined');
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
@@ -284,9 +302,14 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
 
   useEffect(() => {
     isMountedRef.current = true;
+    const syncQueue = () => setQueuedCandidates(loadBotCandidateQueue());
+    window.addEventListener(BOT_QUEUE_EVENT, syncQueue);
+    window.addEventListener('storage', syncQueue);
     return () => {
       isMountedRef.current = false;
       cycleAbortRef.current?.abort();
+      window.removeEventListener(BOT_QUEUE_EVENT, syncQueue);
+      window.removeEventListener('storage', syncQueue);
     };
   }, []);
 
@@ -352,52 +375,73 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         ...loadSettings(),
         maxRiskPerTradePct: accountRef.current.riskPerTradePercent || 1.0,
       };
-      const { ordersToPlace, positionsToClose, skippedByRiskGates } = selectAlpacaEquityCandidates(
-        activeOverview,
-        marketItems,
-        masterSettings,
-        accountRef.current.maxOpenPositions || 5,
-        { marketHealth: activeHealth }
-      );
+      const currentQueue = loadBotCandidateQueue();
+      const { ordersToPlace, positionsToClose, reversalRequests, skippedByRiskGates } =
+        selectAlpacaEquityCandidates(
+          activeOverview,
+          marketItems,
+          masterSettings,
+          accountRef.current.maxOpenPositions || 5,
+          { marketHealth: activeHealth, queuedCandidates: currentQueue }
+        );
 
-      let executedCount = 0;
-      const messages: string[] = [];
+      // Deterministic 3-Phase Pipeline: #1 Cancel conflicting open orders -> #2 Close exits/reversals -> #3 Submit cleared entries
+      const orderPlan = buildDeterministicOrderPlan({
+        openOrders: activeOverview.orders || [],
+        equityPositions: activeOverview.equityPositions || [],
+        positionsToClose,
+        reversalRequests,
+        ordersToPlace,
+      });
 
-      for (const exitItem of positionsToClose) {
-        const closeRes = await closePosition(exitItem.symbol, { percentage: exitItem.percentage });
-        if (closeRes.ok) {
-          executedCount++;
-          messages.push(`Closed ${exitItem.symbol} (${exitItem.reason})`);
-        } else if (closeRes.error) {
-          messages.push(`Exit error ${exitItem.symbol}: ${closeRes.error}`);
+      const execResult = await executeDeterministicOrderPlan(orderPlan, {
+        cancelOrder,
+        closePosition,
+        submitOrder,
+      });
+
+      // Update queued candidate lifecycle outcomes strictly based on gate & execution results
+      let updatedQueue = currentQueue;
+      for (const sym of execResult.submittedSymbols) {
+        updatedQueue = markBotCandidateOutcome(
+          updatedQueue,
+          sym,
+          'EXECUTED',
+          'Cleared canTrade() + Market Health and routed via Deterministic Pipeline'
+        );
+      }
+      for (const sym of execResult.closedSymbols) {
+        const rev = reversalRequests.find((r) => r.symbol === sym);
+        if (rev) {
+          updatedQueue = markBotCandidateOutcome(updatedQueue, sym, 'EXECUTED', rev.reason);
         }
       }
-
-      for (const cand of ordersToPlace) {
-        const orderRes = await submitOrder({
-          symbol: cand.symbol,
-          side: cand.side,
-          qty: cand.qty,
-          type: cand.type,
-          time_in_force: cand.time_in_force,
-          client_order_id: cand.client_order_id,
-        });
-        if (orderRes.ok) {
-          executedCount++;
-          messages.push(`Submitted Alpaca Paper BUY ${cand.qty} ${cand.symbol}`);
-        } else if (orderRes.error) {
-          messages.push(`Order error ${cand.symbol}: ${orderRes.error}`);
-        }
+      for (const skip of skippedByRiskGates) {
+        updatedQueue = markBotCandidateOutcome(updatedQueue, skip.symbol, 'BLOCKED', skip.reasons[0]);
+      }
+      for (const haltedSym of execResult.haltedSymbols) {
+        updatedQueue = markBotCandidateOutcome(
+          updatedQueue,
+          haltedSym,
+          'BLOCKED',
+          'Halted by Deterministic Pipeline safety guard'
+        );
+      }
+      if (currentQueue.length > 0) {
+        saveBotCandidateQueue(updatedQueue);
+        setQueuedCandidates(updatedQueue);
       }
 
       await refreshAlpaca();
 
-      if (executedCount > 0) {
+      const totalActions =
+        execResult.cancelledCount + execResult.closedCount + execResult.submittedCount;
+      if (totalActions > 0 || execResult.errors.length > 0) {
+        const pipelineSummary = `Pipeline (#1 Cancel: ${execResult.cancelledCount} → #2 Close: ${execResult.closedCount} → #3 Enter: ${execResult.submittedCount})`;
+        const detailParts = [...execResult.logs, ...execResult.errors];
         setLastCycleMessage(
-          `Alpaca Paper cycle complete: ${messages.join(' • ')}. Synced to Local Trade Journal.`
+          `Alpaca Paper ${pipelineSummary}: ${detailParts.join(' • ')}. Synced to Local Trade Journal.`
         );
-      } else if (messages.length > 0) {
-        setLastCycleMessage(`Alpaca Paper notices: ${messages.join(' • ')}`);
       } else {
         const gateNote =
           skippedByRiskGates.length > 0
@@ -448,7 +492,10 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     const pct = closeFraction >= 1.0 ? 100 : Math.max(1, Math.round(closeFraction * 100));
     const targetSym = positionToClose.symbol;
     setPositionToClose(null);
-    const res = await closePosition(targetSym, pct >= 100 ? undefined : { percentage: pct });
+    const res = await closePosition(
+      targetSym,
+      pct >= 100 ? { cancelOrders: true } : { percentage: pct }
+    );
     if (res.ok) {
       setLastCycleMessage(
         `Submitted Alpaca Paper close (${pct}%) for ${targetSym}. Real fills synced to Local Trade Journal.`
@@ -595,6 +642,23 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                       ? `${marketHealth.current.sizeMultiplier}x`
                       : 'HALTED'}
                   </span>
+                </span>
+              )}
+              {marketHealth?.structuralContext?.spy && (
+                <span
+                  data-testid="equities-structural-guard"
+                  className={`inline-flex items-center px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold border ${
+                    marketHealth.structuralContext.spy.regime === 'IN_VOLUME_GAP'
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : marketHealth.structuralContext.spy.regime === 'AT_INSTITUTIONAL_BUY_ZONE'
+                        ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+                        : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+                  }`}
+                >
+                  SPY Struct: {marketHealth.structuralContext.spy.regime.replace(/_/g, ' ')}
+                  {marketHealth.structuralContext.spy.institutionalBuyZone
+                    ? ` · Buy Zone $${marketHealth.structuralContext.spy.institutionalBuyZone.low.toFixed(0)}–$${marketHealth.structuralContext.spy.institutionalBuyZone.high.toFixed(0)}`
+                    : ''}
                 </span>
               )}
             </div>
@@ -857,11 +921,109 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             At Fibonacci Target 1 (38.2%), platform automatically closes 50% of shares and immediately moves the trailing stop to breakeven.
           </div>
           <div className="bg-zinc-950 p-2.5 rounded-lg border border-zinc-800/60">
-            <span className="text-blue-400 font-bold block mb-0.5">3. Target 2 &amp; Stop Protection</span>
-            At Target 2 (61.8%), model closes remaining shares at maximum objective or cuts 100% instantly if stop-loss is triggered.
+            <span className="text-blue-400 font-bold block mb-0.5">3. Deterministic Order Pipeline</span>
+            Executes in strict broker-safe sequence: <span className="font-mono text-zinc-200">#1 Cancel conflicting orders &rarr; #2 Close exits/reversals &rarr; #3 Submit cleared entries</span>.
           </div>
         </div>
       </div>
+
+          {/* Internal Candidate Queue (Chart Studio & Live Scanner -> Gate-Protected Auto-Bot) */}
+          <div
+            data-testid="bot-candidate-queue-panel"
+            className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <GitBranch className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Internal Candidate Queue ({queuedCandidates.length})
+                </h3>
+                <span className="text-[11px] text-zinc-400 font-mono">
+                  Chart &amp; Scanner signals &rarr; Protected by canTrade() + Market Health + Deterministic Pipeline
+                </span>
+              </div>
+              {queuedCandidates.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearBotCandidateQueue();
+                    setQueuedCandidates([]);
+                  }}
+                  className="text-[11px] font-mono text-zinc-400 hover:text-rose-300 px-2.5 py-1 rounded border border-zinc-800 hover:border-rose-500/40 transition"
+                >
+                  Clear Queue
+                </button>
+              )}
+            </div>
+
+            {queuedCandidates.length === 0 ? (
+              <div className="text-xs text-zinc-500 py-2">
+                No queued setups yet. Click <span className="text-zinc-300 font-semibold">Queue for Bot</span> inside Chart Studio or <span className="text-zinc-300 font-semibold">Queue Bot</span> on any Scanner card to route a setup through all risk gates.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {queuedCandidates.map((cand) => (
+                  <div
+                    key={cand.id}
+                    data-testid={`queued-candidate-${cand.symbol}`}
+                    className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex items-start justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => onSelectSymbolForChart(cand.symbol)}
+                          className="font-mono font-bold text-white hover:text-emerald-400 transition"
+                        >
+                          {cand.symbol}
+                        </button>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+                            cand.direction === 'BULLISH'
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                              : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                          }`}
+                        >
+                          {cand.direction}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-900 text-zinc-300 border border-zinc-800">
+                          {cand.source}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                            cand.status === 'EXECUTED'
+                              ? 'text-emerald-400'
+                              : cand.status === 'BLOCKED'
+                              ? 'text-amber-300'
+                              : 'text-sky-300'
+                          }`}
+                        >
+                          {cand.status}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono tabular-nums text-zinc-400">
+                        {cand.setupType} · Score {cand.qualityScore}% · ${cand.currentPrice.toFixed(2)}
+                      </div>
+                      {cand.lastNote && (
+                        <div className="text-[10px] text-amber-300/90 leading-snug break-words">
+                          {cand.lastNote}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${cand.symbol} from bot candidate queue`}
+                      onClick={() => setQueuedCandidates(removeQueuedBotCandidate(cand.symbol))}
+                      className="p-1 rounded text-zinc-500 hover:text-rose-400 hover:bg-zinc-900 transition shrink-0"
+                      title="Remove candidate from queue"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
       {/* SECTION 1: Active Open Positions Table with Dropdown Accordion */}
       <div className="space-y-3">

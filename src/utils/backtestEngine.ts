@@ -31,6 +31,10 @@ import {
   type BucketStats,
   type AnnotatedTrade,
 } from '@luxalgo/journal-core';
+import {
+  computeBacktestRuleAttribution,
+  type RuleAttributionRow,
+} from './tradeAttribution.ts';
 
 export interface BacktestConfig {
   symbol: string;
@@ -66,11 +70,15 @@ export interface SimulatedTrade {
   status: 'win' | 'loss' | 'breakeven' | 'open';
   exitReason: 'TP1_HIT' | 'TP2_HIT' | 'STOP_LOSS' | 'BREAKEVEN' | 'BARS_EXPIRED' | 'STILL_OPEN';
   quantity: number;
+  grossPnl: number;
+  feeAndSlippageDollars: number;
+  feeDragPct: number;
   netPnl: number;
   returnPct: number;
   realizedR: number;
   barsHeld: number;
   qualityScore: number;
+  rulesFired: string[];
 }
 
 export interface BacktestResult {
@@ -91,6 +99,20 @@ export interface BacktestResult {
   byDuration: BucketStats[];
   candles: Candle[];
   detectedSetups: DivergenceSetup[];
+  grossTotalPnl: number;
+  totalFeeDragDollars: number;
+  ruleAttribution: RuleAttributionRow[];
+}
+
+function buildRulesFiredTags(setup: DivergenceSetup, config: BacktestConfig): string[] {
+  const tags: string[] = [setup.type];
+  if (setup.confluenceChecks.macdDivergence) tags.push('MACD_DIV');
+  if (setup.confluenceChecks.rsiDivergence) tags.push('RSI_DIV');
+  if (setup.confluenceChecks.volumeExhaustion) tags.push('VOL_EXHAUST');
+  if (setup.confluenceChecks.macdCrossConfirmed) tags.push('MACD_CROSS');
+  if (config.rsiFilter) tags.push('RSI_FILTER');
+  tags.push(`EXIT_${(config.targetMode || 'tranches').toUpperCase()}`);
+  return tags;
 }
 
 /**
@@ -131,6 +153,9 @@ export function runBacktest(
       byDuration: [],
       candles: candles || [],
       detectedSetups: [],
+      grossTotalPnl: 0,
+      totalFeeDragDollars: 0,
+      ruleAttribution: [],
     };
   }
 
@@ -274,9 +299,14 @@ export function runBacktest(
         const priceDiff = isLong
           ? exitPrice - activeTrade.entryPrice
           : activeTrade.entryPrice - exitPrice;
-        const netPnl = Number((priceDiff * activeTrade.quantity).toFixed(2));
+        const grossPnl = Number((priceDiff * activeTrade.quantity).toFixed(2));
+        // Consistent 10 bps (0.10%) round-trip spread/slippage cost model
+        const notional = Math.max(0, activeTrade.entryPrice * activeTrade.quantity);
+        const feeAndSlippageDollars = Number((notional * 0.001).toFixed(2));
+        const feeDragPct = notional > 0 ? Number(((feeAndSlippageDollars / notional) * 100).toFixed(3)) : 0;
+        const netPnl = Number((grossPnl - feeAndSlippageDollars).toFixed(2));
         const returnPct = Number(
-          ((priceDiff / activeTrade.entryPrice) * 100).toFixed(2)
+          ((netPnl / Math.max(1, notional)) * 100).toFixed(2)
         );
         const realizedR =
           activeTrade.riskDollars > 0
@@ -307,13 +337,18 @@ export function runBacktest(
           status,
           exitReason,
           quantity: activeTrade.quantity,
+          grossPnl,
+          feeAndSlippageDollars,
+          feeDragPct,
           netPnl,
           returnPct,
           realizedR,
           barsHeld,
           qualityScore: activeTrade.setup.qualityScore,
+          rulesFired: buildRulesFiredTags(activeTrade.setup, config),
         });
 
+        const perLegFee = Number((feeAndSlippageDollars / 2).toFixed(2));
         executions.push({
           id: `exec-${tradeCounter}-entry`,
           accountId: 'trullas-backtest-acc',
@@ -321,7 +356,7 @@ export function runBacktest(
           side: isLong ? 'buy' : 'sell',
           quantity: activeTrade.quantity,
           price: activeTrade.entryPrice,
-          fee: 1.0,
+          fee: perLegFee,
           executedAt: new Date(activeTrade.entryTime).toISOString(),
           source: 'sync',
         });
@@ -332,7 +367,7 @@ export function runBacktest(
           side: isLong ? 'sell' : 'buy',
           quantity: activeTrade.quantity,
           price: Number(exitPrice.toFixed(2)),
-          fee: 1.0,
+          fee: perLegFee,
           executedAt: new Date(curCandle.timestamp).toISOString(),
           source: 'sync',
         });
@@ -410,9 +445,13 @@ export function runBacktest(
     const priceDiff = isLong
       ? exitPrice - activeTrade.entryPrice
       : activeTrade.entryPrice - exitPrice;
-    const netPnl = Number((priceDiff * activeTrade.quantity).toFixed(2));
+    const grossPnl = Number((priceDiff * activeTrade.quantity).toFixed(2));
+    const notional = Math.max(0, activeTrade.entryPrice * activeTrade.quantity);
+    const feeAndSlippageDollars = Number((notional * 0.0005).toFixed(2));
+    const feeDragPct = notional > 0 ? Number(((feeAndSlippageDollars / notional) * 100).toFixed(3)) : 0;
+    const netPnl = Number((grossPnl - feeAndSlippageDollars).toFixed(2));
     const returnPct = Number(
-      ((priceDiff / activeTrade.entryPrice) * 100).toFixed(2)
+      ((netPnl / Math.max(1, notional)) * 100).toFixed(2)
     );
     const realizedR =
       activeTrade.riskDollars > 0
@@ -439,11 +478,15 @@ export function runBacktest(
       status: 'open',
       exitReason: 'STILL_OPEN',
       quantity: activeTrade.quantity,
+      grossPnl,
+      feeAndSlippageDollars,
+      feeDragPct,
       netPnl,
       returnPct,
       realizedR,
       barsHeld: candles.length - 1 - activeTrade.entryIndex,
       qualityScore: activeTrade.setup.qualityScore,
+      rulesFired: buildRulesFiredTags(activeTrade.setup, config),
     });
   }
 
@@ -461,7 +504,7 @@ export function runBacktest(
       ...rt,
       annotations: {
         playbook: 'Trullas MACD Triple Divergence',
-        tags: [sim?.setupType || 'TRIPLE_DIV', sim?.direction || 'long'],
+        tags: sim?.rulesFired || [sim?.setupType || 'TRIPLE_DIV', sim?.direction || 'long'],
         stopLoss: sim?.stopLoss,
         profitTarget: sim?.tp2,
       },
@@ -478,6 +521,15 @@ export function runBacktest(
   const dirStats: BucketStats[] = byDirection(annotatedTrades);
   const wkdayStats: BucketStats[] = byWeekday(annotatedTrades);
   const durStats: BucketStats[] = byDuration(annotatedTrades);
+
+  const closedTradesOnly = simulatedTrades.filter((t) => t.status !== 'open');
+  const grossTotalPnl = Number(
+    closedTradesOnly.reduce((s, t) => s + t.grossPnl, 0).toFixed(2)
+  );
+  const totalFeeDragDollars = Number(
+    closedTradesOnly.reduce((s, t) => s + t.feeAndSlippageDollars, 0).toFixed(2)
+  );
+  const ruleAttribution = computeBacktestRuleAttribution(simulatedTrades);
 
   return {
     symbol,
@@ -497,5 +549,8 @@ export function runBacktest(
     byDuration: durStats,
     candles,
     detectedSetups,
+    grossTotalPnl,
+    totalFeeDragDollars,
+    ruleAttribution,
   };
 }

@@ -592,9 +592,12 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
               {result.metrics.netPnl >= 0 ? '+' : ''}$
               {result.metrics.netPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </div>
-            <span className="text-[10px] text-zinc-500">
+            <span className="text-[10px] text-zinc-500 font-mono tabular-nums">
               {result.config.initialBalance > 0
-                ? `${((result.metrics.netPnl / result.config.initialBalance) * 100).toFixed(1)}% return`
+                ? `${((result.metrics.netPnl / result.config.initialBalance) * 100).toFixed(1)}% net`
+                : ''}
+              {typeof result.totalFeeDragDollars === 'number' && result.totalFeeDragDollars > 0
+                ? ` · Drag -$${result.totalFeeDragDollars.toFixed(0)}`
                 : ''}
             </span>
           </div>
@@ -824,6 +827,83 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                 ))}
               </div>
             </div>
+
+            {/* Rule & Confluence Attribution Breakdown (Rules Fired + Cost Drag) */}
+            <div
+              data-testid="backtest-rule-attribution"
+              className="md:col-span-3 bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-3"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 text-sm font-semibold text-zinc-200">
+                  <Layers className="w-4 h-4 text-indigo-400" />
+                  <span>Rule &amp; Confluence Attribution (Rules Fired)</span>
+                </div>
+                <div className="text-xs font-mono tabular-nums text-zinc-400">
+                  Gross: {result.grossTotalPnl >= 0 ? '+' : '-'}${Math.abs(result.grossTotalPnl || 0).toFixed(2)}
+                  {' · '}
+                  <span className="text-amber-400">
+                    10 bps Cost Drag: -${(result.totalFeeDragDollars || 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {result.ruleAttribution && result.ruleAttribution.length > 0 ? (
+                <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-zinc-950/60">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400 font-semibold">
+                      <tr>
+                        <th className="py-2 px-3">Rule / Confluence Tag</th>
+                        <th className="py-2 px-3 text-right">Trades (n)</th>
+                        <th className="py-2 px-3 text-right">Win Rate</th>
+                        <th className="py-2 px-3 text-right">Avg R</th>
+                        <th className="py-2 px-3 text-right">Expectancy</th>
+                        <th className="py-2 px-3 text-right">Cost Drag</th>
+                        <th className="py-2 px-3 text-right">Net P&amp;L</th>
+                        <th className="py-2 px-3 text-right">Sample</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                      {result.ruleAttribution.map((row) => (
+                        <tr key={row.rule} className="hover:bg-zinc-900/60">
+                          <td className="py-2 px-3 font-semibold text-zinc-200">{row.rule}</td>
+                          <td className="py-2 px-3 text-right text-zinc-300">{row.trades}</td>
+                          <td className="py-2 px-3 text-right text-zinc-200">{row.winRatePct.toFixed(1)}%</td>
+                          <td className="py-2 px-3 text-right text-amber-400">
+                            {row.avgRealizedR !== null
+                              ? `${row.avgRealizedR >= 0 ? '+' : ''}${row.avgRealizedR.toFixed(2)}R`
+                              : '—'}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right ${
+                              row.expectancyDollars >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {row.expectancyDollars >= 0 ? '+' : '-'}${Math.abs(row.expectancyDollars).toFixed(2)}
+                          </td>
+                          <td className="py-2 px-3 text-right text-amber-400">
+                            -${row.feeDragDollars.toFixed(2)}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right font-bold ${
+                              row.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {row.netPnl >= 0 ? '+' : '-'}${Math.abs(row.netPnl).toFixed(2)}
+                          </td>
+                          <td className="py-2 px-3 text-right font-sans text-[11px]">
+                            <span className={row.sampleSufficient ? 'text-emerald-400' : 'text-zinc-500'}>
+                              {row.sampleSufficient ? 'n ≥ 10' : `Low (n=${row.trades})`}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-500 py-3">No closed trades to attribute yet.</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -862,6 +942,8 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                     <th className="py-2.5 px-3">Exit Date</th>
                     <th className="py-2.5 px-3">Entry Price</th>
                     <th className="py-2.5 px-3">Exit Price</th>
+                    <th className="py-2.5 px-3">Rules Fired</th>
+                    <th className="py-2.5 px-3 text-right">Cost Drag</th>
                     <th className="py-2.5 px-3">Net P&L ($)</th>
                     <th className="py-2.5 px-3">Return</th>
                     <th className="py-2.5 px-3">Realized R</th>
@@ -870,7 +952,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                     <th className="py-2.5 px-3">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/60 font-mono">
+                <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
                   {filteredTrades.map((t) => (
                     <tr key={t.id} className="hover:bg-zinc-800/30 transition-colors">
                       <td className="py-2.5 px-3 text-zinc-400">#{t.tradeNumber}</td>
@@ -894,12 +976,18 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                       <td className="py-2.5 px-3 text-zinc-300 font-sans">{t.exitDateStr}</td>
                       <td className="py-2.5 px-3 text-zinc-200">${t.entryPrice.toFixed(2)}</td>
                       <td className="py-2.5 px-3 text-zinc-200">${t.exitPrice.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 text-[10px] text-zinc-400 font-mono max-w-[190px] truncate" title={(t.rulesFired || [t.setupType]).join(' · ')}>
+                        {(t.rulesFired || [t.setupType]).slice(0, 3).join(' · ')}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-amber-400">
+                        -${(t.feeAndSlippageDollars ?? 0).toFixed(2)}
+                      </td>
                       <td
                         className={`py-2.5 px-3 font-bold ${
                           t.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}
                       >
-                        {t.netPnl >= 0 ? '+' : ''}${t.netPnl.toFixed(2)}
+                        {t.netPnl >= 0 ? '+' : '-'}${Math.abs(t.netPnl).toFixed(2)}
                       </td>
                       <td
                         className={`py-2.5 px-3 font-bold ${
@@ -940,7 +1028,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                   ))}
                   {filteredTrades.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="py-8 text-center text-zinc-500 font-sans">
+                      <td colSpan={14} className="py-8 text-center text-zinc-500 font-sans">
                         No trades found matching this filter.
                       </td>
                     </tr>

@@ -78,7 +78,13 @@ export function createAlpacaRouter(alpaca: AlpacaService): Router {
     try {
       const qty = req.query.qty ? Number(req.query.qty) : undefined;
       const percentage = req.query.percentage ? Number(req.query.percentage) : undefined;
-      const result = await alpaca.closePosition(req.params.symbol, { qty, percentage });
+      const cancel_orders =
+        req.query.cancel_orders === 'true'
+          ? true
+          : req.query.cancel_orders === 'false'
+          ? false
+          : undefined;
+      const result = await alpaca.closePosition(req.params.symbol, { qty, percentage, cancel_orders });
       res.json(result);
     } catch (err) {
       handleAlpacaError(res, err);

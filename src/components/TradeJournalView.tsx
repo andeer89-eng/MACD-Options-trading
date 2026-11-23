@@ -63,6 +63,7 @@ import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
 import { BacktesterView } from './BacktesterView';
+import { computeJournalRuleAttribution } from '../utils/tradeAttribution';
 
 export type JournalSubTab = 'automated' | 'options' | 'manual' | 'backtester';
 
@@ -474,6 +475,11 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     if (selectedEntryForView?.id === id) setSelectedEntryForView(null);
   };
 
+  const journalAttribution = useMemo(
+    () => computeJournalRuleAttribution(epochEntries),
+    [epochEntries]
+  );
+
   // Filtered List for active epoch
   const filteredEntries = useMemo(() => {
     return epochEntries.filter((item) => {
@@ -796,6 +802,76 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Setup Attribution & Excursion Summary */}
+        {journalAttribution.closedTrades > 0 && (
+          <div
+            data-testid="journal-setup-attribution"
+            className="mt-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-2.5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-zinc-200">
+                Setup Attribution &amp; Excursion Audit ({journalAttribution.closedTrades} closed)
+              </span>
+              <div className="font-mono tabular-nums text-zinc-400">
+                {journalAttribution.avgMfePct !== null && (
+                  <span className="text-emerald-400">Avg MFE +{journalAttribution.avgMfePct}%</span>
+                )}
+                {journalAttribution.avgMfePct !== null && journalAttribution.avgMaePct !== null && ' · '}
+                {journalAttribution.avgMaePct !== null && (
+                  <span className="text-rose-400">Avg MAE -{journalAttribution.avgMaePct}%</span>
+                )}
+              </div>
+            </div>
+            <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-zinc-950/60">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400">
+                  <tr>
+                    <th className="py-2 px-3">Setup / Rule</th>
+                    <th className="py-2 px-3 text-right">Trades</th>
+                    <th className="py-2 px-3 text-right">Win Rate</th>
+                    <th className="py-2 px-3 text-right">Avg R</th>
+                    <th className="py-2 px-3 text-right">Expectancy</th>
+                    <th className="py-2 px-3 text-right">Net P&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                  {journalAttribution.bySetup.map((row) => (
+                    <tr key={row.rule}>
+                      <td className="py-1.5 px-3 text-zinc-200 font-semibold">{row.rule}</td>
+                      <td className="py-1.5 px-3 text-right text-zinc-300">
+                        {row.trades}
+                        {!row.sampleSufficient && (
+                          <span className="text-[10px] text-zinc-500 ml-1">(n&lt;10)</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-3 text-right text-zinc-200">{row.winRatePct.toFixed(1)}%</td>
+                      <td className="py-1.5 px-3 text-right text-amber-400">
+                        {row.avgRealizedR !== null
+                          ? `${row.avgRealizedR >= 0 ? '+' : ''}${row.avgRealizedR.toFixed(2)}R`
+                          : '—'}
+                      </td>
+                      <td
+                        className={`py-1.5 px-3 text-right ${
+                          row.expectancyDollars >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {row.expectancyDollars >= 0 ? '+' : '-'}${Math.abs(row.expectancyDollars).toFixed(2)}
+                      </td>
+                      <td
+                        className={`py-1.5 px-3 text-right font-bold ${
+                          row.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }`}
+                      >
+                        {row.netPnl >= 0 ? '+' : '-'}${Math.abs(row.netPnl).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
       </div>
 
