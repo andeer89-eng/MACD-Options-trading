@@ -67,6 +67,50 @@ export interface JournalStats {
 
 const STORAGE_KEY = 'trullas_trade_journal_v1';
 
+const LEGACY_SEEDED_DEMO_SIGNATURES = [
+  { symbol: 'NVDA', entryDate: '2026-10-14', entryPrice: 124.5, quantity: 150, setupType: 'BULLISH_TRIPLE' },
+  { symbol: 'AAPL', entryDate: '2026-10-18', entryPrice: 222, quantity: 100, setupType: 'BULLISH_DOUBLE' },
+  { symbol: 'TSLA', entryDate: '2026-10-20', entryPrice: 252, quantity: 80, setupType: 'BEARISH_TRIPLE' },
+  { symbol: 'MSFT', entryDate: '2026-10-30', entryPrice: 422, quantity: 50, setupType: 'BULLISH_TRIPLE' },
+] as const;
+
+export function isLegacySeededDemoJournalEntry(entry: Partial<JournalEntry> | null | undefined): boolean {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.epochId === 'alpaca-paper') return false;
+  if (Array.isArray(entry.tags) && entry.tags.includes('Alpaca Paper')) return false;
+
+  const sym = String(entry.symbol || '').toUpperCase().trim();
+  const date = String(entry.entryDate || '').slice(0, 10);
+  const price = Number(entry.entryPrice);
+  const qty = Number(entry.quantity);
+  const setup = String(entry.setupType || '');
+
+  return LEGACY_SEEDED_DEMO_SIGNATURES.some(
+    (sig) =>
+      sig.symbol === sym &&
+      sig.entryDate === date &&
+      Math.abs(sig.entryPrice - price) < 0.01 &&
+      Math.abs(sig.quantity - qty) < 0.001 &&
+      sig.setupType === setup
+  );
+}
+
+export function purgeLegacySeededDemoEntries(entries: JournalEntry[]): {
+  cleaned: JournalEntry[];
+  removedIds: string[];
+} {
+  const removedIds: string[] = [];
+  const cleaned: JournalEntry[] = [];
+  for (const entry of entries) {
+    if (isLegacySeededDemoJournalEntry(entry)) {
+      removedIds.push(entry.id);
+    } else {
+      cleaned.push(entry);
+    }
+  }
+  return { cleaned, removedIds };
+}
+
 export function enrichJournalEntryAnalytics(entry: JournalEntry): JournalEntry {
   const start = new Date(entry.entryDate).getTime();
   const end = entry.exitDate ? new Date(entry.exitDate).getTime() : Date.now();
@@ -154,7 +198,7 @@ export async function loadJournalEntriesFromFirestore(): Promise<JournalEntry[]>
   try {
     const q = query(collection(db, 'users', user.uid, 'journalEntries'), where('ownerId', '==', user.uid));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((d) => {
+    const loaded = snapshot.docs.map((d) => {
       const data = d.data() as Record<string, any>;
       const createdAtMs =
         data.createdAt instanceof Timestamp
@@ -185,6 +229,15 @@ export async function loadJournalEntriesFromFirestore(): Promise<JournalEntry[]>
         createdAt: createdAtMs,
       });
     });
+    const { cleaned, removedIds } = purgeLegacySeededDemoEntries(loaded);
+    if (removedIds.length > 0) {
+      removedIds.forEach((docId) => {
+        deleteDoc(doc(db, 'users', user.uid, 'journalEntries', sanitizeFirestoreDocId(docId))).catch(
+          () => {}
+        );
+      });
+    }
+    return cleaned;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, colPath);
     return [];
@@ -246,7 +299,12 @@ export function loadJournalEntries(): JournalEntry[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          return parsed.map(enrichJournalEntryAnalytics);
+          const enriched = parsed.map(enrichJournalEntryAnalytics);
+          const { cleaned, removedIds } = purgeLegacySeededDemoEntries(enriched);
+          if (removedIds.length > 0) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+          }
+          return cleaned;
         }
       }
     }

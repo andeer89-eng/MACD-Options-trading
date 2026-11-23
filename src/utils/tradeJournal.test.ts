@@ -164,7 +164,11 @@ test('exportJournalToCSV handles commas, quotes, and empty entries gracefully', 
   assert.ok(csv.includes('""quotes""'), 'Quotes should be doubled for CSV compliance');
 });
 
-import { mergeJournalEntries } from './tradeJournal.ts';
+import {
+  mergeJournalEntries,
+  purgeLegacySeededDemoEntries,
+  loadJournalEntries,
+} from './tradeJournal.ts';
 
 test('mergeJournalEntries unions remote entries with unseen local entries without data loss', () => {
   const localOnly: JournalEntry = {
@@ -181,4 +185,84 @@ test('mergeJournalEntries unions remote entries with unseen local entries withou
   assert.ok(merged.some((e) => e.id === 'local-only-99'), 'Local-only entry must be preserved');
   assert.equal(merged.find((e) => e.id === 'test-1')?.notes, 'Updated in cloud', 'Remote record wins for matching IDs');
   assert.ok(merged.some((e) => e.id === 'test-2'), 'Remote-only entry is included');
+});
+
+test('purgeLegacySeededDemoEntries removes pre-seeded Oct 2026 demo records while preserving Alpaca Paper and genuine manual trades', () => {
+  const realAlpacaEntry: JournalEntry = {
+    id: 'alpaca_lot_ord-mmm-1',
+    symbol: 'MMM',
+    setupType: 'BULLISH_TRIPLE',
+    timeframe: '1d',
+    status: 'OPEN',
+    entryDate: '2026-11-20',
+    entryPrice: 179.9,
+    stopLoss: 172.7,
+    targetPrice: 194.29,
+    quantity: 2,
+    notes: 'Alpaca Paper LONG 2 sh MMM',
+    tags: ['Alpaca Paper', 'Alpaca Equity', 'alpaca-order:ord-mmm-1'],
+    executionRating: 4,
+    epochId: 'alpaca-paper',
+    createdAt: 1763640000000,
+  };
+  const genuineManualEntry: JournalEntry = {
+    id: 'journal-user-1',
+    symbol: 'NVDA',
+    setupType: 'BULLISH_TRIPLE',
+    timeframe: '1d',
+    status: 'CLOSED_WIN',
+    entryDate: '2026-11-18',
+    exitDate: '2026-11-20',
+    entryPrice: 141.25,
+    exitPrice: 149.8,
+    stopLoss: 136.0,
+    targetPrice: 150.0,
+    quantity: 25,
+    realizedPnL: 213.75,
+    notes: 'Real user manual trade',
+    tags: ['Manual'],
+    executionRating: 5,
+    createdAt: 1763500000000,
+  };
+
+  const { cleaned, removedIds } = purgeLegacySeededDemoEntries([
+    ...TEST_FIXTURE_ENTRIES,
+    realAlpacaEntry,
+    genuineManualEntry,
+  ]);
+
+  assert.equal(removedIds.length, 4);
+  assert.equal(cleaned.length, 2);
+  assert.ok(cleaned.some((e) => e.id === 'alpaca_lot_ord-mmm-1'));
+  assert.ok(cleaned.some((e) => e.id === 'journal-user-1'));
+
+  // Verify loadJournalEntries cleans persisted localStorage automatically
+  const store = new Map<string, string>();
+  const prevWindow = (globalThis as any).window;
+  const prevStorage = (globalThis as any).localStorage;
+  try {
+    const mockStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+    };
+    (globalThis as any).window = { localStorage: mockStorage };
+    (globalThis as any).localStorage = mockStorage;
+    store.set(
+      'trullas_trade_journal_v1',
+      JSON.stringify([...TEST_FIXTURE_ENTRIES, realAlpacaEntry])
+    );
+    const loaded = loadJournalEntries();
+    assert.equal(loaded.length, 1);
+    assert.equal(loaded[0].symbol, 'MMM');
+    const persistedAfterLoad = JSON.parse(store.get('trullas_trade_journal_v1') || '[]');
+    assert.equal(persistedAfterLoad.length, 1);
+  } finally {
+    (globalThis as any).window = prevWindow;
+    (globalThis as any).localStorage = prevStorage;
+  }
 });

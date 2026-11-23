@@ -381,5 +381,106 @@ describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
       )
     );
   });
+
+  it('handles partial closes cleanly without ID collision and prunes closed alpaca_pos fallback records', () => {
+    const existingOpen: JournalEntry = {
+      id: 'alpaca_lot_ord-adbe-1',
+      symbol: 'ADBE',
+      setupType: 'BULLISH_TRIPLE',
+      timeframe: '1d',
+      status: 'OPEN',
+      entryDate: '2026-11-20',
+      entryPrice: 224.52,
+      stopLoss: 215.54,
+      targetPrice: 242.48,
+      quantity: 10,
+      notes: 'Original 10 sh ADBE open lot',
+      tags: ['Alpaca Paper', 'Alpaca Equity', 'alpaca-order:ord-adbe-1'],
+      executionRating: 4,
+      epochId: 'alpaca-paper',
+      createdAt: 1763640000000,
+    };
+    const staleFallback: JournalEntry = {
+      id: 'alpaca_pos_stale-xyz',
+      symbol: 'XYZ',
+      setupType: 'BULLISH_TRIPLE',
+      timeframe: '1d',
+      status: 'OPEN',
+      entryDate: '2026-11-18',
+      entryPrice: 50,
+      stopLoss: 48,
+      targetPrice: 54,
+      quantity: 5,
+      notes: 'Stale fallback position already closed on Alpaca',
+      tags: ['Alpaca Paper', 'Alpaca Equity'],
+      executionRating: 4,
+      epochId: 'alpaca-paper',
+      createdAt: 1763500000000,
+    };
+
+    const orders = [
+      {
+        id: 'ord-adbe-1',
+        symbol: 'ADBE',
+        asset_class: 'us_equity',
+        side: 'buy' as const,
+        qty: 10,
+        filled_qty: 10,
+        filled_avg_price: 224.52,
+        type: 'market',
+        time_in_force: 'day',
+        limit_price: null,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-20T14:30:00Z',
+        filled_at: '2026-11-20T14:30:05Z',
+      },
+      {
+        id: 'ord-adbe-partial-sell',
+        symbol: 'ADBE',
+        asset_class: 'us_equity',
+        side: 'sell' as const,
+        qty: 4,
+        filled_qty: 4,
+        filled_avg_price: 234.52,
+        type: 'market',
+        time_in_force: 'day',
+        limit_price: null,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-21T15:00:00Z',
+        filled_at: '2026-11-21T15:00:05Z',
+      },
+    ];
+
+    const positions = [
+      {
+        asset_id: 'asset-adbe',
+        symbol: 'ADBE',
+        asset_class: 'us_equity',
+        qty: 6,
+        side: 'long' as const,
+        avg_entry_price: 224.52,
+        current_price: 235.0,
+        market_value: 1410,
+        cost_basis: 1347.12,
+        unrealized_pl: 62.88,
+        unrealized_plpc: 4.67,
+        change_today: 0.5,
+      },
+    ];
+
+    const res = mapAlpacaOrdersToJournalEntries(orders, positions, [existingOpen, staleFallback]);
+    assert.equal(res.entries.length, 2, 'Should keep 1 closed 4sh slice and 1 open 6sh remainder, pruning stale XYZ');
+    const closedSlice = res.entries.find((e) => e.status === 'CLOSED_WIN');
+    const openRemainder = res.entries.find((e) => e.status === 'OPEN');
+    assert.ok(closedSlice);
+    assert.ok(openRemainder);
+    assert.equal(closedSlice.quantity, 4);
+    assert.equal(closedSlice.realizedPnL, 40);
+    assert.equal(openRemainder.quantity, 6);
+    assert.equal(openRemainder.id, 'alpaca_lot_ord-adbe-1');
+    assert.equal(res.entries.some((e) => e.symbol === 'XYZ'), false);
+  });
 });
 

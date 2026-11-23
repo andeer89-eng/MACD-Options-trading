@@ -259,6 +259,9 @@ export function mapAlpacaOrdersToJournalEntries(
   let addedCount = 0;
   let updatedCount = 0;
   const nextById = new Map<string, JournalEntry>(existingEntries.map((e) => [e.id, e]));
+  const openLotIds = new Set(lots.filter((l) => !l.closed).map((l) => l.id));
+  const assignedLotIds = new Set<string>();
+  const openPositionSymbols = new Set(positions.map((p) => p.symbol.toUpperCase()));
 
   for (const lot of lots) {
     const parsedOpt = parseOccOptionSymbol(lot.symbol);
@@ -279,21 +282,30 @@ export function mapAlpacaOrdersToJournalEntries(
       pnlPercent = Number(((rawPnl / costDenominator) * 100).toFixed(2));
       status = Math.abs(realizedPnL) < 0.5 ? 'BREAKEVEN' : realizedPnL > 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
     } else if (!lot.closed && !posMatch) {
-      // If Alpaca has no open position left (e.g. expired worthless outside order window), skip creating phantom OPEN
+      // Remove any leftover phantom OPEN lot if Alpaca no longer holds this symbol
+      const baseOpenId = `alpaca_lot_${sanitizeSyncId(lot.openOrderId)}`;
+      if (nextById.has(baseOpenId) && nextById.get(baseOpenId)?.status === 'OPEN') {
+        nextById.delete(baseOpenId);
+        updatedCount++;
+      }
       continue;
     }
 
     const entryDate = lot.entryTs.slice(0, 10);
     const exitDate = lot.exitTs ? lot.exitTs.slice(0, 10) : undefined;
     const baseOpenId = `alpaca_lot_${sanitizeSyncId(lot.openOrderId)}`;
+    const canUpgradeBaseOpen =
+      lot.closed && !openLotIds.has(baseOpenId) && !assignedLotIds.has(baseOpenId) && existingById.has(baseOpenId);
+    const matchedByTag = existingByOpenOrderTag.get(lot.openOrderId);
     const matchedOpen =
       existingById.get(lot.id) ||
-      existingById.get(baseOpenId) ||
-      existingByOpenOrderTag.get(lot.openOrderId);
+      (canUpgradeBaseOpen ? existingById.get(baseOpenId) : undefined) ||
+      (matchedByTag && !assignedLotIds.has(matchedByTag.id) && (!lot.closed || !openLotIds.has(matchedByTag.id))
+        ? matchedByTag
+        : undefined);
 
-    const targetId = matchedOpen && matchedOpen.id === baseOpenId && lot.closed
-      ? baseOpenId
-      : matchedOpen?.id || lot.id;
+    const targetId = canUpgradeBaseOpen ? baseOpenId : matchedOpen?.id || lot.id;
+    assignedLotIds.add(targetId);
 
     const tags = Array.from(
       new Set([
@@ -347,6 +359,9 @@ export function mapAlpacaOrdersToJournalEntries(
       nextById.set(targetId, nextEntry);
     } else if (
       prev.status !== nextEntry.status ||
+      prev.quantity !== nextEntry.quantity ||
+      prev.entryPrice !== nextEntry.entryPrice ||
+      prev.entryDate !== nextEntry.entryDate ||
       prev.exitPrice !== nextEntry.exitPrice ||
       prev.realizedPnL !== nextEntry.realizedPnL ||
       prev.tags.length !== nextEntry.tags.length
@@ -356,11 +371,25 @@ export function mapAlpacaOrdersToJournalEntries(
     }
   }
 
+  // Reconcile any stale fallback alpaca_pos_* entries that are either closed or superseded by order lots
+  for (const [id, entry] of Array.from(nextById.entries())) {
+    if (id.startsWith('alpaca_pos_') && entry.status === 'OPEN') {
+      const sym = entry.symbol.toUpperCase();
+      const hasOrderOpen = Array.from(nextById.values()).some(
+        (other) => other.id !== id && other.symbol.toUpperCase() === sym && other.status === 'OPEN' && other.tags.includes('Alpaca Paper')
+      );
+      if (!openPositionSymbols.has(sym) || hasOrderOpen) {
+        nextById.delete(id);
+        updatedCount++;
+      }
+    }
+  }
+
   // Also ensure any live Alpaca position whose opening order fell outside orders pagination window is tracked as OPEN
   for (const pos of positions) {
     const sym = pos.symbol.toUpperCase();
     const alreadyOpenTracked = Array.from(nextById.values()).some(
-      (e) => e.symbol === sym && e.status === 'OPEN' && e.tags.includes('Alpaca Paper')
+      (e) => e.symbol === sym && e.status === 'OPEN' && e.tags.includes('Alpaca Paper') && !e.id.startsWith('alpaca_pos_')
     );
     if (alreadyOpenTracked) continue;
 
@@ -375,10 +404,10 @@ export function mapAlpacaOrdersToJournalEntries(
       setupType: isLong ? 'BULLISH_TRIPLE' : 'BEARISH_TRIPLE',
       timeframe: '1d',
       status: 'OPEN',
-      entryDate: new Date().toISOString().slice(0, 10),
+      entryDate: prev?.entryDate || new Date().toISOString().slice(0, 10),
       entryPrice: Number(pos.avg_entry_price.toFixed(2)),
-      stopLoss: Number((pos.avg_entry_price * (isLong ? 0.96 : 1.04)).toFixed(2)),
-      targetPrice: Number((pos.avg_entry_price * (isLong ? 1.08 : 0.92)).toFixed(2)),
+      stopLoss: prev?.stopLoss ?? Number((pos.avg_entry_price * (isLong ? 0.96 : 1.04)).toFixed(2)),
+      targetPrice: prev?.targetPrice ?? Number((pos.avg_entry_price * (isLong ? 1.08 : 0.92)).toFixed(2)),
       quantity: Math.abs(pos.qty),
       notes: prev?.notes || `Live Alpaca Paper position (${pos.side.toUpperCase()} ${Math.abs(pos.qty)} @ $${pos.avg_entry_price.toFixed(2)}).`,
       tags: Array.from(new Set([...(prev?.tags || []), 'Alpaca Paper', isOpt ? 'Alpaca Options' : 'Alpaca Equity'])),
@@ -388,6 +417,9 @@ export function mapAlpacaOrdersToJournalEntries(
     };
     if (!prev) {
       addedCount++;
+      nextById.set(fallbackId, nextPosEntry);
+    } else if (prev.quantity !== nextPosEntry.quantity || prev.entryPrice !== nextPosEntry.entryPrice) {
+      updatedCount++;
       nextById.set(fallbackId, nextPosEntry);
     }
   }

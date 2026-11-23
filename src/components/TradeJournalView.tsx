@@ -49,6 +49,7 @@ import {
   exportJournalToCSV,
   downloadCSV,
   enrichJournalEntryAnalytics,
+  purgeLegacySeededDemoEntries,
 } from '../utils/tradeJournal';
 import { parseBrokerCsvToJournalEntries } from '../utils/csvJournalImport';
 import { syncAlpacaOverviewToLocalJournal } from '../hooks/useAlpacaPaper';
@@ -137,6 +138,8 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [closeStatus, setCloseStatus] = useState<JournalEntry['status']>('CLOSED_WIN');
   const [closeNotes, setCloseNotes] = useState<string>('');
   const [closeExitScreenshot, setCloseExitScreenshot] = useState<string>('');
+  const [isClosingOnAlpaca, setIsClosingOnAlpaca] = useState<boolean>(false);
+  const [closeTradeError, setCloseTradeError] = useState<string | null>(null);
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [isSyncingAlpaca, setIsSyncingAlpaca] = useState<boolean>(false);
   const [alpacaSyncStatus, setAlpacaSyncStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
@@ -260,6 +263,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
 
   const handleOpenCloseTrade = (entry: JournalEntry) => {
     setEntryToClose(entry);
+    setCloseTradeError(null);
     const estExit = entry.targetPrice || entry.entryPrice * 1.05;
     setCloseExitPrice(estExit);
     setCloseExitDate(new Date().toISOString().split('T')[0]);
@@ -276,9 +280,51 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
     setCloseExitScreenshot('');
   };
 
-  const handleConfirmCloseTrade = (e: React.FormEvent) => {
+  const handleConfirmCloseTrade = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!entryToClose) return;
+    setCloseTradeError(null);
+
+    const isAlpacaEntry =
+      entryToClose.epochId === 'alpaca-paper' || entryToClose.tags.includes('Alpaca Paper');
+
+    if (isAlpacaEntry) {
+      setIsClosingOnAlpaca(true);
+      try {
+        const qs = new URLSearchParams();
+        if (entryToClose.quantity > 0) {
+          qs.set('qty', String(entryToClose.quantity));
+        }
+        const suffix = qs.toString() ? `?${qs.toString()}` : '';
+        const resp = await fetchJsonSafe<{ order?: any; error?: string }>(
+          `/api/alpaca/positions/${encodeURIComponent(entryToClose.symbol)}${suffix}`,
+          {
+            method: 'DELETE',
+            retryOnHtml: false,
+          }
+        );
+        if (!resp.ok) {
+          setCloseTradeError(
+            resp.error || `Alpaca Paper close failed (HTTP ${resp.status}). Position remains open.`
+          );
+          return;
+        }
+        await handleSyncAlpacaPaper(false);
+        setExportToast(
+          `Submitted Alpaca Paper close for ${entryToClose.quantity} ${entryToClose.symbol} and synced Local Trade Journal.`
+        );
+        setTimeout(() => setExportToast(null), 5000);
+        setEntryToClose(null);
+        if (selectedEntryForView?.id === entryToClose.id) {
+          setSelectedEntryForView(null);
+        }
+      } catch (err: any) {
+        setCloseTradeError(err?.message || 'Unable to close position on Alpaca Paper.');
+      } finally {
+        setIsClosingOnAlpaca(false);
+      }
+      return;
+    }
 
     const isBull = !entryToClose.setupType.includes('BEAR');
     const pnl = isBull
@@ -331,9 +377,9 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         .then((remote) => {
           if (!active) return;
           if (remote.length > 0) {
-            const merged = mergeJournalEntries(localEntries, remote);
-            setEntries(merged);
-            saveJournalEntries(merged);
+            const { cleaned } = purgeLegacySeededDemoEntries(mergeJournalEntries(localEntries, remote));
+            setEntries(cleaned);
+            saveJournalEntries(cleaned);
           }
         })
         .catch((err) => console.warn('Failed to load Firestore journal entries:', err));
@@ -361,10 +407,42 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const [selectedEpoch, setSelectedEpoch] = useState<'active' | 'alpaca-paper' | 'legacy-50k'>('active');
 
   const hasLegacyEntries = useMemo(() => entries.some((e) => e.epochId === 'legacy-50k'), [entries]);
+  const nonAlpacaActiveCount = useMemo(
+    () =>
+      entries.filter(
+        (e) =>
+          e.epochId !== 'legacy-50k' &&
+          e.epochId !== 'alpaca-paper' &&
+          !e.tags.includes('Alpaca Paper')
+      ).length,
+    [entries]
+  );
 
   const updateEntriesState = (updated: JournalEntry[]) => {
     setEntries(updated);
     saveJournalEntries(updated);
+  };
+
+  const handleClearNonAlpacaEntries = () => {
+    const toRemove = entries.filter(
+      (e) =>
+        e.epochId !== 'legacy-50k' &&
+        e.epochId !== 'alpaca-paper' &&
+        !e.tags.includes('Alpaca Paper')
+    );
+    if (toRemove.length === 0) return;
+    const removeIds = new Set(toRemove.map((e) => e.id));
+    const remaining = entries.filter((e) => !removeIds.has(e.id));
+    updateEntriesState(remaining);
+    if (user) {
+      toRemove.forEach((e) => {
+        deleteJournalEntryFromFirestore(e.id).catch((err) =>
+          console.warn('Firestore cleanup delete failed:', err)
+        );
+      });
+    }
+    setExportToast(`Cleared ${toRemove.length} non-Alpaca journal ${toRemove.length === 1 ? 'entry' : 'entries'}.`);
+    setTimeout(() => setExportToast(null), 4000);
   };
 
   const epochEntries = useMemo(() => {
@@ -699,6 +777,17 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 </button>
               )}
             </div>
+            {nonAlpacaActiveCount > 0 && (
+              <button
+                type="button"
+                data-testid="clear-non-alpaca-btn"
+                onClick={handleClearNonAlpacaEntries}
+                className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition"
+                title="Remove non-Alpaca manual or legacy entries so Active Journal matches Alpaca Paper history"
+              >
+                Clear Non-Alpaca ({nonAlpacaActiveCount})
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400 font-mono">
@@ -2064,21 +2153,43 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 />
               </div>
 
+              {(entryToClose.epochId === 'alpaca-paper' || entryToClose.tags.includes('Alpaca Paper')) && (
+                <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/40 text-xs text-indigo-200 leading-relaxed">
+                  <strong>Live Alpaca Paper Execution:</strong> Confirming will submit a real{' '}
+                  <span className="font-mono text-white">DELETE /api/alpaca/positions/{entryToClose.symbol}?qty={entryToClose.quantity}</span>{' '}
+                  close order to Alpaca Paper and sync the filled exit price back into your journal.
+                </div>
+              )}
+
+              {closeTradeError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200">
+                  {closeTradeError}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex items-center justify-end space-x-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setEntryToClose(null)}
-                  className="px-4 py-2 text-xs text-zinc-400 hover:text-white"
+                  disabled={isClosingOnAlpaca}
+                  className="px-4 py-2 text-xs text-zinc-400 hover:text-white disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg shadow-md shadow-emerald-600/20 transition flex items-center space-x-1.5"
+                  disabled={isClosingOnAlpaca}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-md shadow-emerald-600/20 transition flex items-center space-x-1.5"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Confirm &amp; Close Trade</span>
+                  <span>
+                    {isClosingOnAlpaca
+                      ? 'Submitting Alpaca Close...'
+                      : entryToClose.epochId === 'alpaca-paper' || entryToClose.tags.includes('Alpaca Paper')
+                      ? 'Close on Alpaca Paper'
+                      : 'Confirm & Close Trade'}
+                  </span>
                 </button>
               </div>
             </form>
