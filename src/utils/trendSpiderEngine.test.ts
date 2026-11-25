@@ -64,6 +64,20 @@ test('calculateStageAnalysis correctly detects Stage 4 Declining on persistent d
   assert.ok(result.stageName.includes('Stage 4'));
 });
 
+test('calculateStageAnalysis auto-scales 30-week SMA to ~150 bars on daily candles', () => {
+  const dailyUp = createSampleCandles(200, 'UP');
+  const stageUp = calculateStageAnalysis(dailyUp);
+  assert.strictEqual(stageUp.currentStage, 'STAGE_2_ADVANCING');
+  assert.strictEqual(stageUp.maSlopeDirection, 'RISING');
+  // 150-day SMA sits meaningfully below last close in a sustained 200-bar linear uptrend
+  assert.ok(stageUp.distanceFromMaPercent > 15, `Expected >15% above 150d SMA, got ${stageUp.distanceFromMaPercent}%`);
+
+  const dailyDown = createSampleCandles(200, 'DOWN');
+  const stageDown = calculateStageAnalysis(dailyDown);
+  assert.strictEqual(stageDown.currentStage, 'STAGE_4_DECLINING');
+  assert.strictEqual(stageDown.maSlopeDirection, 'FALLING');
+});
+
 test('calculateRaindropBars correctly builds Left/Right VWAP and volume profiles', () => {
   const candles = createSampleCandles(20, 'UP');
   const raindrops = calculateRaindropBars(candles, 8);

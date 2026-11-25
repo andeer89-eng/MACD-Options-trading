@@ -19,6 +19,10 @@ import {
 } from '../../src/utils/luxalgoIndicators.ts';
 import { evaluateTradeAdvice } from '../../src/utils/tradeActionEngine.ts';
 import {
+  evaluateTosScans,
+  computeRelativePerformanceVsBenchmark,
+} from '../../src/utils/tosScansEngine.ts';
+import {
   TickerOptionsSummary,
   calculateHistoricalVol30dPct,
   summarizeCboeOptionsChain,
@@ -402,7 +406,7 @@ export function createMarketRouter(marketData: MarketDataService): Router {
                 marketData.recordCacheHit();
               } else {
                 marketData.recordCacheMiss();
-                candles = await marketData.fetchYahooData(sym, timeframe, '3mo', 20);
+                candles = await marketData.fetchYahooData(sym, timeframe, '6mo', 20);
                 if (candles.length >= 20) {
                   marketData.candleCache.set(cacheKey, { timestamp: now, candles });
                 }
@@ -791,12 +795,38 @@ export function createMarketRouter(marketData: MarketDataService): Router {
     const CHUNK_SIZE = 30;
     const now = Date.now();
 
+    const scanRange =
+      timeframe === '1d'
+        ? '6mo'
+        : timeframe === '1h'
+        ? '3mo'
+        : timeframe === '15m' || timeframe === '5m'
+        ? '1mo'
+        : '5d';
+
+    // Fetch SPY benchmark once per scan batch for 30-bar Relative Performance (Alpha vs SPY)
+    let spyBenchmarkCandles: Candle[] = [];
+    try {
+      const spyCacheKey = `SPY_${timeframe}_${scanRange}`;
+      const spyCached = marketData.candleCache.get(spyCacheKey);
+      if (spyCached && now - spyCached.timestamp < 120000) {
+        spyBenchmarkCandles = spyCached.candles;
+      } else {
+        spyBenchmarkCandles = await marketData.fetchYahooData('SPY', timeframe, scanRange, 20);
+        if (spyBenchmarkCandles.length >= 20) {
+          marketData.candleCache.set(spyCacheKey, { timestamp: now, candles: spyBenchmarkCandles });
+        }
+      }
+    } catch {
+      spyBenchmarkCandles = [];
+    }
+
     for (let i = 0; i < tickerList.length; i += CHUNK_SIZE) {
       const chunk = tickerList.slice(i, i + CHUNK_SIZE);
       const chunkResults = await Promise.all(
         chunk.map(async (sym) => {
           try {
-            const cacheKey = `${sym}_${timeframe}`;
+            const cacheKey = `${sym}_${timeframe}_${scanRange}`;
             let candles: Candle[];
             const cached = marketData.candleCache.get(cacheKey);
 
@@ -805,7 +835,7 @@ export function createMarketRouter(marketData: MarketDataService): Router {
               marketData.recordCacheHit();
             } else {
               marketData.recordCacheMiss();
-              candles = await marketData.fetchYahooData(sym, timeframe, '3mo', 20);
+              candles = await marketData.fetchYahooData(sym, timeframe, scanRange, 20);
               if (candles.length >= 20) {
                 marketData.candleCache.set(cacheKey, { timestamp: now, candles });
               }
@@ -814,6 +844,11 @@ export function createMarketRouter(marketData: MarketDataService): Router {
             if (candles.length >= 20) {
               const indicators = calculateIndicators(candles);
               const setups = detectDivergences(sym, timeframe, indicators);
+              const tosScans = evaluateTosScans(sym, candles);
+              const relPerf =
+                sym === 'SPY'
+                  ? null
+                  : computeRelativePerformanceVsBenchmark(candles, spyBenchmarkCandles, 30);
               const lastCandle = candles[candles.length - 1];
               const prevCandle = candles[candles.length - 2] || lastCandle;
               const changePercent = Number(
@@ -842,6 +877,9 @@ export function createMarketRouter(marketData: MarketDataService): Router {
                 setups,
                 hasTripleDivergence: setups.some((s) => s.type.includes('TRIPLE')),
                 hasDoubleDivergence: setups.some((s) => s.type.includes('DOUBLE')),
+                tosScans,
+                relPerfVsSpyPct: relPerf ? relPerf.alphaVsBenchmarkPct : null,
+                return30dPct: relPerf ? relPerf.symbolReturnPct : null,
                 sec: {
                   symbol: sym,
                   available: false,

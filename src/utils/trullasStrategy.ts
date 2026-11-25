@@ -524,6 +524,15 @@ export function detectDivergences(
         (s) => s.points.length === 3 && s.points[2].index === p2.index
       );
       if (!alreadyInTriple && p1.price > p2.price && (p1.macd < p2.macd || p1.histogram < p2.histogram)) {
+        const rsiDivergence = p1.rsi < p2.rsi;
+        const volumeExhaustion = p2.volume <= p1.volume;
+        const macdCross = lastPoint.macd >= lastPoint.signal;
+        let qualityScore = 54;
+        if (p1.macd < p2.macd) qualityScore += 6;
+        if (rsiDivergence) qualityScore += 10;
+        if (volumeExhaustion) qualityScore += 8;
+        if (macdCross) qualityScore += 4;
+
         let intermediateHigh = p1.price;
         for (let idx = p1.index; idx <= p2.index; idx++) {
           if (indicatorPoints[idx].candle.high > intermediateHigh) {
@@ -531,29 +540,35 @@ export function detectDivergences(
           }
         }
         const fib = computeFibonacci(p2.price, intermediateHigh, 'up');
+        const stopLoss = Number((p2.price * 0.993).toFixed(2));
+        const triggerPrice = Number(fib.fib236.toFixed(2));
+        const tp1 = Number(fib.fib382.toFixed(2));
+        const tp2 = Number(fib.fib618.toFixed(2));
+        const tp3 = Number(fib.fib1000.toFixed(2));
+
+        const plannedRisk = Math.max(0.01, Math.abs(triggerPrice - stopLoss));
+        const plannedReward = Math.max(0.01, Math.abs(tp2 - triggerPrice));
+        const rrr = Number((plannedReward / plannedRisk).toFixed(2));
+
         setups.push({
           id: `${symbol}-BULL-2-${p2.timestamp}`,
           symbol,
           timeframe,
           type: 'BULLISH_DOUBLE',
-          qualityScore: 68,
+          qualityScore: Math.min(82, qualityScore),
           points: [p1, p2],
           currentPrice,
-          triggerPrice: Number(fib.fib236.toFixed(2)),
-          stopLoss: Number((p2.price * 0.993).toFixed(2)),
+          triggerPrice,
+          stopLoss,
           fibLevels: fib,
-          targets: {
-            tp1: Number(fib.fib382.toFixed(2)),
-            tp2: Number(fib.fib618.toFixed(2)),
-            tp3: Number(fib.fib1000.toFixed(2)),
-          },
-          riskRewardRatio: 2.1,
+          targets: { tp1, tp2, tp3 },
+          riskRewardRatio: rrr,
           confluenceChecks: {
             priceDivergence: true,
             macdDivergence: true,
-            rsiDivergence: p1.rsi < p2.rsi,
-            volumeExhaustion: p2.volume <= p1.volume,
-            macdCrossConfirmed: lastPoint.macd >= lastPoint.signal,
+            rsiDivergence,
+            volumeExhaustion,
+            macdCrossConfirmed: macdCross,
           },
           scalingTranches: {
             tranche1: '50% on neckline break',
@@ -574,6 +589,15 @@ export function detectDivergences(
         (s) => s.points.length === 3 && s.points[2].index === p2.index
       );
       if (!alreadyInTriple && p1.price < p2.price && (p1.macd > p2.macd || p1.histogram > p2.histogram)) {
+        const rsiDivergence = p1.rsi > p2.rsi;
+        const volumeExhaustion = p2.volume <= p1.volume;
+        const macdCross = lastPoint.macd <= lastPoint.signal;
+        let qualityScore = 54;
+        if (p1.macd > p2.macd) qualityScore += 6;
+        if (rsiDivergence) qualityScore += 10;
+        if (volumeExhaustion) qualityScore += 8;
+        if (macdCross) qualityScore += 4;
+
         let intermediateLow = p1.price;
         for (let idx = p1.index; idx <= p2.index; idx++) {
           if (indicatorPoints[idx].candle.low < intermediateLow) {
@@ -581,29 +605,35 @@ export function detectDivergences(
           }
         }
         const fib = computeFibonacci(intermediateLow, p2.price, 'down');
+        const stopLoss = Number((p2.price * 1.007).toFixed(2));
+        const triggerPrice = Number(fib.fib236.toFixed(2));
+        const tp1 = Number(fib.fib382.toFixed(2));
+        const tp2 = Number(fib.fib618.toFixed(2));
+        const tp3 = Number(fib.fib1000.toFixed(2));
+
+        const plannedRisk = Math.max(0.01, Math.abs(stopLoss - triggerPrice));
+        const plannedReward = Math.max(0.01, Math.abs(triggerPrice - tp2));
+        const rrr = Number((plannedReward / plannedRisk).toFixed(2));
+
         setups.push({
           id: `${symbol}-BEAR-2-${p2.timestamp}`,
           symbol,
           timeframe,
           type: 'BEARISH_DOUBLE',
-          qualityScore: 68,
+          qualityScore: Math.min(82, qualityScore),
           points: [p1, p2],
           currentPrice,
-          triggerPrice: Number(fib.fib236.toFixed(2)),
-          stopLoss: Number((p2.price * 1.007).toFixed(2)),
+          triggerPrice,
+          stopLoss,
           fibLevels: fib,
-          targets: {
-            tp1: Number(fib.fib382.toFixed(2)),
-            tp2: Number(fib.fib618.toFixed(2)),
-            tp3: Number(fib.fib1000.toFixed(2)),
-          },
-          riskRewardRatio: 2.1,
+          targets: { tp1, tp2, tp3 },
+          riskRewardRatio: rrr,
           confluenceChecks: {
             priceDivergence: true,
             macdDivergence: true,
-            rsiDivergence: p1.rsi > p2.rsi,
-            volumeExhaustion: p2.volume <= p1.volume,
-            macdCrossConfirmed: lastPoint.macd <= lastPoint.signal,
+            rsiDivergence,
+            volumeExhaustion,
+            macdCrossConfirmed: macdCross,
           },
           scalingTranches: {
             tranche1: '50% on neckline break down',
@@ -615,6 +645,17 @@ export function detectDivergences(
       }
     }
   }
+
+  // Sort newest confirmation first so consumers reading setups[0] see the freshest active setup
+  setups.sort((a, b) => {
+    const idxA = a.points[a.points.length - 1]?.index ?? 0;
+    const idxB = b.points[b.points.length - 1]?.index ?? 0;
+    if (idxB !== idxA) return idxB - idxA;
+    const isTripleA = a.type.includes('TRIPLE') ? 1 : 0;
+    const isTripleB = b.type.includes('TRIPLE') ? 1 : 0;
+    if (isTripleB !== isTripleA) return isTripleB - isTripleA;
+    return b.qualityScore - a.qualityScore;
+  });
 
   return setups;
 }

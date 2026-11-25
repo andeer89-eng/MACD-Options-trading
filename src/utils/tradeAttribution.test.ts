@@ -2,11 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeBacktestRuleAttribution,
+  computeJournalRegimeAttribution,
   computeJournalRuleAttribution,
 } from './tradeAttribution';
 import { runBacktest } from './backtestEngine';
 import type { Candle } from './trullasStrategy';
 import type { JournalEntry } from './tradeJournal';
+import type { MarketHealthReport } from './marketHealthEngine';
 
 function generateOscillatingCandles(count: number = 180): Candle[] {
   const candles: Candle[] = [];
@@ -152,6 +154,145 @@ describe('Trade Attribution & Execution Cost Drag Tests', () => {
     assert.equal(summary.bySetup.length, 1);
     assert.equal(summary.bySetup[0].rule, 'BULLISH_TRIPLE');
     assert.equal(summary.bySetup[0].avgRealizedR, 0.5);
+  });
+
+  it('computeJournalRegimeAttribution attributes closed entries by stored context & history1M backfill', () => {
+    const marketHealth: MarketHealthReport = {
+      isLive: true,
+      asOf: '2026-11-22',
+      dataSource: 'Test',
+      universeCount: 14,
+      current: {
+        score: 54,
+        label: 'Neutral',
+        safetyStatus: 'SAFE_RISK_ON',
+        allowNewEntries: true,
+        sizeMultiplier: 1,
+        vix: 17.2,
+        vix3m: 19.0,
+        vixTermStructure: 'CONTANGO',
+        spyPrice: 590,
+        spyChangePct: 0.2,
+        spy5dReturnPct: 1.0,
+        netVolumeTodayBillions: 1.2,
+        buyingVolumeTodayBillions: 14,
+        sellingVolumeTodayBillions: 12.8,
+        netVolume1MBillions: 5,
+        buyingVolume1MBillions: 110,
+        sellingVolume1MBillions: 105,
+        buySellRatio1M: 1.05,
+        breadthPct: 60,
+        momentumScore: 55,
+        vixScore: 58,
+        volumeScore: 52,
+        breadthScore: 56,
+        reasons: ['Neutral'],
+      },
+      snapshots: {
+        now: { date: '2026-11-22', score: 54, label: 'Neutral', vix: 17.2, netFlowBillions: 1.2 },
+        previousClose: null,
+        oneWeekAgo: null,
+        oneMonthAgo: null,
+        oneYearAgo: null,
+      },
+      history1M: [
+        {
+          date: '2026-11-10',
+          sentimentScore: 38,
+          label: 'Fear',
+          vix: 23.5,
+          vix3m: 24.1,
+          vixTermRatio: 1.03,
+          spyClose: 575,
+          spyChangePct: -0.9,
+          buyingVolumeBillions: 10,
+          sellingVolumeBillions: 13,
+          netFlowBillions: -3.0,
+          netFlowRatioPct: -13,
+          breadthPct: 38,
+          momentumScore: 36,
+          vixScore: 40,
+          volumeScore: 39,
+          breadthScore: 38,
+        },
+      ],
+      history1YCount: 252,
+    };
+
+    const entries: JournalEntry[] = [
+      {
+        id: 'r1',
+        symbol: 'AAPL',
+        setupType: 'BULLISH_TRIPLE',
+        timeframe: '1d',
+        status: 'CLOSED_WIN',
+        entryDate: '2026-11-10',
+        exitDate: '2026-11-14',
+        entryPrice: 220,
+        exitPrice: 232,
+        stopLoss: 214,
+        targetPrice: 232,
+        quantity: 10,
+        realizedPnL: 120,
+        pnlPercent: 5.45,
+        notes: '',
+        tags: [],
+        executionRating: 5,
+        createdAt: 1,
+      },
+      {
+        id: 'r2',
+        symbol: 'NVDA',
+        setupType: 'BULLISH_TRIPLE',
+        timeframe: '1d',
+        status: 'CLOSED_LOSS',
+        entryDate: '2026-11-22',
+        exitDate: '2026-11-23',
+        entryPrice: 140,
+        exitPrice: 135,
+        stopLoss: 135,
+        targetPrice: 150,
+        quantity: 20,
+        realizedPnL: -100,
+        pnlPercent: -3.57,
+        notes: '',
+        tags: [],
+        executionRating: 3,
+        entryMarketContext: {
+          capturedAt: '2026-11-22T14:30:00Z',
+          entryDate: '2026-11-22',
+          source: 'LIVE_ORDER',
+          healthScore: 68,
+          sentimentLabel: 'Greed',
+          safetyStatus: 'SAFE_RISK_ON',
+          vix: 14.8,
+          vixBucket: 'LOW_VIX_<16',
+          vixTermStructure: 'CONTANGO',
+          netVolume1MBillions: 12.0,
+          buySellRatio1M: 1.15,
+          breadthPct: 75,
+          spyStructuralRegime: 'ABOVE_VALUE_TREND',
+          qqqStructuralRegime: 'ABOVE_VALUE_TREND',
+          symbolStructuralRegime: null,
+          initialRiskDollars: 100,
+          assetMode: 'EQUITY',
+        },
+        createdAt: 2,
+      },
+    ];
+
+    const rows = computeJournalRegimeAttribution(entries, marketHealth);
+    const fearRow = rows.find((r) => r.regime === 'Fear');
+    const greedRow = rows.find((r) => r.regime === 'Greed');
+    assert.ok(fearRow);
+    assert.ok(greedRow);
+    assert.equal(fearRow.trades, 1);
+    assert.equal(fearRow.avgVix, 23.5);
+    assert.equal(fearRow.avgRealizedR, 2.0);
+    assert.equal(fearRow.sampleSufficient, false);
+    assert.equal(greedRow.trades, 1);
+    assert.equal(greedRow.avgVix, 14.8);
+    assert.equal(greedRow.avgRealizedR, -1.0);
   });
 
   it('runBacktest produces consistent grossPnl - feeAndSlippageDollars === netPnl and populates ruleAttribution', () => {

@@ -33,6 +33,15 @@ import { SP500_TOP_50 } from '../data/sp500Universe';
 import { TickerOptionsSummary } from '../utils/cboeOptionsEngine';
 import { GicsSectorPerformance } from '../utils/sectorMetrics';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
+import {
+  buildDualMarketLeaderboards,
+  HIGH_CONVICTION_MIN_SCORE,
+  RankedMarketLeader,
+} from '../utils/watchlistRankingEngine';
+import {
+  recordTop50PresenceSnapshot,
+  PresenceAnnotation,
+} from '../utils/watchlistPersistenceTracker';
 
 function getCurrencyPrefix(currency?: string, symbol?: string): string {
   if (currency === 'SEK' || symbol?.endsWith('.ST')) return 'SEK ';
@@ -65,27 +74,86 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   onSelectSymbolForChart,
   scannerResults = [],
 }) => {
-  // Universe symbols to analyze (prioritize live scanner detections first)
-  const candidateSymbols = useMemo(() => {
-    const scannerSymbols = scannerResults.map((r) => r.symbol || r.setup?.symbol).filter(Boolean);
-    const combined = Array.from(new Set([...scannerSymbols, ...SP500_TOP_50.slice(0, 12)]));
-    return combined.slice(0, 14);
+  // Search & Auditing State — strict Grade B+ gate by default (excludes Grade C/D noise)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [gradeFilter, setGradeFilter] = useState<'ALL' | 'A+' | 'A' | 'B' | 'C'>('B');
+  const [directionFilter, setDirectionFilter] = useState<'BULLISH' | 'BEARISH' | 'ALL'>('BULLISH');
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate360Confluence | null>(null);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [presenceMap, setPresenceMap] = useState<Map<string, PresenceAnnotation>>(new Map());
+
+  // Build unified Top-50 Bullish and Top-50 Bearish leaderboards from real scanner results
+  const leaderboards = useMemo(() => {
+    const minScore = gradeFilter === 'C' || gradeFilter === 'ALL' ? 55 : HIGH_CONVICTION_MIN_SCORE;
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore,
+      maxItems: 50,
+    });
+  }, [scannerResults, gradeFilter]);
+
+  const strictLeaderboards = useMemo(() => {
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore: HIGH_CONVICTION_MIN_SCORE,
+      maxItems: 50,
+    });
   }, [scannerResults]);
+
+  // Persist Top-50 watchlist streaks strictly from high-conviction leaders (never polluted by C/ALL views)
+  useEffect(() => {
+    const nextMap = new Map<string, PresenceAnnotation>();
+    if (strictLeaderboards.bullish.length > 0) {
+      const bullPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bullish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'long'
+      );
+      for (const [sym, ann] of bullPresence.entries()) {
+        nextMap.set(`BULLISH:${sym}`, ann);
+      }
+    }
+    if (strictLeaderboards.bearish.length > 0) {
+      const bearPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bearish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'short'
+      );
+      for (const [sym, ann] of bearPresence.entries()) {
+        nextMap.set(`BEARISH:${sym}`, ann);
+      }
+    }
+    if (nextMap.size > 0) {
+      setPresenceMap(nextMap);
+    }
+  }, [strictLeaderboards]);
+
+  // Select top high-conviction candidates from active direction (never arbitrary alphabetical order)
+  const activeLeaderQueue = useMemo<RankedMarketLeader[]>(() => {
+    if (directionFilter === 'BULLISH') return leaderboards.bullish;
+    if (directionFilter === 'BEARISH') return leaderboards.bearish;
+    return [...leaderboards.bullish.slice(0, 25), ...leaderboards.bearish.slice(0, 25)].sort(
+      (a, b) => b.score - a.score
+    );
+  }, [leaderboards, directionFilter]);
+
+  const candidateSymbols = useMemo(() => {
+    if (activeLeaderQueue.length > 0) {
+      return activeLeaderQueue.map((l) => l.symbol);
+    }
+    // Fallback only before initial scanner results populate
+    if (scannerResults.length === 0) {
+      return SP500_TOP_50.slice(0, 14);
+    }
+    return [];
+  }, [activeLeaderQueue, scannerResults.length]);
 
   // Evaluated candidates (populated strictly from real OHLCV candles)
   const [candidates, setCandidates] = useState<Candidate360Confluence[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sectorsMap, setSectorsMap] = useState<Map<string, GicsSectorPerformance>>(new Map());
 
-  // Search & Auditing State
-  const [searchQuery, setSearchQuery] = useState('');
-  const [gradeFilter, setGradeFilter] = useState<'ALL' | 'A+' | 'A' | 'B' | 'C'>('ALL');
-  const [directionFilter, setDirectionFilter] = useState<'ALL' | 'BULLISH' | 'BEARISH'>('ALL');
-  const [selectedCandidate, setSelectedCandidate] = useState<Candidate360Confluence | null>(null);
-  const [isAuditing, setIsAuditing] = useState(false);
-
   const evaluateAllCandidates = useCallback(async (symbolsToEval: string[]) => {
-    if (symbolsToEval.length === 0) return;
+    if (symbolsToEval.length === 0) {
+      setCandidates([]);
+      return;
+    }
     setIsAuditing(true);
     setErrorMessage(null);
 
@@ -94,6 +162,13 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
       for (const r of scannerResults) {
         const sym = (r.symbol || r.setup?.symbol || '').toUpperCase();
         if (sym) scanBySymbol.set(sym, r);
+      }
+
+      const leaderBySymbol = new Map<string, RankedMarketLeader>();
+      for (const leader of activeLeaderQueue) {
+        if (!leaderBySymbol.has(leader.symbol)) {
+          leaderBySymbol.set(leader.symbol, leader);
+        }
       }
 
       // Fetch sector performance once for real Sector Alpha weighting
@@ -115,7 +190,13 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         symbol: string;
         candles: Candle[];
         direction?: 'BULLISH' | 'BEARISH';
-        context?: { sectorAlphaPct?: number | null };
+        context?: {
+          sectorAlphaPct?: number | null;
+          relPerfVsSpyPct?: number | null;
+          relVolStDev?: number | null;
+          matchingSetup?: { type: string; qualityScore: number; timeframe?: string } | null;
+          tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>;
+        };
       }> = [];
 
       const toFetch = symbolsToEval.filter((sym) => {
@@ -125,18 +206,22 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
 
       const fetchedCandleMap = new Map<string, Candle[]>();
       if (toFetch.length > 0) {
-        const results = await Promise.allSettled(
-          toFetch.map(async (sym) => {
-            const cResp = await fetchJsonSafe<{ candles?: any[] }>(
-              `/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=6mo`
-            );
-            if (!cResp.ok || !cResp.data) return { sym, candles: [] as Candle[] };
-            return { sym, candles: normalizeCandles(cResp.data.candles || []) };
-          })
-        );
-        for (const r of results) {
-          if (r.status === 'fulfilled' && r.value.candles.length >= 30) {
-            fetchedCandleMap.set(r.value.sym.toUpperCase(), r.value.candles);
+        const BATCH_SIZE = 8;
+        for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+          const chunk = toFetch.slice(i, i + BATCH_SIZE);
+          const results = await Promise.allSettled(
+            chunk.map(async (sym) => {
+              const cResp = await fetchJsonSafe<{ candles?: any[] }>(
+                `/api/candles?symbol=${encodeURIComponent(sym)}&timeframe=1d&range=6mo`
+              );
+              if (!cResp.ok || !cResp.data) return { sym, candles: [] as Candle[] };
+              return { sym, candles: normalizeCandles(cResp.data.candles || []) };
+            })
+          );
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value.candles.length >= 30) {
+              fetchedCandleMap.set(r.value.sym.toUpperCase(), r.value.candles);
+            }
           }
         }
       }
@@ -144,6 +229,7 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
       for (const sym of symbolsToEval) {
         const upper = sym.toUpperCase();
         const scanItem = scanBySymbol.get(upper);
+        const leader = leaderBySymbol.get(upper);
         const candles =
           scanItem && Array.isArray(scanItem.candles) && scanItem.candles.length >= 30
             ? normalizeCandles(scanItem.candles)
@@ -152,8 +238,18 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         if (candles.length < 30) continue;
 
         const firstSetupType: string = scanItem?.setups?.[0]?.type || '';
-        const direction: 'BULLISH' | 'BEARISH' = firstSetupType.includes('BEAR') ? 'BEARISH' : 'BULLISH';
-        const secPerf = scanItem?.sector ? localSectorsMap.get(scanItem.sector) : undefined;
+        const direction: 'BULLISH' | 'BEARISH' = leader
+          ? leader.direction === 'short'
+            ? 'BEARISH'
+            : 'BULLISH'
+          : directionFilter === 'BEARISH'
+          ? 'BEARISH'
+          : firstSetupType.includes('BEAR')
+          ? 'BEARISH'
+          : 'BULLISH';
+
+        const secName = leader?.sector || scanItem?.sector;
+        const secPerf = secName ? localSectorsMap.get(secName) : undefined;
         const sectorAlphaPct =
           typeof secPerf?.rsVsSpy === 'number'
             ? secPerf.rsVsSpy
@@ -161,17 +257,37 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
             ? secPerf.changePercent
             : null;
 
+        const relPerfVsSpyPct =
+          typeof scanItem?.relPerfVsSpyPct === 'number' && Number.isFinite(scanItem.relPerfVsSpyPct)
+            ? scanItem.relPerfVsSpyPct
+            : leader?.relPerfVsSpyPct ?? null;
+
+        const tosSignals = Array.isArray(scanItem?.tosScans?.signals)
+          ? scanItem.tosScans.signals.map((s: any) => ({
+              id: s.id,
+              label: s.shortLabel || s.name || s.id,
+              direction: s.direction,
+              strength: s.strength,
+            }))
+          : undefined;
+
         entries.push({
           symbol: upper,
           candles,
           direction,
-          context: { sectorAlphaPct },
+          context: {
+            sectorAlphaPct,
+            relPerfVsSpyPct,
+            relVolStDev: leader?.relVolStDev ?? scanItem?.tosScans?.snapshot?.relVolStDev ?? null,
+            matchingSetup: leader?.matchingDivergence ?? scanItem?.setups?.[0] ?? null,
+            tosSignals,
+          },
         });
       }
 
       const ranked = rankCandidatesByConfluence(entries);
       setCandidates(ranked);
-      if (ranked.length === 0) {
+      if (ranked.length === 0 && entries.length === 0 && symbolsToEval.length > 0) {
         setErrorMessage('Live market feeds did not return enough OHLCV history (>= 30 daily bars) for matrix evaluation.');
       }
     } catch (err: any) {
@@ -179,7 +295,7 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
     } finally {
       setIsAuditing(false);
     }
-  }, [scannerResults]);
+  }, [scannerResults, activeLeaderQueue, directionFilter]);
 
   useEffect(() => {
     evaluateAllCandidates(candidateSymbols);
@@ -235,9 +351,39 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
           ? secPerf.changePercent
           : null;
 
-      const evaluated = evaluateCandidate360Confluence(clean, realCandles, 'BULLISH', {
+      const upperClean = clean.toUpperCase();
+      const matchedScan = scannerResults.find(
+        (r) => String(r?.symbol || '').toUpperCase() === upperClean
+      );
+      const matchedLeader = activeLeaderQueue.find((l) => l.symbol === upperClean);
+      const scanSetupType: string = matchedScan?.setups?.[0]?.type || '';
+      const scanPrimaryDir: string = matchedScan?.tosScans?.primarySignal?.direction || '';
+      const auditDirection: 'BULLISH' | 'BEARISH' =
+        matchedLeader
+          ? matchedLeader.direction === 'short'
+            ? 'BEARISH'
+            : 'BULLISH'
+          : directionFilter === 'BEARISH'
+          ? 'BEARISH'
+          : directionFilter === 'BULLISH'
+          ? 'BULLISH'
+          : scanSetupType.includes('BEAR') || scanPrimaryDir === 'BEARISH'
+          ? 'BEARISH'
+          : 'BULLISH';
+      const evaluated = evaluateCandidate360Confluence(clean, realCandles, auditDirection, {
         cboeSummary,
         sectorAlphaPct,
+        relPerfVsSpyPct: matchedLeader?.relPerfVsSpyPct ?? matchedScan?.relPerfVsSpyPct ?? null,
+        relVolStDev: matchedLeader?.relVolStDev ?? matchedScan?.tosScans?.snapshot?.relVolStDev ?? null,
+        matchingSetup: matchedLeader?.matchingDivergence ?? matchedScan?.setups?.[0] ?? null,
+        tosSignals: Array.isArray(matchedScan?.tosScans?.signals)
+          ? matchedScan.tosScans.signals.map((s: any) => ({
+              id: s.id,
+              label: s.shortLabel || s.name || s.id,
+              direction: s.direction,
+              strength: s.strength,
+            }))
+          : undefined,
       });
 
       if (!evaluated) {
@@ -271,34 +417,37 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
     }
   };
 
-  // Filtered candidate list
+  // Filtered candidate list (strictly capped to top 50)
   const filteredCandidates = useMemo(() => {
-    return candidates.filter((c) => {
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchesSym = c.symbol.toLowerCase().includes(q);
-        const matchesName = c.companyName.toLowerCase().includes(q);
-        const matchesSector = c.sector.toLowerCase().includes(q);
-        if (!matchesSym && !matchesName && !matchesSector) return false;
-      }
-      if (gradeFilter !== 'ALL') {
-        if (gradeFilter === 'A+' && c.overallGrade !== 'A+') return false;
-        if (gradeFilter === 'A' && !['A+', 'A'].includes(c.overallGrade)) return false;
-        if (gradeFilter === 'B' && !['A+', 'A', 'B'].includes(c.overallGrade)) return false;
-        if (gradeFilter === 'C' && c.overallGrade !== 'C') return false;
-      }
-      if (directionFilter !== 'ALL' && c.direction !== directionFilter) return false;
-      return true;
-    });
+    return candidates
+      .filter((c) => {
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const matchesSym = c.symbol.toLowerCase().includes(q);
+          const matchesName = c.companyName.toLowerCase().includes(q);
+          const matchesSector = c.sector.toLowerCase().includes(q);
+          if (!matchesSym && !matchesName && !matchesSector) return false;
+        }
+        if (gradeFilter !== 'ALL') {
+          if (gradeFilter === 'A+' && c.overallGrade !== 'A+') return false;
+          if (gradeFilter === 'A' && !['A+', 'A'].includes(c.overallGrade)) return false;
+          if (gradeFilter === 'B' && !['A+', 'A', 'B'].includes(c.overallGrade)) return false;
+          if (gradeFilter === 'C' && !['A+', 'A', 'B', 'C'].includes(c.overallGrade)) return false;
+        }
+        if (directionFilter !== 'ALL' && c.direction !== directionFilter) return false;
+        return true;
+      })
+      .slice(0, 50);
   }, [candidates, searchQuery, gradeFilter, directionFilter]);
 
-  // Top summary metrics
-  const topPick = candidates[0] ?? null;
-  const eliteCount = candidates.filter((c) => c.overallGrade === 'A+').length;
-  const highConvictionCount = candidates.filter((c) => ['A+', 'A'].includes(c.overallGrade)).length;
-  const passingRatePct = candidates.length > 0 ? Math.round((highConvictionCount / candidates.length) * 100) : 0;
-  const avgRR = candidates.length > 0
-    ? (candidates.reduce((acc, c) => acc + c.executionPlan.riskRewardRatio, 0) / candidates.length).toFixed(2)
+  // Top summary metrics aligned with active visible list
+  const hudSource = filteredCandidates.length > 0 ? filteredCandidates : candidates;
+  const topPick = hudSource[0] ?? null;
+  const eliteCount = hudSource.filter((c) => c.overallGrade === 'A+').length;
+  const highConvictionCount = hudSource.filter((c) => ['A+', 'A'].includes(c.overallGrade)).length;
+  const passingRatePct = hudSource.length > 0 ? Math.round((highConvictionCount / hudSource.length) * 100) : 0;
+  const avgRR = hudSource.length > 0
+    ? (hudSource.reduce((acc, c) => acc + c.executionPlan.riskRewardRatio, 0) / hudSource.length).toFixed(2)
     : '—';
 
   return (
@@ -464,54 +613,68 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center space-x-1 text-zinc-400 font-medium mr-1">
               <SlidersHorizontal className="w-3 h-3 text-zinc-500" />
-              <span className="text-[11px]">Grade Filter:</span>
+              <span className="text-[11px]">Conviction Gate:</span>
             </div>
-            {(['ALL', 'A+', 'A', 'B', 'C'] as const).map((g) => (
+            {(['B', 'A', 'A+', 'C', 'ALL'] as const).map((g) => (
               <button
                 key={g}
                 onClick={() => setGradeFilter(g)}
-                className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                data-testid={`confluence-grade-${g}`}
+                className={`px-2.5 py-1 rounded text-xs font-semibold transition whitespace-nowrap ${
                   gradeFilter === g
                     ? 'bg-zinc-200 text-zinc-950 shadow-sm'
                     : 'bg-zinc-800/80 text-zinc-400 hover:text-white hover:bg-zinc-800'
                 }`}
               >
-                {g === 'ALL' ? 'All Grades' : g === 'A+' ? 'Grade A+ (≥90%)' : g === 'A' ? 'Grade A (≥80%)' : `Grade ${g}`}
+                {g === 'B'
+                  ? 'Strong B+ (≥68%)'
+                  : g === 'A'
+                  ? 'Grade A+ / A (≥78%)'
+                  : g === 'A+'
+                  ? 'Grade A+ (≥88%)'
+                  : g === 'C'
+                  ? 'Include C (≥55%)'
+                  : 'All Grades'}
               </button>
             ))}
           </div>
 
-          <div className="flex items-center space-x-2">
-            <span className="text-[11px] text-zinc-500 font-medium">Direction:</span>
+          <div className="flex items-center bg-zinc-950 p-1 rounded-lg border border-zinc-800 gap-1">
             <button
-              onClick={() => setDirectionFilter('ALL')}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                directionFilter === 'ALL' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              All
-            </button>
-            <button
+              type="button"
               onClick={() => setDirectionFilter('BULLISH')}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center space-x-1 ${
+              data-testid="confluence-dir-bullish"
+              className={`px-2.5 py-1 rounded text-[11px] font-semibold flex items-center space-x-1.5 transition whitespace-nowrap ${
                 directionFilter === 'BULLISH'
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                   : 'text-zinc-400 hover:text-emerald-400'
               }`}
             >
               <TrendingUp className="w-3 h-3" />
-              <span>Bullish</span>
+              <span>Bullish Top 50 ({leaderboards.bullish.length})</span>
             </button>
             <button
+              type="button"
               onClick={() => setDirectionFilter('BEARISH')}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center space-x-1 ${
+              data-testid="confluence-dir-bearish"
+              className={`px-2.5 py-1 rounded text-[11px] font-semibold flex items-center space-x-1.5 transition whitespace-nowrap ${
                 directionFilter === 'BEARISH'
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                   : 'text-zinc-400 hover:text-rose-400'
               }`}
             >
               <TrendingDown className="w-3 h-3" />
-              <span>Bearish</span>
+              <span>Bearish Top 50 ({leaderboards.bearish.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirectionFilter('ALL')}
+              data-testid="confluence-dir-all"
+              className={`px-2.5 py-1 rounded text-[11px] font-medium transition whitespace-nowrap ${
+                directionFilter === 'ALL' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Combined
             </button>
           </div>
         </div>
@@ -565,17 +728,19 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
                 const isA = cand.overallGrade === 'A';
                 const isB = cand.overallGrade === 'B';
                 const isBull = cand.direction === 'BULLISH';
+                const presence = presenceMap.get(`${cand.direction}:${cand.symbol}`);
 
                 return (
                   <tr
-                    key={cand.symbol}
+                    key={`${cand.direction}-${cand.symbol}`}
+                    data-testid={`confluence-row-${cand.symbol}`}
                     className="hover:bg-zinc-800/40 transition group cursor-pointer"
                     onClick={() => setSelectedCandidate(cand)}
                   >
                     {/* Rank & Symbol */}
                     <td className="py-3.5 px-4">
                       <div className="flex items-center space-x-3">
-                        <span className="font-mono text-zinc-500 text-[11px] w-5 text-right font-bold">
+                        <span className="font-mono tabular-nums text-zinc-400 text-[11px] w-7 text-right font-bold">
                           #{idx + 1}
                         </span>
                         <div>
@@ -592,6 +757,14 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
                             >
                               {cand.direction}
                             </span>
+                            {presence && (
+                              <span
+                                title={`First seen in Top 50: ${presence.firstSeenDate} · Streak: ${presence.consecutiveDays}d · Best: #${presence.bestRank}`}
+                                className="text-[9px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
+                              >
+                                {presence.daysInWatchlist}d in Top 50
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-zinc-300 font-medium truncate max-w-[180px]" title={cand.companyName}>
                             {cand.companyName}
@@ -652,13 +825,13 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
                         </div>
 
                         <div className="flex items-center justify-between text-[10px]">
-                          <span className="text-zinc-400">3. CBOE Options Flow (15%)</span>
-                          <span className="font-mono text-zinc-200">{cand.angles.cboeOptions.score}%</span>
+                          <span className="text-zinc-400">3. Indicator Library & TOS (20%)</span>
+                          <span className="font-mono text-zinc-200">{cand.angles.indicatorLibrary.score}%</span>
                         </div>
                         <div className="w-full bg-zinc-800 rounded-full h-1 overflow-hidden">
                           <div
                             className="bg-cyan-400 h-1 rounded-full transition-all"
-                            style={{ width: `${cand.angles.cboeOptions.score}%` }}
+                            style={{ width: `${cand.angles.indicatorLibrary.score}%` }}
                           />
                         </div>
                       </div>

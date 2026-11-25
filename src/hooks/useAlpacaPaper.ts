@@ -12,6 +12,16 @@ import { auth } from '../lib/firebase';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 import { recordAuditEventToLedger, computeConfigDigest } from '../utils/auditLedger';
 import { loadSettings } from '../utils/masterPlanCore';
+import type { MarketHealthReport } from '../utils/marketHealthEngine';
+import {
+  storeEntryMarketContextSnapshot,
+  type EntryMarketContext,
+} from '../utils/entryMarketContext';
+import {
+  loadActiveMemoryState,
+  saveActiveMemoryState,
+  syncClosedJournalEntriesToActiveMemory,
+} from '../utils/activeLearningEngine';
 
 export interface AlpacaOptionContractDTO {
   id: string;
@@ -35,9 +45,13 @@ export interface AlpacaOrderInput {
   limit_price?: number;
   stop_price?: number;
   client_order_id?: string;
+  entryMarketContext?: EntryMarketContext | null;
 }
 
-export function syncAlpacaOverviewToLocalJournal(overview: AlpacaOverviewDTO): JournalSyncResult {
+export function syncAlpacaOverviewToLocalJournal(
+  overview: AlpacaOverviewDTO,
+  marketHealth?: MarketHealthReport | null
+): JournalSyncResult {
   const existing = loadJournalEntries();
   if (!overview.configured || !overview.account) {
     return {
@@ -49,7 +63,26 @@ export function syncAlpacaOverviewToLocalJournal(overview: AlpacaOverviewDTO): J
   }
 
   const prevById = new Map<string, JournalEntry>(existing.map((e) => [e.id, e]));
-  const result = mapAlpacaOrdersToJournalEntries(overview.orders, overview.positions, existing);
+  const result = mapAlpacaOrdersToJournalEntries(
+    overview.orders,
+    overview.positions,
+    existing,
+    marketHealth
+  );
+
+  // Automatically feed newly closed Alpaca lots into Active Learning Memory
+  try {
+    const currentMem = loadActiveMemoryState();
+    const memSync = syncClosedJournalEntriesToActiveMemory(currentMem, result.entries, marketHealth);
+    if (memSync.ingestedCount > 0) {
+      saveActiveMemoryState(memSync.updatedState);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('trullas-active-memory-updated'));
+      }
+    }
+  } catch (err) {
+    console.warn('Auto active-memory sync skipped:', err);
+  }
 
   if (result.addedCount > 0 || result.updatedCount > 0) {
     saveJournalEntries(result.entries);
@@ -143,8 +176,12 @@ export async function fetchAlpacaOptionContracts(params: {
   };
 }
 
-export function useAlpacaPaper(options: { pollMs?: number } = {}) {
+export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: MarketHealthReport | null } = {}) {
   const pollMs = options.pollMs ?? 30000;
+  const marketHealthRef = useRef<MarketHealthReport | null>(options.marketHealth ?? null);
+  useEffect(() => {
+    marketHealthRef.current = options.marketHealth ?? null;
+  }, [options.marketHealth]);
   const [overview, setOverview] = useState<AlpacaOverviewDTO | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -187,7 +224,7 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
       setError(data.error || null);
 
       if (data.configured && data.account) {
-        const sync = syncAlpacaOverviewToLocalJournal(data);
+        const sync = syncAlpacaOverviewToLocalJournal(data, marketHealthRef.current);
         setLastSyncSummary({
           addedCount: sync.addedCount,
           updatedCount: sync.updatedCount,
@@ -223,40 +260,63 @@ export function useAlpacaPaper(options: { pollMs?: number } = {}) {
 
   const submitOrder = useCallback(
     async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
+      const { entryMarketContext, ...brokerPayload } = payload;
       const configDigest = computeConfigDigest(loadSettings());
       const resp = await fetchJsonSafe<{ order?: any; error?: string }>('/api/alpaca/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(brokerPayload),
         retryOnHtml: false,
       });
       if (!resp.ok) {
         const errMsg = resp.error || `Alpaca order rejected (HTTP ${resp.status})`;
         recordAuditEventToLedger({
           eventType: 'ALPACA_ORDER_REJECTED',
-          symbol: payload.symbol,
-          clientOrderId: payload.client_order_id,
+          symbol: brokerPayload.symbol,
+          clientOrderId: brokerPayload.client_order_id,
           configDigest,
           payload: {
-            side: payload.side,
-            qty: payload.qty,
-            type: payload.type || 'market',
+            side: brokerPayload.side,
+            qty: brokerPayload.qty,
+            type: brokerPayload.type || 'market',
             error: errMsg,
           },
         });
         return { ok: false, error: errMsg };
       }
+      const orderId = String(resp.data?.order?.id || '');
+      const clientOrderId = brokerPayload.client_order_id || resp.data?.order?.client_order_id;
+      if (entryMarketContext) {
+        storeEntryMarketContextSnapshot(
+          {
+            orderId: orderId || null,
+            clientOrderId: clientOrderId || null,
+            symbol: brokerPayload.symbol,
+            entryDate: entryMarketContext.entryDate,
+          },
+          entryMarketContext
+        );
+      }
       recordAuditEventToLedger({
         eventType: 'ALPACA_ORDER_SUBMITTED',
-        symbol: payload.symbol,
-        clientOrderId: payload.client_order_id || resp.data?.order?.client_order_id,
+        symbol: brokerPayload.symbol,
+        clientOrderId,
         configDigest,
         payload: {
-          orderId: String(resp.data?.order?.id || ''),
-          side: payload.side,
-          qty: payload.qty,
-          type: payload.type || 'market',
+          orderId,
+          side: brokerPayload.side,
+          qty: brokerPayload.qty,
+          type: brokerPayload.type || 'market',
           status: String(resp.data?.order?.status || 'accepted'),
+          ...(entryMarketContext
+            ? {
+                entrySentiment: entryMarketContext.sentimentLabel,
+                entryHealthScore: entryMarketContext.healthScore,
+                entryVix: entryMarketContext.vix,
+                entryVixTerm: entryMarketContext.vixTermStructure,
+                entryStructural: entryMarketContext.symbolStructuralRegime || entryMarketContext.spyStructuralRegime,
+              }
+            : {}),
         },
       });
       await refresh();

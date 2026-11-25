@@ -53,7 +53,7 @@ import {
   evaluateCboeOptionsConfluence,
   exportAutomatedLogsToCSV,
 } from '../utils/automatedPortfolio';
-import { downloadCSV } from '../utils/tradeJournal';
+import { downloadCSV, loadJournalEntries } from '../utils/tradeJournal';
 import { loadSettings } from '../utils/masterPlanCore';
 import {
   alpacaPositionsToAutomatedPositions,
@@ -80,12 +80,24 @@ import { useMarketHealth } from '../hooks/useMarketHealth';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 import {
   ActiveMemoryState,
+  RegimePerformanceStat,
   loadActiveMemoryState,
   saveActiveMemoryState,
   resetActiveMemoryState,
   exportActiveMemoryJSON,
   ingestTradeEpisode,
+  syncClosedJournalEntriesToActiveMemory,
 } from '../utils/activeLearningEngine';
+import {
+  ShadowSignalRecord,
+  appendShadowSignalsPure,
+  backfillEntryMarketContextFromHistory,
+  buildEntryMarketContextFromReport,
+  evaluateShadowSignalsWithPrices,
+  formatEntryMarketContextBadge,
+  loadShadowSignals,
+  saveShadowSignals,
+} from '../utils/entryMarketContext';
 
 interface AutomatedPortfolioManagerProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -96,6 +108,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   onSelectSymbolForChart,
   scannerResults = [],
 }) => {
+  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
   const {
     overview,
     loading: alpacaLoading,
@@ -105,12 +118,14 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
     submitOrder,
     closePosition,
     cancelOrder,
-  } = useAlpacaPaper({ pollMs: 30000 });
-  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
+  } = useAlpacaPaper({ pollMs: 30000, marketHealth });
 
   const [account, setAccount] = useState<PortfolioAccount>(() => loadAutomatedPortfolio());
   const [queuedCandidates, setQueuedCandidates] = useState<BotQueuedCandidate[]>(() =>
     loadBotCandidateQueue()
+  );
+  const [shadowSignals, setShadowSignals] = useState<ShadowSignalRecord[]>(() =>
+    loadShadowSignals()
   );
   const [portfolioTab, setPortfolioTab] = useState<'positions' | 'analytics' | 'brain'>('positions');
   const [chartMode, setChartMode] = useState<'equity' | 'drawdown' | 'combined'>('combined');
@@ -303,13 +318,19 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   useEffect(() => {
     isMountedRef.current = true;
     const syncQueue = () => setQueuedCandidates(loadBotCandidateQueue());
+    const syncMemory = () => {
+      const freshMem = loadActiveMemoryState();
+      setAccount((prev) => ({ ...prev, activeMemory: freshMem }));
+    };
     window.addEventListener(BOT_QUEUE_EVENT, syncQueue);
     window.addEventListener('storage', syncQueue);
+    window.addEventListener('trullas-active-memory-updated', syncMemory);
     return () => {
       isMountedRef.current = false;
       cycleAbortRef.current?.abort();
       window.removeEventListener(BOT_QUEUE_EVENT, syncQueue);
       window.removeEventListener('storage', syncQueue);
+      window.removeEventListener('trullas-active-memory-updated', syncMemory);
     };
   }, []);
 
@@ -376,14 +397,24 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         maxRiskPerTradePct: accountRef.current.riskPerTradePercent || 1.0,
       };
       const currentQueue = loadBotCandidateQueue();
+      const liveMemory = accountRef.current.activeMemory || loadActiveMemoryState();
       const { ordersToPlace, positionsToClose, reversalRequests, skippedByRiskGates } =
         selectAlpacaEquityCandidates(
           activeOverview,
           marketItems,
           masterSettings,
           accountRef.current.maxOpenPositions || 5,
-          { marketHealth: activeHealth, queuedCandidates: currentQueue }
+          {
+            marketHealth: activeHealth,
+            queuedCandidates: currentQueue,
+            activeMemory: liveMemory,
+          }
         );
+
+      // Map candidate EntryMarketContext by client_order_id / symbol so submitOrder captures it immutably
+      const contextByOrderKey = new Map(
+        ordersToPlace.map((c) => [c.client_order_id || c.symbol, c.entryMarketContext ?? null])
+      );
 
       // Deterministic 3-Phase Pipeline: #1 Cancel conflicting open orders -> #2 Close exits/reversals -> #3 Submit cleared entries
       const orderPlan = buildDeterministicOrderPlan({
@@ -397,8 +428,41 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       const execResult = await executeDeterministicOrderPlan(orderPlan, {
         cancelOrder,
         closePosition,
-        submitOrder,
+        submitOrder: (payload) =>
+          submitOrder({
+            ...payload,
+            entryMarketContext:
+              contextByOrderKey.get(payload.client_order_id || payload.symbol) ??
+              buildEntryMarketContextFromReport(activeHealth, { assetMode: 'EQUITY' }),
+          }),
       });
+
+      // Record & evaluate Shadow / Counterfactual signals for blocked setups
+      const priceLookup: Record<string, number> = {};
+      for (const item of marketItems || []) {
+        if (item?.symbol && typeof item.currentPrice === 'number' && item.currentPrice > 0) {
+          priceLookup[String(item.symbol).toUpperCase()] = item.currentPrice;
+        }
+      }
+      const cycleShadowBase = buildEntryMarketContextFromReport(activeHealth, { assetMode: 'EQUITY' });
+      const newShadowInputs = skippedByRiskGates
+        .filter((s) => typeof s.signalPrice === 'number' && s.signalPrice > 0)
+        .map((s) => ({
+          symbol: s.symbol,
+          setupType: s.setupType || 'BULLISH TRIPLE',
+          assetMode: 'EQUITY' as const,
+          signalPrice: s.signalPrice!,
+          blockReason: s.reasons[0] || 'Risk gate veto',
+          entryMarketContext: cycleShadowBase,
+        }));
+      const nextShadows = evaluateShadowSignalsWithPrices(
+        appendShadowSignalsPure(loadShadowSignals(), newShadowInputs),
+        priceLookup
+      );
+      saveShadowSignals(nextShadows);
+      if (isMountedRef.current) {
+        setShadowSignals(nextShadows);
+      }
 
       // Update queued candidate lifecycle outcomes strictly based on gate & execution results
       let updatedQueue = currentQueue;
@@ -536,26 +600,49 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
   const handleTriggerMemorySynthesis = () => {
     setIsSynthesizingMemory(true);
     setTimeout(() => {
-      let updatedMem = { ...activeMemory };
+      const activeHealth = marketHealthRef.current;
+      let updatedMem: ActiveMemoryState = { ...activeMemory };
+      const journalEntries = loadJournalEntries().filter(
+        (e) => e.epochId !== 'legacy-50k' && e.status !== 'OPEN'
+      );
+
+      let ingestedTotal = 0;
+      if (journalEntries.length > 0) {
+        const synced = syncClosedJournalEntriesToActiveMemory(updatedMem, journalEntries, activeHealth);
+        updatedMem = synced.updatedState;
+        ingestedTotal += synced.ingestedCount;
+      }
+
       const closedLogs = livePortfolio.tradeHistory.filter(
         (l) => l.action === 'PARTIAL_EXIT' || l.action === 'FULL_EXIT' || l.action === 'STOP_LOSS'
       );
-
-      for (const log of closedLogs.slice(0, 10)) {
-        const isWin = (log.realizedPnL || 0) >= 0;
-        const { updatedState } = ingestTradeEpisode(updatedMem, {
-          symbol: log.symbol,
-          setupType: 'BULLISH TRIPLE',
-          direction: 'BULLISH',
-          entryPrice: log.price * 0.95,
-          exitPrice: log.price,
-          pnl: log.realizedPnL || 0,
-          pnlPercent: log.realizedPnLPercent || 0,
-          qualityScore: isWin ? 82 : 68,
-          atrPercent: 2.5,
-          exitReason: log.reason,
-        });
-        updatedMem = updatedState;
+      if (ingestedTotal === 0 && closedLogs.length > 0) {
+        for (const log of closedLogs.slice(0, 12)) {
+          const isWin = (log.realizedPnL || 0) >= 0;
+          const lotId = `hist-${log.positionId || log.id}`;
+          const entryDate = log.timestamp.slice(0, 10);
+          const ctx = activeHealth
+            ? backfillEntryMarketContextFromHistory(entryDate, activeHealth, { assetMode: 'EQUITY' })
+            : null;
+          const { updatedState, skippedDuplicate } = ingestTradeEpisode(updatedMem, {
+            symbol: log.symbol,
+            setupType: 'BULLISH TRIPLE',
+            direction: 'BULLISH',
+            assetMode: 'EQUITY',
+            entryPrice: log.price * 0.95,
+            exitPrice: log.price,
+            pnl: log.realizedPnL || 0,
+            pnlPercent: log.realizedPnLPercent || 0,
+            qualityScore: isWin ? 82 : 68,
+            atrPercent: 2.5,
+            exitReason: log.reason,
+            entryMarketContext: ctx,
+            sourceLotId: lotId,
+            timestamp: log.timestamp,
+          });
+          updatedMem = updatedState;
+          if (!skippedDuplicate) ingestedTotal += 1;
+        }
       }
 
       setAccount((prev) => ({
@@ -565,9 +652,9 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       saveActiveMemoryState(updatedMem);
       setIsSynthesizingMemory(false);
       setLastCycleMessage(
-        `Memory Synthesis Complete: Evaluated ${closedLogs.length} real Alpaca Paper trade record(s).`
+        `Memory Synthesis Complete: ${ingestedTotal} new closed trade(s) learned (${updatedMem.episodes.length} total episodes, Market-Regime Matrix updated).`
       );
-    }, 500);
+    }, 350);
   };
 
   const handleResetMemory = () => {
@@ -2074,6 +2161,187 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             </div>
           </div>
 
+          {/* Market Regime x Setup Attribution Matrix (Empirical Bayes Shrinkage) */}
+          <div
+            data-testid="equity-regime-matrix"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                  <span>Market-Regime Entry Attribution &amp; Bayesian Policy Matrix</span>
+                </h4>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Captures Market Health, Sentiment, VIX term structure &amp; Structural Zone at order entry and tunes sizing/quality per regime (Prior K=8 prevents small-sample overfitting; CRASH_DEFENSE remains non-overridable).
+                </p>
+              </div>
+              <span className="text-[11px] font-mono text-zinc-500">
+                Range: 0.55x – 1.45x · Half-Life: 40 trades
+              </span>
+            </div>
+
+            {(() => {
+              const rows: RegimePerformanceStat[] = Object.values(activeMemory.regimeStats || {})
+                .filter((r) => r.assetMode === 'EQUITY' && r.axis !== 'SENTIMENT_X_SETUP')
+                .sort((a, b) => b.tradesCount - a.tradesCount || b.shrunkMultiplier - a.shrunkMultiplier);
+
+              if (rows.length === 0) {
+                return (
+                  <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-xl p-4 text-xs text-zinc-400">
+                    No closed equity episodes with entry market context yet. When Alpaca Paper orders open and close, each lot stores its entry Health Score, Sentiment, VIX &amp; Structural Zone automatically.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="overflow-x-auto border border-zinc-800/80 rounded-xl bg-zinc-950/60">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400">
+                      <tr>
+                        <th className="py-2 px-3">Axis</th>
+                        <th className="py-2 px-3">Entry Market Regime</th>
+                        <th className="py-2 px-3 text-right">Trades (n)</th>
+                        <th className="py-2 px-3 text-right">Win Rate</th>
+                        <th className="py-2 px-3 text-right">Avg R</th>
+                        <th className="py-2 px-3 text-right">Expectancy</th>
+                        <th className="py-2 px-3 text-right">Bayesian Scale</th>
+                        <th className="py-2 px-3 text-right">Gate Δ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                      {rows.slice(0, 12).map((row) => (
+                        <tr key={row.regimeKey}>
+                          <td className="py-2 px-3 text-[10px] text-zinc-500">{row.axis}</td>
+                          <td className="py-2 px-3 text-zinc-200 font-semibold">{row.label}</td>
+                          <td className="py-2 px-3 text-right text-zinc-300">
+                            {row.tradesCount}
+                            {!row.sampleSufficient && (
+                              <span className="text-[10px] text-zinc-500 ml-1">(n&lt;10)</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right text-zinc-200">{row.winRate.toFixed(1)}%</td>
+                          <td className="py-2 px-3 text-right text-amber-400">
+                            {row.avgRealizedR !== null
+                              ? `${row.avgRealizedR >= 0 ? '+' : ''}${row.avgRealizedR.toFixed(2)}R`
+                              : '—'}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right ${
+                              row.expectancyDollars >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {row.expectancyDollars >= 0 ? '+' : '-'}${Math.abs(row.expectancyDollars).toFixed(2)}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right font-bold ${
+                              row.shrunkMultiplier > 1.02
+                                ? 'text-emerald-400'
+                                : row.shrunkMultiplier < 0.98
+                                ? 'text-amber-400'
+                                : 'text-zinc-300'
+                            }`}
+                          >
+                            {row.shrunkMultiplier.toFixed(2)}x
+                          </td>
+                          <td className="py-2 px-3 text-right text-[11px] text-zinc-400">
+                            {row.recommendedMinQualityDelta !== 0
+                              ? `Q ${row.recommendedMinQualityDelta > 0 ? '+' : ''}${row.recommendedMinQualityDelta}%`
+                              : 'Q 0%'}
+                            {row.recommendedAtrStopDelta !== 0
+                              ? ` · ATR ${row.recommendedAtrStopDelta > 0 ? '+' : ''}${row.recommendedAtrStopDelta}`
+                              : ''}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Shadow / Counterfactual Signal Ledger (Blocked Signals Audit) */}
+          <div
+            data-testid="shadow-counterfactual-panel"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Scale className="w-4 h-4 text-amber-400" />
+                  <span>Shadow / Blocked Signal Counterfactual Audit ({shadowSignals.length})</span>
+                </h4>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Tracks setups rejected by Crash Defense, Volume Gap Guard, or Quality Gates to measure whether blocks saved capital or missed bounces.
+                </p>
+              </div>
+              {shadowSignals.length > 0 && (
+                <div className="flex items-center gap-2 font-mono text-[11px]">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Saved Loss: {shadowSignals.filter((s) => s.verdict === 'SAVED_LOSS').length}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                    Missed Gain: {shadowSignals.filter((s) => s.verdict === 'MISSED_GAIN').length}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {shadowSignals.length === 0 ? (
+              <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-xl p-3.5 text-xs text-zinc-400">
+                No blocked shadow signals logged yet. Run an Auto-Pilot scan cycle to log and benchmark rejected candidates.
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-zinc-800/80 rounded-xl bg-zinc-950/60">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400">
+                    <tr>
+                      <th className="py-2 px-3">Date</th>
+                      <th className="py-2 px-3">Symbol</th>
+                      <th className="py-2 px-3">Gate Category</th>
+                      <th className="py-2 px-3">Entry Context</th>
+                      <th className="py-2 px-3 text-right">Signal Px</th>
+                      <th className="py-2 px-3 text-right">Follow-Up</th>
+                      <th className="py-2 px-3 text-right">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                    {shadowSignals.slice(0, 8).map((s) => (
+                      <tr key={s.id}>
+                        <td className="py-1.5 px-3 text-zinc-400">{s.date}</td>
+                        <td className="py-1.5 px-3 font-bold text-white">{s.symbol}</td>
+                        <td className="py-1.5 px-3 text-zinc-300">{s.blockCategory}</td>
+                        <td className="py-1.5 px-3 text-[11px] text-zinc-400 font-sans">
+                          {formatEntryMarketContextBadge(s.entryMarketContext)}
+                        </td>
+                        <td className="py-1.5 px-3 text-right text-zinc-300">${s.signalPrice.toFixed(2)}</td>
+                        <td className="py-1.5 px-3 text-right">
+                          {s.counterfactualReturnPct !== undefined
+                            ? `${s.counterfactualReturnPct >= 0 ? '+' : ''}${s.counterfactualReturnPct.toFixed(1)}%`
+                            : '—'}
+                        </td>
+                        <td className="py-1.5 px-3 text-right">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              s.verdict === 'SAVED_LOSS'
+                                ? 'bg-emerald-500/15 text-emerald-400'
+                                : s.verdict === 'MISSED_GAIN'
+                                ? 'bg-amber-500/15 text-amber-300'
+                                : 'bg-zinc-800 text-zinc-400'
+                            }`}
+                          >
+                            {s.verdict || 'PENDING'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Active Learned Rules & Behavioral Guardrails */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
             <div className="flex items-center justify-between">
@@ -2122,7 +2390,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/70 pb-3">
-                      <div className="flex items-center space-x-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full ${
                             isWin
@@ -2140,10 +2408,20 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
                         <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-zinc-950 text-zinc-300 border border-zinc-800">
                           {ep.setupType}
                         </span>
+                        {ep.entryMarketContext && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                            {formatEntryMarketContextBadge(ep.entryMarketContext)}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center space-x-3 font-mono text-xs">
                         <span className="text-zinc-500 text-[11px]">{ep.timestamp}</span>
+                        {typeof ep.realizedR === 'number' && Number.isFinite(ep.realizedR) && (
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                            {ep.realizedR >= 0 ? '+' : ''}{ep.realizedR.toFixed(2)}R
+                          </span>
+                        )}
                         <span
                           className={`font-bold ${
                             isWin ? 'text-emerald-400' : isLoss ? 'text-rose-400' : 'text-zinc-300'

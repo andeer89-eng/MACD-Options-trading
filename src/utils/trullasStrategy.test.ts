@@ -139,3 +139,38 @@ test('calculateATR and getLatestVolatilityMetrics compute volatility and stagnan
   assert.ok(flatMetrics.atrPercent < 0.5);
   assert.equal(flatMetrics.isStagnant, true);
 });
+
+test('detectDivergences returns setups sorted newest-first and computes dynamic double qualityScore/R:R', () => {
+  const candles: Candle[] = [];
+  const baseTime = 1700000000000;
+  for (let i = 0; i < 120; i++) {
+    let price = 100;
+    if (i < 25) price = 105 - Math.sin((i / 25) * Math.PI) * 10;
+    else if (i < 55) price = 102 - Math.sin(((i - 25) / 30) * Math.PI) * 14;
+    else if (i < 85) price = 104 - Math.sin(((i - 55) / 30) * Math.PI) * 12;
+    else price = 98 - Math.sin(((i - 85) / 35) * Math.PI) * 16;
+
+    candles.push({
+      timestamp: baseTime + i * 86400000,
+      dateStr: new Date(baseTime + i * 86400000).toISOString().split('T')[0],
+      open: price + 0.3,
+      high: price + 1.4,
+      low: price - 1.4,
+      close: price,
+      volume: 1_500_000 - i * 8000,
+    });
+  }
+  const indicatorPoints = calculateIndicators(candles);
+  const setups = detectDivergences('TEST', '1d', indicatorPoints, 2);
+
+  for (let i = 1; i < setups.length; i++) {
+    const prevIdx = setups[i - 1].points[setups[i - 1].points.length - 1].index;
+    const currIdx = setups[i].points[setups[i].points.length - 1].index;
+    assert.ok(prevIdx >= currIdx, `Expected newest-first ordering (${prevIdx} >= ${currIdx})`);
+  }
+
+  for (const s of setups) {
+    assert.ok(s.qualityScore >= 50 && s.qualityScore <= 99);
+    assert.ok(s.riskRewardRatio > 0 && Number.isFinite(s.riskRewardRatio));
+  }
+});

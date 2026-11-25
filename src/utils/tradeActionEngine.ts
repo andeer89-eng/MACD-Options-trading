@@ -69,7 +69,10 @@ export const DEFAULT_TRADE_FILTERS: TradeAdviceFilters = {
   searchQuery: '',
 };
 
-export function getActionZoneMeta(zone: TradeActionZone): {
+export function getActionZoneMeta(
+  zone: TradeActionZone,
+  direction: 'BULLISH' | 'BEARISH' = 'BULLISH'
+): {
   label: string;
   badgeBg: string;
   badgeBorder: string;
@@ -77,61 +80,117 @@ export function getActionZoneMeta(zone: TradeActionZone): {
   iconType: 'buy' | 'pre' | 'breakout' | 'hold' | 'warning' | 'sell' | 'neutral';
   shortDesc: string;
 } {
+  const isBear = direction === 'BEARISH';
+
   switch (zone) {
     case 'STRONG_BUY':
-      return {
-        label: 'Strong Buy / Demand',
-        badgeBg: 'bg-emerald-500/15',
-        badgeBorder: 'border-emerald-500/40',
-        textColor: 'text-emerald-400',
-        iconType: 'buy',
-        shortDesc: 'Prime reversal accumulation in institutional demand zone with verified 3rd wave exhaustion.',
-      };
+      return isBear
+        ? {
+            label: 'Strong Short / Supply',
+            badgeBg: 'bg-rose-500/15',
+            badgeBorder: 'border-rose-500/40',
+            textColor: 'text-rose-400',
+            iconType: 'sell',
+            shortDesc: 'Distribution exhaustion peak in institutional supply zone with high R:R short asymmetry.',
+          }
+        : {
+            label: 'Strong Buy / Demand',
+            badgeBg: 'bg-emerald-500/15',
+            badgeBorder: 'border-emerald-500/40',
+            textColor: 'text-emerald-400',
+            iconType: 'buy',
+            shortDesc: 'Prime reversal accumulation in institutional demand zone with verified 3rd wave exhaustion.',
+          };
     case 'PRE_BREAKOUT':
-      return {
-        label: 'Pre-Breakout Coiled',
-        badgeBg: 'bg-cyan-500/15',
-        badgeBorder: 'border-cyan-500/40',
-        textColor: 'text-cyan-400',
-        iconType: 'pre',
-        shortDesc: 'Price coiled 0.5% - 1.5% beneath neckline trigger with volume dry-up. Set limit orders.',
-      };
+      return isBear
+        ? {
+            label: 'Pre-Breakdown Coiled',
+            badgeBg: 'bg-cyan-500/15',
+            badgeBorder: 'border-cyan-500/40',
+            textColor: 'text-cyan-400',
+            iconType: 'pre',
+            shortDesc: 'Price coiled 0.5% - 2.0% above breakdown neckline trigger. Prepare short limit/stop orders.',
+          }
+        : {
+            label: 'Pre-Breakout Coiled',
+            badgeBg: 'bg-cyan-500/15',
+            badgeBorder: 'border-cyan-500/40',
+            textColor: 'text-cyan-400',
+            iconType: 'pre',
+            shortDesc: 'Price coiled 0.5% - 1.5% beneath neckline trigger with volume dry-up. Set limit orders.',
+          };
     case 'BREAKOUT_CONFIRMED':
-      return {
-        label: 'Breakout Confirmed',
-        badgeBg: 'bg-indigo-500/15',
-        badgeBorder: 'border-indigo-500/40',
-        textColor: 'text-indigo-400',
-        iconType: 'breakout',
-        shortDesc: 'Neckline breached with MACD histogram acceleration. Enter Tranche 1 (33% size).',
-      };
+      return isBear
+        ? {
+            label: 'Breakdown Confirmed',
+            badgeBg: 'bg-rose-500/15',
+            badgeBorder: 'border-rose-500/40',
+            textColor: 'text-rose-400',
+            iconType: 'breakout',
+            shortDesc: 'Support neckline breached with bearish MACD acceleration. Enter short Tranche 1.',
+          }
+        : {
+            label: 'Breakout Confirmed',
+            badgeBg: 'bg-indigo-500/15',
+            badgeBorder: 'border-indigo-500/40',
+            textColor: 'text-indigo-400',
+            iconType: 'breakout',
+            shortDesc: 'Neckline breached with MACD histogram acceleration. Enter Tranche 1 (33% size).',
+          };
     case 'HOLD_PROFIT':
-      return {
-        label: 'Hold / Run Profit',
-        badgeBg: 'bg-blue-500/15',
-        badgeBorder: 'border-blue-500/40',
-        textColor: 'text-blue-400',
-        iconType: 'hold',
-        shortDesc: 'In profit past 23.6% trigger. Move stop to breakeven, trailing towards 61.8% Golden Pocket.',
-      };
+      return isBear
+        ? {
+            label: 'Hold Short / Run Profit',
+            badgeBg: 'bg-blue-500/15',
+            badgeBorder: 'border-blue-500/40',
+            textColor: 'text-blue-400',
+            iconType: 'hold',
+            shortDesc: 'Short in profit below 23.6% trigger. Trail stop to breakeven toward 61.8% Golden Pocket.',
+          }
+        : {
+            label: 'Hold / Run Profit',
+            badgeBg: 'bg-blue-500/15',
+            badgeBorder: 'border-blue-500/40',
+            textColor: 'text-blue-400',
+            iconType: 'hold',
+            shortDesc: 'In profit past 23.6% trigger. Move stop to breakeven, trailing towards 61.8% Golden Pocket.',
+          };
     case 'LATE_TO_BUY':
-      return {
-        label: 'Late To Buy / Chase Risk',
-        badgeBg: 'bg-amber-500/15',
-        badgeBorder: 'border-amber-500/40',
-        textColor: 'text-amber-400',
-        iconType: 'warning',
-        shortDesc: 'Extended past 38.2% target. Risk/Reward degraded. DO NOT FOMO — wait for retest.',
-      };
+      return isBear
+        ? {
+            label: 'Late To Short / Chase Risk',
+            badgeBg: 'bg-amber-500/15',
+            badgeBorder: 'border-amber-500/40',
+            textColor: 'text-amber-400',
+            iconType: 'warning',
+            shortDesc: 'Already extended past bearish TP1. Do not short the hole — wait for bear-flag retest.',
+          }
+        : {
+            label: 'Late To Buy / Chase Risk',
+            badgeBg: 'bg-amber-500/15',
+            badgeBorder: 'border-amber-500/40',
+            textColor: 'text-amber-400',
+            iconType: 'warning',
+            shortDesc: 'Extended past 38.2% target. Risk/Reward degraded. DO NOT FOMO — wait for retest.',
+          };
     case 'SELL_TAKE_PROFIT':
-      return {
-        label: 'Sell / Take Profit',
-        badgeBg: 'bg-rose-500/15',
-        badgeBorder: 'border-rose-500/40',
-        textColor: 'text-rose-400',
-        iconType: 'sell',
-        shortDesc: 'Reached TP2 (61.8%) / TP3 retest target, or hitting LuxAlgo supply ceiling. Scale out.',
-      };
+      return isBear
+        ? {
+            label: 'Cover Short / Take Profit',
+            badgeBg: 'bg-emerald-500/15',
+            badgeBorder: 'border-emerald-500/40',
+            textColor: 'text-emerald-400',
+            iconType: 'sell',
+            shortDesc: 'Reached bearish TP2 (61.8%) / demand floor. Lock in short profits.',
+          }
+        : {
+            label: 'Sell / Take Profit',
+            badgeBg: 'bg-rose-500/15',
+            badgeBorder: 'border-rose-500/40',
+            textColor: 'text-rose-400',
+            iconType: 'sell',
+            shortDesc: 'Reached TP2 (61.8%) / TP3 retest target, or hitting LuxAlgo supply ceiling. Scale out.',
+          };
     case 'NEUTRAL_CHOP':
       return {
         label: 'Stand Aside / Chop',

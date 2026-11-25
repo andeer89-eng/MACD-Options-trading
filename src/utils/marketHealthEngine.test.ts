@@ -223,3 +223,153 @@ test('evaluateSafetyRegime flags CAUTIOUS (0.5x) on moderate VIX elevation', () 
   assert.equal(res.allowNewEntries, true);
   assert.equal(res.sizeMultiplier, 0.5);
 });
+
+test('single-day +4.7% relief bounce in 21D bear distribution & VIX backwardation remains Extreme Fear (does not flip volumeScore > 50)', () => {
+  const data = generateDailySeries({
+    days: 150,
+    startPrice: 770,
+    dailyReturnPct: -0.45,
+    vixStart: 18,
+    vixEnd: 35.89,
+    vix3mOffset: -3.0,
+    bullishBars: false,
+  });
+
+  // Construct HYG/IEF credit stress and VVIX elevation
+  const vvix = data.vix.map((v, idx) => ({
+    ...v,
+    close: idx >= 130 ? 128 : 88,
+    high: idx >= 130 ? 132 : 90,
+    low: idx >= 130 ? 122 : 85,
+  }));
+  const hyg = data.spy.map((s, idx) => ({
+    ...s,
+    close: idx >= 128 ? 76.2 - (idx - 128) * 0.12 : 79.5,
+  }));
+  const ief = data.tlt.map((t, idx) => ({
+    ...t,
+    close: idx >= 128 ? 91.5 + (idx - 128) * 0.04 : 91.2,
+  }));
+
+  // Inject ONE +4.71% single-day relief bounce at the final session (like 2026-11-23)
+  const lastIdx = data.spy.length - 1;
+  const prevSpy = data.spy[lastIdx - 1].close;
+  const bounceSpy = Number((prevSpy * 1.0471).toFixed(2));
+  data.spy[lastIdx] = {
+    ...data.spy[lastIdx],
+    open: prevSpy,
+    low: prevSpy,
+    high: bounceSpy + 0.5,
+    close: bounceSpy,
+    volume: 95_000_000,
+  };
+  const prevQqq = data.qqq[lastIdx - 1].close;
+  const bounceQqq = Number((prevQqq * 1.062).toFixed(2));
+  data.qqq[lastIdx] = {
+    ...data.qqq[lastIdx],
+    open: prevQqq,
+    low: prevQqq,
+    high: bounceQqq + 0.5,
+    close: bounceQqq,
+    volume: 70_000_000,
+  };
+  const prevXlk = data.xlk[lastIdx - 1].close;
+  const bounceXlk = Number((prevXlk * 1.055).toFixed(2));
+  data.xlk[lastIdx] = {
+    ...data.xlk[lastIdx],
+    open: prevXlk,
+    low: prevXlk,
+    high: bounceXlk + 0.3,
+    close: bounceXlk,
+    volume: 18_000_000,
+  };
+  // VIX drops from 35.89 to 26.62, still above 50D SMA (~22) and still in backwardation (25.50 < 26.62)
+  data.vix[lastIdx] = { ...data.vix[lastIdx], close: 26.62, high: 29, low: 26 };
+  data.vix3m[lastIdx] = { ...data.vix3m[lastIdx], close: 25.5, high: 26.5, low: 25 };
+  vvix[lastIdx] = { ...vvix[lastIdx], close: 117.36 };
+
+  const report = computeMarketHealthReport({
+    spyCandles: data.spy,
+    vixCandles: data.vix,
+    vix3mCandles: data.vix3m,
+    vvixCandles: vvix,
+    tltCandles: data.tlt,
+    hygCandles: hyg,
+    iefCandles: ief,
+    flowBenchmarkCandles: {
+      SPY: data.spy,
+      QQQ: data.qqq,
+      XLK: data.xlk,
+    },
+  });
+
+  assert.ok(report.current.netVolumeTodayBillions > 0, 'Today flow is positive bounce');
+  assert.ok(report.current.netVolume1MBillions < 0, '1M institutional flow must remain net negative');
+  assert.ok((report.current.cmf21 ?? 0) < 0, `Expected negative CMF(21), got ${report.current.cmf21}`);
+  assert.ok(
+    report.current.volumeScore <= 25,
+    `Expected volumeScore <= 25 during 1M distribution despite 1-day bounce, got ${report.current.volumeScore}`
+  );
+  assert.ok(
+    report.current.score <= 24,
+    `Expected composite score <= 24 (Extreme Fear), got ${report.current.score}`
+  );
+  assert.equal(report.current.label, 'Extreme Fear');
+  assert.equal(report.current.safetyStatus, 'CRASH_DEFENSE');
+  assert.equal(
+    report.current.scoreDelta1D,
+    report.current.score - (report.snapshots.previousClose?.score ?? report.current.score)
+  );
+});
+
+test('computeMarketHealthReport synchronizes score and snapshots with externalFearGreed (feargreedtracker.com) while preserving internalScore', () => {
+  const data = generateDailySeries({
+    days: 60,
+    startPrice: 750,
+    dailyReturnPct: -0.35,
+    vixStart: 19,
+    vixEnd: 26.62,
+    vix3mOffset: -1.12,
+    bullishBars: false,
+  });
+
+  const lastDate = data.spy[data.spy.length - 1].dateStr;
+  const prevDate = data.spy[data.spy.length - 2].dateStr;
+  const weekDate = data.spy[data.spy.length - 6].dateStr;
+
+  const report = computeMarketHealthReport({
+    spyCandles: data.spy,
+    vixCandles: data.vix,
+    vix3mCandles: data.vix3m,
+    tltCandles: data.tlt,
+    flowBenchmarkCandles: {
+      SPY: data.spy,
+      QQQ: data.qqq,
+      XLK: data.xlk,
+    },
+    externalFearGreed: {
+      provider: 'feargreedtracker.com',
+      providerLabel: 'feargreedtracker.com (CNN Fear & Greed)',
+      currentScore: 17,
+      previousCloseScore: 10,
+      oneWeekAgoScore: 31,
+      oneMonthAgoScore: 49,
+      scoreDelta1D: 7,
+      asOf: lastDate,
+      historyByDate: {
+        [lastDate]: { date: lastDate, score: 17, label: 'Extreme Fear', vix: 26.62 },
+        [prevDate]: { date: prevDate, score: 10, label: 'Extreme Fear', vix: 35.89 },
+        [weekDate]: { date: weekDate, score: 31, label: 'Fear', vix: 22.91 },
+      },
+    },
+  });
+
+  assert.equal(report.scoreSyncSource, 'feargreedtracker.com');
+  assert.equal(report.current.score, 17);
+  assert.equal(report.current.label, 'Extreme Fear');
+  assert.equal(report.current.scoreDelta1D, 7);
+  assert.equal(typeof report.current.internalScore, 'number');
+  assert.equal(report.snapshots.previousClose?.score, 10);
+  assert.equal(report.snapshots.oneWeekAgo?.score, 31);
+  assert.equal(report.current.safetyStatus, 'CRASH_DEFENSE');
+});

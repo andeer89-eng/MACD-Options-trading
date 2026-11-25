@@ -9,6 +9,8 @@ import {
 } from './alpacaJournalSync.ts';
 import { DEFAULT_SETTINGS } from './masterPlanCore.ts';
 import type { JournalEntry } from './tradeJournal.ts';
+import { initDefaultActiveMemory, ingestTradeEpisode } from './activeLearningEngine.ts';
+import { buildEntryMarketContextFromReport } from './entryMarketContext.ts';
 
 describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
   it('parses OCC option symbols accurately into underlying, expiration, type, and strike', () => {
@@ -482,5 +484,143 @@ describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
     assert.equal(openRemainder.id, 'alpaca_lot_ord-adbe-1');
     assert.equal(res.entries.some((e) => e.symbol === 'XYZ'), false);
   });
+
+  it('selectAlpacaEquityCandidates integrates activeMemory regime gating, scales qty, and attaches entryMarketContext', () => {
+    const nowMs = Date.UTC(2026, 10, 21, 16, 0, 0);
+    const neutralHealth = {
+      isLive: true,
+      asOf: '2026-11-21',
+      dataSource: 'Test Feed',
+      universeCount: 14,
+      current: {
+        score: 54,
+        label: 'Neutral' as const,
+        safetyStatus: 'SAFE_RISK_ON' as const,
+        allowNewEntries: true,
+        sizeMultiplier: 1.0,
+        vix: 17.4,
+        vix3m: 19.1,
+        vixTermStructure: 'CONTANGO' as const,
+        spyPrice: 595,
+        spyChangePct: 0.3,
+        spy5dReturnPct: 1.0,
+        netVolumeTodayBillions: 1.5,
+        buyingVolumeTodayBillions: 14,
+        sellingVolumeTodayBillions: 12.5,
+        netVolume1MBillions: 5.2,
+        buyingVolume1MBillions: 115,
+        sellingVolume1MBillions: 109.8,
+        buySellRatio1M: 1.05,
+        breadthPct: 60,
+        momentumScore: 55,
+        vixScore: 58,
+        volumeScore: 52,
+        breadthScore: 55,
+        reasons: ['Healthy Neutral regime'],
+      },
+      snapshots: {
+        now: { date: '2026-11-21', score: 54, label: 'Neutral' as const, vix: 17.4, netFlowBillions: 1.5 },
+        previousClose: null,
+        oneWeekAgo: null,
+        oneMonthAgo: null,
+        oneYearAgo: null,
+      },
+      history1M: [],
+      history1YCount: 252,
+    };
+
+    const neutralCtx = buildEntryMarketContextFromReport(neutralHealth, {
+      entryDate: '2026-11-15',
+      initialRiskDollars: 100,
+      assetMode: 'EQUITY',
+    });
+
+    let memory = initDefaultActiveMemory();
+    for (let i = 0; i < 6; i++) {
+      memory = ingestTradeEpisode(memory, {
+        symbol: `LOSS${i}`,
+        setupType: 'BULLISH TRIPLE',
+        direction: 'BULLISH',
+        assetMode: 'EQUITY',
+        entryPrice: 100,
+        exitPrice: 94,
+        pnl: -150,
+        pnlPercent: -6,
+        qualityScore: 76,
+        atrPercent: 2.5,
+        exitReason: 'STOP LOSS',
+        entryMarketContext: neutralCtx,
+        initialRiskDollars: 100,
+      }).updatedState;
+    }
+
+    const overview: AlpacaOverviewDTO = {
+      configured: true,
+      mode: 'PAPER',
+      paperEndpoint: 'https://paper-api.alpaca.markets',
+      message: 'Connected',
+      fetchedAt: new Date(nowMs).toISOString(),
+      account: {
+        id: 'acct-1',
+        account_number: 'PA123456',
+        status: 'ACTIVE',
+        currency: 'USD',
+        cash: 100000,
+        buying_power: 100000,
+        options_buying_power: 100000,
+        options_approved_level: 2,
+        equity: 100000,
+        last_equity: 100000,
+        day_pnl: 0,
+        day_pnl_pct: 0,
+        pattern_day_trader: false,
+      },
+      positions: [],
+      equityPositions: [],
+      optionPositions: [],
+      orders: [],
+      fills: [],
+    };
+
+    const marketItems = [
+      {
+        symbol: 'XOM',
+        sector: 'Energy',
+        currentPrice: 118,
+        atr: 2.2,
+        fetchedAtMs: nowMs - 60_000,
+        setups: [{ type: 'BULLISH_TRIPLE', qualityScore: 73 }], // fails elevated adaptive threshold
+      },
+      {
+        symbol: 'CVX',
+        sector: 'Energy',
+        currentPrice: 155,
+        atr: 2.8,
+        fetchedAtMs: nowMs - 60_000,
+        setups: [{ type: 'BULLISH_TRIPLE', qualityScore: 88 }], // passes and gets throttled size & context attached
+      },
+    ];
+
+    const res = selectAlpacaEquityCandidates(
+      overview,
+      marketItems,
+      { ...DEFAULT_SETTINGS, maxSectorExposurePct: 40, maxRiskPerTradePct: 1.0 },
+      5,
+      { nowMs, marketHealth: neutralHealth, activeMemory: memory }
+    );
+
+    assert.equal(res.ordersToPlace.length, 1);
+    assert.equal(res.ordersToPlace[0].symbol, 'CVX');
+    assert.ok((res.ordersToPlace[0].regimeMultiplier ?? 1) < 1.0);
+    assert.equal(res.ordersToPlace[0].entryMarketContext?.sentimentLabel, 'Neutral');
+    assert.ok((res.ordersToPlace[0].initialRiskDollars ?? 0) > 0);
+
+    const xomSkip = res.skippedByRiskGates.find((s) => s.symbol === 'XOM');
+    assert.ok(xomSkip);
+    assert.equal(xomSkip.setupType, 'BULLISH_TRIPLE');
+    assert.equal(xomSkip.signalPrice, 118);
+    assert.ok(xomSkip.reasons.some((r) => r.includes('Active Memory Guard')));
+  });
 });
+
 

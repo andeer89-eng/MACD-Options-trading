@@ -13,6 +13,13 @@ import {
   mergeQueuedCandidatesWithMarketItems,
 } from './botCandidateQueue.ts';
 import type { ReversalCloseRequest } from './deterministicOrderPipeline.ts';
+import {
+  backfillEntryMarketContextFromHistory,
+  buildEntryMarketContextFromReport,
+  lookupEntryMarketContextSnapshot,
+  type EntryMarketContext,
+} from './entryMarketContext.ts';
+import { queryMemoryForSetup, type ActiveMemoryState } from './activeLearningEngine.ts';
 
 export interface AlpacaAccountDTO {
   id: string;
@@ -241,7 +248,8 @@ export interface JournalSyncResult {
 export function mapAlpacaOrdersToJournalEntries(
   orders: AlpacaOrderDTO[],
   positions: AlpacaPositionDTO[],
-  existingEntries: JournalEntry[]
+  existingEntries: JournalEntry[],
+  marketHealth?: MarketHealthReport | null
 ): JournalSyncResult {
   const lots = pairAlpacaOrdersFifo(orders);
   const existingById = new Map<string, JournalEntry>();
@@ -328,6 +336,25 @@ export function mapAlpacaOrdersToJournalEntries(
       ? Number((lot.entryPrice * 1.08).toFixed(2))
       : Number((lot.entryPrice * 0.92).toFixed(2));
 
+    const resolvedStop = matchedOpen?.stopLoss ?? stopEstimate;
+    const riskPerUnit = Math.abs(lot.entryPrice - resolvedStop);
+    const initialRiskDollars =
+      riskPerUnit > 0 ? Number((riskPerUnit * lot.qty * multiplier).toFixed(2)) : null;
+
+    const entryMarketContext: EntryMarketContext | null =
+      matchedOpen?.entryMarketContext ||
+      lookupEntryMarketContextSnapshot({
+        orderId: lot.openOrderId,
+        symbol: lot.symbol,
+        entryDate,
+      }) ||
+      (marketHealth
+        ? backfillEntryMarketContextFromHistory(entryDate, marketHealth, {
+            initialRiskDollars,
+            assetMode: lot.isOption ? 'OPTIONS' : 'EQUITY',
+          })
+        : null);
+
     const nextEntry: JournalEntry = {
       id: targetId,
       symbol: lot.symbol.slice(0, 20),
@@ -339,7 +366,7 @@ export function mapAlpacaOrdersToJournalEntries(
       exitDate,
       entryPrice: Number(lot.entryPrice.toFixed(2)),
       exitPrice: lot.exitPrice !== undefined ? Number(lot.exitPrice.toFixed(2)) : undefined,
-      stopLoss: matchedOpen?.stopLoss ?? stopEstimate,
+      stopLoss: resolvedStop,
       targetPrice: matchedOpen?.targetPrice ?? targetEstimate,
       quantity: lot.qty,
       realizedPnL,
@@ -351,6 +378,7 @@ export function mapAlpacaOrdersToJournalEntries(
       executionRating: matchedOpen?.executionRating ?? (status === 'CLOSED_WIN' ? 5 : 4),
       epochId: 'alpaca-paper',
       createdAt: matchedOpen?.createdAt || new Date(lot.entryTs).getTime() || Date.now(),
+      entryMarketContext,
     };
 
     const prev = nextById.get(targetId);
@@ -364,7 +392,8 @@ export function mapAlpacaOrdersToJournalEntries(
       prev.entryDate !== nextEntry.entryDate ||
       prev.exitPrice !== nextEntry.exitPrice ||
       prev.realizedPnL !== nextEntry.realizedPnL ||
-      prev.tags.length !== nextEntry.tags.length
+      prev.tags.length !== nextEntry.tags.length ||
+      (!prev.entryMarketContext && Boolean(nextEntry.entryMarketContext))
     ) {
       updatedCount++;
       nextById.set(targetId, nextEntry);
@@ -632,12 +661,17 @@ export interface AlpacaEquityOrderCandidate {
   stopLoss: number;
   targetPrice: number;
   rationale: string;
+  initialRiskDollars?: number;
+  regimeMultiplier?: number;
+  entryMarketContext?: EntryMarketContext | null;
 }
 
 export interface AlpacaRiskGateSkip {
   symbol: string;
   sector: string;
   reasons: string[];
+  setupType?: string;
+  signalPrice?: number;
 }
 
 export function resolveEquitySector(symbol: string, explicitSector?: string): string {
@@ -686,6 +720,7 @@ export function selectAlpacaEquityCandidates(
     maxQuoteAgeMs?: number;
     marketHealth?: MarketHealthReport | null;
     queuedCandidates?: BotQueuedCandidate[];
+    activeMemory?: ActiveMemoryState | null;
   }
 ): {
   ordersToPlace: AlpacaEquityOrderCandidate[];
@@ -839,6 +874,8 @@ export function selectAlpacaEquityCandidates(
       skippedByRiskGates.push({
         symbol: sym,
         sector,
+        setupType: String(mainSetup.type || 'BULLISH_TRIPLE'),
+        signalPrice: item.currentPrice,
         reasons: [
           `Market Health Crash Defense: ${marketHealthSummary} (${marketHealth.current.reasons.join('; ')})`,
         ],
@@ -867,9 +904,31 @@ export function selectAlpacaEquityCandidates(
       skippedByRiskGates.push({
         symbol: sym,
         sector,
+        setupType: String(mainSetup.type || 'BULLISH_TRIPLE'),
+        signalPrice: item.currentPrice,
         reasons: [
           `Volume Gap Guard: ${sym} blocked inside ${gapDesc} (awaiting HVN / Institutional Buy Zone floor)`,
         ],
+      });
+      continue;
+    }
+
+    const setupName = String(mainSetup.type || 'BULLISH_TRIPLE');
+    const setupQualityScore = Number(mainSetup.qualityScore || 75);
+    const memoryEval = options?.activeMemory
+      ? queryMemoryForSetup(options.activeMemory, sym, setupName, setupQualityScore, marketHealth, {
+          assetMode: 'EQUITY',
+          symbolStructural: candStructural,
+        })
+      : null;
+
+    if (memoryEval && !memoryEval.isApproved) {
+      skippedByRiskGates.push({
+        symbol: sym,
+        sector,
+        setupType: setupName,
+        signalPrice: item.currentPrice,
+        reasons: [memoryEval.auditRationale],
       });
       continue;
     }
@@ -901,7 +960,7 @@ export function selectAlpacaEquityCandidates(
       symbol: sym,
       direction: 'long',
       sector,
-      setupScore: Number(mainSetup.qualityScore || 75),
+      setupScore: setupQualityScore,
       levels,
       currentPrice: item.currentPrice,
       marketOpenOverride: true, // Manual cycle click evaluates live setups cleanly; scheduler enforces NYSE hours
@@ -919,11 +978,19 @@ export function selectAlpacaEquityCandidates(
         skippedByRiskGates.push({
           symbol: sym,
           sector,
+          setupType: setupName,
+          signalPrice: item.currentPrice,
           reasons: gate.fails.map((f) => `${f.name}: ${f.detail}`),
         });
       }
       continue;
     }
+
+    const adaptiveMult = memoryEval ? memoryEval.sizingMultiplier : 1.0;
+    const adaptedSuggestedQty =
+      adaptiveMult !== 1.0
+        ? Math.max(1, Math.round(gate.suggestedQty * adaptiveMult))
+        : gate.suggestedQty;
 
     const maxAffordable = Math.floor(remainingBuyingPower / item.currentPrice);
     // Also keep single incremental addition from breaching sector dollar cap if cap > 0
@@ -932,13 +999,15 @@ export function selectAlpacaEquityCandidates(
     const maxQtyBySector =
       effectiveSettings.maxSectorExposurePct > 0
         ? Math.floor(remainingSectorDollars / item.currentPrice)
-        : gate.suggestedQty;
+        : adaptedSuggestedQty;
 
-    const qty = Math.min(gate.suggestedQty, maxAffordable, maxQtyBySector);
+    const qty = Math.min(adaptedSuggestedQty, maxAffordable, maxQtyBySector);
     if (qty < 1) {
       skippedByRiskGates.push({
         symbol: sym,
         sector,
+        setupType: setupName,
+        signalPrice: item.currentPrice,
         reasons: [
           maxQtyBySector < 1
             ? `Sector Exposure Within Cap: adding 1 sh of ${sym} would breach ${effectiveSettings.maxSectorExposurePct.toFixed(0)}% ${sector} cap`
@@ -958,6 +1027,8 @@ export function selectAlpacaEquityCandidates(
       skippedByRiskGates.push({
         symbol: sym,
         sector,
+        setupType: setupName,
+        signalPrice: item.currentPrice,
         reasons: [`Duplicate order suppressed by idempotency key (${clientOrderId})`],
       });
       continue;
@@ -970,10 +1041,26 @@ export function selectAlpacaEquityCandidates(
     existingClientOrderIds.add(clientOrderId);
     sectorExposureDollars.set(sector, currentSectorDollars + notional);
 
+    const stopPrice = levels.stop.price;
+    const initialRiskDollars =
+      item.currentPrice > stopPrice
+        ? Number(((item.currentPrice - stopPrice) * qty).toFixed(2))
+        : Number((atr * 1.25 * qty).toFixed(2));
+    const entryMarketContext = buildEntryMarketContextFromReport(marketHealth, {
+      entryDate: asOfIso.slice(0, 10),
+      symbolStructural: candStructural,
+      initialRiskDollars,
+      assetMode: 'EQUITY',
+      source: 'LIVE_ORDER',
+    });
+
     const structuralTag = candStructural
       ? candStructural.regime === 'AT_INSTITUTIONAL_BUY_ZONE' && candStructural.institutionalBuyZone
         ? ` • Inst. Buy Zone $${candStructural.institutionalBuyZone.low.toFixed(2)}–$${candStructural.institutionalBuyZone.high.toFixed(2)}${candStructural.isChurnAbsorption ? ' (Churn Absorption)' : ''}`
         : ` • Vol Sent ${candStructural.mtfVolumeSentiment >= 0 ? '+' : ''}${candStructural.mtfVolumeSentiment}/10`
+      : '';
+    const memTag = memoryEval
+      ? ` • Memory ${memoryEval.sizingMultiplier.toFixed(2)}x`
       : '';
 
     ordersToPlace.push({
@@ -984,11 +1071,14 @@ export function selectAlpacaEquityCandidates(
       time_in_force: 'day',
       client_order_id: clientOrderId,
       sector,
-      setupType: String(mainSetup.type || 'BULLISH_TRIPLE'),
+      setupType: setupName,
       qualityScore: Number(mainSetup.qualityScore || 80),
-      stopLoss: levels.stop.price,
+      stopLoss: stopPrice,
       targetPrice: levels.targets[1]?.price || levels.targets[0]?.price || Number((item.currentPrice * 1.05).toFixed(2)),
-      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${structuralTag}${
+      initialRiskDollars,
+      regimeMultiplier: adaptiveMult,
+      entryMarketContext,
+      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${structuralTag}${memTag}${
         marketHealthSummary ? ` • ${marketHealthSummary}` : ''
       }`,
     });

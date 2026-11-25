@@ -1,11 +1,20 @@
 import { Router, Request, Response } from 'express';
 import { validateBacktestParams } from '../../src/utils/serverSecurity.ts';
-import { runBacktest, BacktestConfig } from '../../src/utils/backtestEngine.ts';
+import {
+  runBacktest,
+  BacktestConfig,
+  BacktestStrategyMode,
+} from '../../src/utils/backtestEngine.ts';
 import { optimizeStrategyParameters } from '../../src/utils/strategyOptimizer.ts';
 import type { MarketDataService } from '../services/marketData.ts';
 
 const VALID_SYMBOL_REGEX = /^[A-Za-z0-9.^=\-_]{1,20}$/;
 const ALLOWED_TARGET_MODES = ['tranches', 'tp1', 'tp2'] as const;
+const ALLOWED_STRATEGY_MODES: readonly BacktestStrategyMode[] = [
+  'trullas_divergence',
+  'ttm_squeeze_stack',
+  'stacked_ema_pullback',
+];
 
 export function createOptimizerRouter(marketData: MarketDataService): Router {
   const router = Router();
@@ -21,6 +30,7 @@ export function createOptimizerRouter(marketData: MarketDataService): Router {
         riskPerTradePct = 1.5,
         targetMode = 'tranches',
         minQualityScore = 55,
+        strategyMode = 'trullas_divergence',
       } = req.body || {};
 
       if (typeof symbol !== 'string' || !VALID_SYMBOL_REGEX.test(symbol.trim())) {
@@ -28,6 +38,11 @@ export function createOptimizerRouter(marketData: MarketDataService): Router {
       }
       if (!ALLOWED_TARGET_MODES.includes(targetMode)) {
         return res.status(400).json({ error: 'Invalid targetMode. Must be one of: tranches, tp1, tp2.' });
+      }
+      if (!ALLOWED_STRATEGY_MODES.includes(strategyMode)) {
+        return res.status(400).json({
+          error: 'Invalid strategyMode. Must be one of: trullas_divergence, ttm_squeeze_stack, stacked_ema_pullback.',
+        });
       }
 
       const validation = validateBacktestParams({
@@ -55,6 +70,7 @@ export function createOptimizerRouter(marketData: MarketDataService): Router {
         riskPerTradePct: validation.values.riskPerTradePct,
         targetMode,
         minQualityScore: validation.values.minQualityScore,
+        strategyMode,
       };
 
       const result = runBacktest(candles, config);

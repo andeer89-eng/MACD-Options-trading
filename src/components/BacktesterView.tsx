@@ -21,7 +21,11 @@ import {
   ArrowUpRight,
   ArrowDownRight,
 } from 'lucide-react';
-import { BacktestResult, SimulatedTrade } from '../utils/backtestEngine';
+import {
+  BacktestResult,
+  BacktestStrategyMode,
+  SimulatedTrade,
+} from '../utils/backtestEngine';
 import { StrategyOptimizationReport, OptimizationCandidate } from '../utils/strategyOptimizer';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 
@@ -40,6 +44,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
   const [riskPerTradePct, setRiskPerTradePct] = useState<number>(1.5);
   const [targetMode, setTargetMode] = useState<'tranches' | 'tp1' | 'tp2'>('tranches');
   const [minQualityScore, setMinQualityScore] = useState<number>(55);
+  const [strategyMode, setStrategyMode] = useState<BacktestStrategyMode>('trullas_divergence');
 
   // Execution state
   const [loading, setLoading] = useState<boolean>(false);
@@ -61,7 +66,8 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
     targetTf = timeframe,
     targetRange = range,
     overrideTargetMode?: 'tranches' | 'tp1' | 'tp2',
-    overrideMinScore?: number
+    overrideMinScore?: number,
+    overrideStrategyMode?: BacktestStrategyMode
   ) => {
     setLoading(true);
     setError(null);
@@ -77,6 +83,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
           riskPerTradePct,
           targetMode: overrideTargetMode || targetMode,
           minQualityScore: overrideMinScore ?? minQualityScore,
+          strategyMode: overrideStrategyMode || strategyMode,
         }),
       });
 
@@ -234,7 +241,13 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Simulated {result.trades.length} Trullàs setups from {result.startDate} to {result.endDate}
+              Simulated {result.trades.length}{' '}
+              {result.config.strategyMode === 'ttm_squeeze_stack'
+                ? 'TOS TTM Squeeze + EMA Stack'
+                : result.config.strategyMode === 'stacked_ema_pullback'
+                ? 'TOS Stacked EMA Pullback'
+                : 'Trullàs Divergence'}{' '}
+              setups from {result.startDate} to {result.endDate}
             </p>
           </div>
           <div className="text-right">
@@ -542,18 +555,38 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
               {sym}
             </button>
           ))}
-          <div className="ml-auto text-[11px] text-zinc-400 flex items-center space-x-2">
-            <span>Risk/Trade:</span>
-            <input
-              type="range"
-              min="0.5"
-              max="3.0"
-              step="0.5"
-              value={riskPerTradePct}
-              onChange={(e) => setRiskPerTradePct(parseFloat(e.target.value))}
-              className="w-20 accent-emerald-500"
-            />
-            <span className="font-mono text-zinc-200">{riskPerTradePct}%</span>
+          <div className="ml-auto flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
+            <div className="flex items-center space-x-1.5">
+              <span className="font-semibold text-zinc-300">Strategy:</span>
+              <select
+                aria-label="Backtest Strategy Engine"
+                data-testid="backtest-strategy-select"
+                value={strategyMode}
+                onChange={(e) => {
+                  const next = e.target.value as BacktestStrategyMode;
+                  setStrategyMode(next);
+                  executeBacktest(symbol, timeframe, range, undefined, undefined, next);
+                }}
+                className="bg-zinc-950 border border-zinc-700/80 rounded-lg px-2.5 py-1 text-[11px] font-medium text-emerald-300 focus:outline-none focus:border-emerald-500"
+              >
+                <option value="trullas_divergence">Trullàs 4-Pillars Divergence</option>
+                <option value="ttm_squeeze_stack">TOS TTM Squeeze + 13/21/34 EMA Stack</option>
+                <option value="stacked_ema_pullback">TOS Stacked EMA (8/21/34/50) Pullback</option>
+              </select>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span>Risk/Trade:</span>
+              <input
+                type="range"
+                min="0.5"
+                max="3.0"
+                step="0.5"
+                value={riskPerTradePct}
+                onChange={(e) => setRiskPerTradePct(parseFloat(e.target.value))}
+                className="w-20 accent-emerald-500"
+              />
+              <span className="font-mono text-zinc-200">{riskPerTradePct}%</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1147,10 +1180,10 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                   <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-2">
                     <span className="text-[10px] uppercase font-bold text-zinc-400 block">Optimized Max Drawdown</span>
                     <div className="text-2xl font-black font-mono text-rose-400">
-                      -{(optimizationReport.optimalCandidate.maxDrawdownPct * 100).toFixed(1)}%
+                      -{optimizationReport.optimalCandidate.maxDrawdownPct.toFixed(1)}%
                     </div>
                     <p className="text-[11px] text-zinc-400">
-                      Baseline Drawdown: -{(optimizationReport.baselineMetrics.maxDrawdownPct * 100).toFixed(1)}%
+                      Baseline Drawdown: -{optimizationReport.baselineMetrics.maxDrawdownPct.toFixed(1)}%
                     </p>
                   </div>
                 </div>
@@ -1365,7 +1398,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                             <td className="py-2.5 px-3 font-bold text-indigo-300">{cand.sharpeRatio.toFixed(2)}</td>
                             <td className="py-2.5 px-3 text-emerald-400">
                               {cand.winRatePct !== null && cand.winRatePct !== undefined
-                                ? (cand.winRatePct * 100).toFixed(1)
+                                ? cand.winRatePct.toFixed(1)
                                 : '0.0'}%
                             </td>
                             <td
@@ -1376,7 +1409,7 @@ export const BacktesterView: React.FC<BacktesterViewProps> = ({
                               ${cand.totalNetPnl.toFixed(2)}
                             </td>
                             <td className="py-2.5 px-3 text-rose-400">
-                              -{(cand.maxDrawdownPct * 100).toFixed(1)}%
+                              -{cand.maxDrawdownPct.toFixed(1)}%
                             </td>
                             <td className="py-2.5 px-3 font-bold text-amber-400">
                               {cand.luxAlgoEdgeScore !== undefined && cand.luxAlgoEdgeScore !== null

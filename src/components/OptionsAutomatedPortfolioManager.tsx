@@ -74,6 +74,11 @@ import {
   getMarketSessionStatus,
   getBucharestTimeFormatted,
 } from '../utils/marketSession';
+import {
+  buildEntryMarketContextFromReport,
+  formatEntryMarketContextBadge,
+} from '../utils/entryMarketContext';
+import type { RegimePerformanceStat } from '../utils/activeLearningEngine';
 
 interface OptionsAutomatedPortfolioManagerProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -83,6 +88,7 @@ interface OptionsAutomatedPortfolioManagerProps {
 export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfolioManagerProps> = ({
   onSelectSymbolForChart,
 }) => {
+  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
   const {
     overview,
     loading: alpacaLoading,
@@ -92,8 +98,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
     submitOrder,
     closePosition,
     cancelOrder,
-  } = useAlpacaPaper({ pollMs: 30000 });
-  const { report: marketHealth, refresh: refreshMarketHealth } = useMarketHealth();
+  } = useAlpacaPaper({ pollMs: 30000, marketHealth });
 
   const [account, setAccount] = useState<OptionsPortfolioAccount>(() => loadOptionsPortfolio());
   const [mainTab, setMainTab] = useState<'journal' | 'open-positions' | 'brain'>('journal');
@@ -388,6 +393,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           type: chosen.close_price && chosen.close_price > 0 ? 'limit' : 'market',
           time_in_force: 'day',
           client_order_id: clientOrderId,
+          entryMarketContext: buildEntryMarketContextFromReport(activeHealth, {
+            symbolStructural: structural,
+            initialRiskDollars: chosen.strike_price * 100 * 0.05,
+            assetMode: 'OPTIONS',
+          }),
           ...(chosen.close_price && chosen.close_price > 0
             ? { limit_price: Number(chosen.close_price.toFixed(2)) }
             : {}),
@@ -624,16 +634,19 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
   // Relearn / Resynthesize Active Memory from Alpaca Paper History
   const handleRelearnFromHistory = () => {
     setIsRelearningMemory(true);
-    setCycleFeedbackMessage('Synthesizing reflection memory from recorded Alpaca Paper closed options trades...');
+    setCycleFeedbackMessage('Synthesizing reflection memory & Market Regime attribution from recorded Alpaca Paper closed options trades...');
     setTimeout(() => {
-      const updated = relearnOptionsMemoryFromHistory({
-        ...account,
-        tradeHistory: liveOptionsAccount.tradeHistory,
-        legacyHistory: [],
-      });
+      const updated = relearnOptionsMemoryFromHistory(
+        {
+          ...account,
+          tradeHistory: liveOptionsAccount.tradeHistory,
+          legacyHistory: [],
+        },
+        marketHealthRef.current
+      );
       setAccount(updated);
       setIsRelearningMemory(false);
-      setCycleFeedbackMessage(`Synthesized ${updated.activeMemory.episodes.length} trade episode(s). Calibrated Max Delta: ≤ ${updated.activeMemory.calibratedMaxDelta}Δ`);
+      setCycleFeedbackMessage(`Synthesized ${updated.activeMemory.episodes.length} trade episode(s) + Regime Matrix. Calibrated Max Delta: ≤ ${updated.activeMemory.calibratedMaxDelta}Δ`);
       setTimeout(() => setCycleFeedbackMessage(null), 4500);
     }, 300);
   };
@@ -1554,6 +1567,71 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
               </div>
             </div>
 
+            {/* Options Market Regime Attribution Matrix (Separate from Equities) */}
+            <div className="mt-5" data-testid="options-regime-matrix">
+              <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
+                <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Options Theta Edge by Entry Market Regime (Bayesian K=8):</span>
+              </h4>
+              {(() => {
+                const optRegimeRows: RegimePerformanceStat[] = Object.values(
+                  account.activeMemory.regimeStats || {}
+                )
+                  .filter((r) => r.assetMode === 'OPTIONS' && r.axis !== 'SENTIMENT_X_SETUP')
+                  .sort((a, b) => b.tradesCount - a.tradesCount || b.shrunkMultiplier - a.shrunkMultiplier);
+
+                if (optRegimeRows.length === 0) {
+                  return (
+                    <div className="p-3 rounded-lg bg-zinc-950/70 border border-zinc-800/80 text-xs text-zinc-400">
+                      Click <strong className="text-zinc-200">Relearn from Trade History</strong> or close Alpaca options trades to attribute short put performance by Sentiment, VIX level &amp; Structural Zone separately from Equities.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-zinc-950/60">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400">
+                        <tr>
+                          <th className="py-2 px-3">Axis</th>
+                          <th className="py-2 px-3">Entry Market Regime</th>
+                          <th className="py-2 px-3 text-right">Contracts (n)</th>
+                          <th className="py-2 px-3 text-right">Win Rate</th>
+                          <th className="py-2 px-3 text-right">Net Theta P&amp;L</th>
+                          <th className="py-2 px-3 text-right">Bayesian Scale</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                        {optRegimeRows.slice(0, 8).map((row) => (
+                          <tr key={row.regimeKey}>
+                            <td className="py-1.5 px-3 text-[10px] text-zinc-500">{row.axis}</td>
+                            <td className="py-1.5 px-3 text-zinc-200 font-semibold">{row.label}</td>
+                            <td className="py-1.5 px-3 text-right text-zinc-300">
+                              {row.tradesCount}
+                              {!row.sampleSufficient && (
+                                <span className="text-[10px] text-zinc-500 ml-1">(n&lt;10)</span>
+                              )}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-zinc-200">{row.winRate.toFixed(1)}%</td>
+                            <td
+                              className={`py-1.5 px-3 text-right font-bold ${
+                                row.totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}
+                            >
+                              {row.totalPnL >= 0 ? '+' : '-'}${Math.abs(row.totalPnL).toFixed(2)}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-cyan-300 font-bold">
+                              {row.shrunkMultiplier.toFixed(2)}x
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Autonomous Policy Rules Formulated by Memory Brain */}
             <div className="mt-5">
               <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
@@ -1652,7 +1730,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                       className="p-3 rounded-lg bg-zinc-950/90 border border-zinc-800 text-xs space-y-1.5 hover:border-zinc-700 transition-colors"
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold text-white font-mono">{ep.contract}</span>
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-medium">
                             {ep.tradingWarzPattern}
@@ -1668,6 +1746,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
                           >
                             {ep.outcome}
                           </span>
+                          {ep.entryMarketContext && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">
+                              {formatEntryMarketContextBadge(ep.entryMarketContext)}
+                            </span>
+                          )}
                         </div>
                         <span
                           className={`font-bold font-mono ${

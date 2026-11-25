@@ -143,33 +143,46 @@ const FearGreedGaugeSvg: React.FC<{ score: number; label: SentimentLabel }> = ({
   );
 };
 
-const SnapshotRow: React.FC<{ title: string; snap: MarketHealthSnapshotPoint | null }> = ({
-  title,
-  snap,
-}) => (
-  <div className="flex items-center justify-between py-2 border-b border-zinc-800/80 last:border-b-0">
-    <div>
-      <div className="text-xs text-zinc-400">{title}</div>
-      <div className={`text-xs font-semibold ${snap ? getScoreTextColor(snap.score) : 'text-zinc-500'}`}>
-        {snap ? snap.label : 'Unavailable'}
+const SnapshotRow: React.FC<{
+  title: string;
+  snap: MarketHealthSnapshotPoint | null;
+  currentScore: number;
+}> = ({ title, snap, currentScore }) => {
+  const delta = snap ? currentScore - snap.score : null;
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-zinc-800/80 last:border-b-0">
+      <div>
+        <div className="text-xs text-zinc-400">{title}</div>
+        <div className={`text-xs font-semibold ${snap ? getScoreTextColor(snap.score) : 'text-zinc-500'}`}>
+          {snap ? snap.label : 'Unavailable'}
+        </div>
+      </div>
+      <div className="flex items-center gap-2.5">
+        {delta !== null && (
+          <span
+            className={`text-[11px] font-mono tabular-nums ${
+              delta > 0 ? 'text-emerald-400/90' : delta < 0 ? 'text-rose-400/90' : 'text-zinc-500'
+            }`}
+          >
+            {delta > 0 ? `+${delta}` : delta} pts
+          </span>
+        )}
+        {snap && snap.vix !== null && (
+          <span className="text-[11px] font-mono tabular-nums text-zinc-400">
+            VIX {snap.vix.toFixed(1)}
+          </span>
+        )}
+        <span
+          className={`w-8 h-8 rounded-full border flex items-center justify-center text-xs font-bold font-mono tabular-nums ${
+            snap ? getScoreCircleStyle(snap.score) : 'bg-zinc-900 text-zinc-500 border-zinc-800'
+          }`}
+        >
+          {snap ? snap.score : '—'}
+        </span>
       </div>
     </div>
-    <div className="flex items-center gap-2">
-      {snap && snap.vix !== null && (
-        <span className="text-[11px] font-mono tabular-nums text-zinc-400">
-          VIX {snap.vix.toFixed(1)}
-        </span>
-      )}
-      <span
-        className={`w-8 h-8 rounded-full border flex items-center justify-center text-xs font-bold font-mono tabular-nums ${
-          snap ? getScoreCircleStyle(snap.score) : 'bg-zinc-900 text-zinc-500 border-zinc-800'
-        }`}
-      >
-        {snap ? snap.score : '—'}
-      </span>
-    </div>
-  </div>
-);
+  );
+};
 
 export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
   report,
@@ -312,7 +325,11 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
             </span>
           </div>
           <p className="text-xs text-zinc-400 mt-1">
-            Real SPY trend, CBOE ^VIX term structure, sector breadth, and 1-month institutional dollar volume (buying vs selling) wired directly into Auto-Trading risk gates.
+            {report.scoreSyncSource === 'feargreedtracker.com'
+              ? 'Synchronized with feargreedtracker.com (CNN Fear & Greed Index) paired with live Yahoo OHLCV market internals, CBOE ^VIX/^VVIX, and 21-day institutional flow.'
+              : report.scoreSyncSource === 'cnn.io'
+              ? 'Synchronized with CNN Fear & Greed feed paired with live Yahoo OHLCV market internals, CBOE ^VIX/^VVIX, and 21-day institutional flow.'
+              : 'Real SPY trend, CBOE ^VIX term structure, sector breadth, and 21-day institutional dollar volume wired directly into Auto-Trading risk gates.'}
           </p>
         </div>
 
@@ -341,20 +358,61 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
         {/* Col 1: Semicircular Fear & Greed Gauge */}
         <div className="lg:col-span-4 flex flex-col items-center justify-center py-2">
           <FearGreedGaugeSvg score={current.score} label={current.label} />
-          <div className="mt-3 text-[11px] text-zinc-400 font-mono tabular-nums text-center">
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[11px] font-mono tabular-nums">
+            {typeof current.scoreDelta1D === 'number' && (
+              <span
+                className={
+                  current.scoreDelta1D > 0
+                    ? 'text-emerald-400 font-semibold'
+                    : current.scoreDelta1D < 0
+                    ? 'text-rose-400 font-semibold'
+                    : 'text-zinc-400'
+                }
+              >
+                {current.scoreDelta1D > 0 ? `+${current.scoreDelta1D}` : current.scoreDelta1D} pts vs prev close
+              </span>
+            )}
+            {report.scoreSyncSource && report.scoreSyncSource !== 'internal-ohlcv' && (
+              <>
+                <span className="text-zinc-600">·</span>
+                <span
+                  data-testid="fear-greed-sync-badge"
+                  className="text-zinc-300 border border-zinc-800 bg-zinc-950/90 px-2 py-0.5 rounded"
+                  title="Primary Fear & Greed Index synchronized from external provider"
+                >
+                  Source: <strong className="text-emerald-400">{report.scoreSyncSource}</strong>
+                </span>
+              </>
+            )}
+            {typeof current.internalScore === 'number' &&
+              report.scoreSyncSource &&
+              report.scoreSyncSource !== 'internal-ohlcv' && (
+                <span
+                  data-testid="internal-ohlcv-score"
+                  className="text-zinc-400 border border-zinc-800/80 bg-zinc-950/70 px-2 py-0.5 rounded"
+                  title="Deterministic 4-pillar Yahoo OHLCV Market Internals score"
+                >
+                  Internals:{' '}
+                  <strong className={getScoreTextColor(current.internalScore)}>
+                    {current.internalScore}
+                  </strong>
+                </span>
+              )}
+          </div>
+          <div className="mt-1.5 text-[11px] text-zinc-400 font-mono tabular-nums text-center">
             SPY ${current.spyPrice.toFixed(2)} ({current.spyChangePct >= 0 ? '+' : ''}
             {current.spyChangePct.toFixed(2)}% 1D · {current.spy5dReturnPct >= 0 ? '+' : ''}
             {current.spy5dReturnPct.toFixed(2)}% 5D)
           </div>
         </div>
 
-        {/* Col 2: Historical Snapshots (Previous Close, 1W, 1M, 1Y) matching screenshot */}
+        {/* Col 2: Historical Snapshots (Previous Close, 1W, 1M, 1Y) */}
         <div className="lg:col-span-4 border-t lg:border-t-0 lg:border-x border-zinc-800 pt-4 lg:pt-0 lg:px-6">
           <div className="text-xs font-semibold text-zinc-300 mb-2">Historical Sentiment Trajectory</div>
-          <SnapshotRow title="Previous Close" snap={snapshots.previousClose} />
-          <SnapshotRow title="1 Week Ago" snap={snapshots.oneWeekAgo} />
-          <SnapshotRow title="1 Month Ago" snap={snapshots.oneMonthAgo} />
-          <SnapshotRow title="1 Year Ago" snap={snapshots.oneYearAgo} />
+          <SnapshotRow title="Previous Close" snap={snapshots.previousClose} currentScore={current.score} />
+          <SnapshotRow title="1 Week Ago" snap={snapshots.oneWeekAgo} currentScore={current.score} />
+          <SnapshotRow title="1 Month Ago" snap={snapshots.oneMonthAgo} currentScore={current.score} />
+          <SnapshotRow title="1 Year Ago" snap={snapshots.oneYearAgo} currentScore={current.score} />
         </div>
 
         {/* Col 3: VIX Regime, 4 Sub-Components & Auto-Trading Guard */}
@@ -371,8 +429,25 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
                 )}
               </div>
               <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
-                Curve: <span className={current.vixTermStructure === 'BACKWARDATION' ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'}>{current.vixTermStructure}</span>
+                Curve:{' '}
+                <span
+                  className={
+                    current.vixTermStructure === 'BACKWARDATION'
+                      ? 'text-rose-400 font-semibold'
+                      : 'text-emerald-400 font-semibold'
+                  }
+                >
+                  {current.vixTermStructure}
+                </span>
               </div>
+              {(current.vixSma50 !== null && current.vixSma50 !== undefined) ||
+              (current.vvix !== null && current.vvix !== undefined) ? (
+                <div className="text-[10px] font-mono tabular-nums text-zinc-500 mt-0.5">
+                  {current.vixSma50 ? `50D ${current.vixSma50.toFixed(1)}` : ''}
+                  {current.vixSma50 && current.vvix ? ' · ' : ''}
+                  {current.vvix ? `^VVIX ${current.vvix.toFixed(1)}` : ''}
+                </div>
+              ) : null}
             </div>
 
             <div className="py-1.5 border-b border-zinc-800/80">
@@ -386,6 +461,16 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
               </div>
               <div className="text-[11px] font-mono tabular-nums text-zinc-400 mt-0.5">
                 Buy {buy1MPct}% / Sell {sell1MPct}% ({current.buySellRatio1M.toFixed(2)}x)
+              </div>
+              <div className="text-[10px] font-mono tabular-nums text-zinc-500 mt-0.5">
+                CMF(21):{' '}
+                <span className={(current.cmf21 ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  {(current.cmf21 ?? 0) >= 0 ? '+' : ''}
+                  {(current.cmf21 ?? 0).toFixed(3)}
+                </span>
+                {current.accDistDays21
+                  ? ` · Acc ${current.accDistDays21.upDays}/${current.accDistDays21.totalDays}d`
+                  : ''}
               </div>
             </div>
           </div>
@@ -401,9 +486,9 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
           <div className="space-y-1.5 text-xs">
             {[
               { label: 'SPY Trend & Momentum (25%)', val: current.momentumScore },
-              { label: 'VIX & Term Structure (25%)', val: current.vixScore },
-              { label: 'Net Buying vs Selling Vol (25%)', val: current.volumeScore },
-              { label: 'Sector Breadth & Safe-Haven (25%)', val: current.breadthScore },
+              { label: 'VIX, 50D Avg, Curve & ^VVIX (25%)', val: current.vixScore },
+              { label: '21D Net Buying vs Selling & CMF (25%)', val: current.volumeScore },
+              { label: 'Breadth, Credit (HYG/IEF) & Safe-Haven (25%)', val: current.breadthScore },
             ].map((row) => (
               <div key={row.label} className="space-y-1">
                 <div className="flex justify-between text-[11px]">

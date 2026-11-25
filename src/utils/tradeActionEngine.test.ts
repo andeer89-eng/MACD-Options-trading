@@ -185,5 +185,15 @@ test('getActionZoneMeta returns valid styling for all 7 zones', () => {
     assert.ok(meta.label.length > 0);
     assert.ok(meta.badgeBg.length > 0);
     assert.ok(meta.textColor.length > 0);
+
+    const bearMeta = getActionZoneMeta(z, 'BEARISH');
+    assert.ok(bearMeta.label.length > 0);
   }
+
+  assert.equal(getActionZoneMeta('STRONG_BUY', 'BULLISH').label, 'Strong Buy / Demand');
+  assert.equal(getActionZoneMeta('STRONG_BUY', 'BEARISH').label, 'Strong Short / Supply');
+  assert.match(getActionZoneMeta('STRONG_BUY', 'BEARISH').textColor, /rose/);
+  assert.equal(getActionZoneMeta('BREAKOUT_CONFIRMED', 'BEARISH').label, 'Breakdown Confirmed');
+  assert.equal(getActionZoneMeta('SELL_TAKE_PROFIT', 'BEARISH').label, 'Cover Short / Take Profit');
+  assert.match(getActionZoneMeta('SELL_TAKE_PROFIT', 'BEARISH').textColor, /emerald/);
 });

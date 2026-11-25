@@ -29,13 +29,35 @@ import {
   DEFAULT_TRADE_FILTERS,
   getActionZoneMeta,
   filterTradeAdviceList,
+  evaluateTradeAdvice,
 } from '../utils/tradeActionEngine';
-import { DivergenceSetup } from '../utils/trullasStrategy';
+import { Candle, DivergenceSetup } from '../utils/trullasStrategy';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
+import {
+  buildDualMarketLeaderboards,
+  HIGH_CONVICTION_MIN_SCORE,
+  ConvictionGrade,
+  RankedMarketLeader,
+} from '../utils/watchlistRankingEngine';
+import {
+  recordTop50PresenceSnapshot,
+  PresenceAnnotation,
+} from '../utils/watchlistPersistenceTracker';
 
 interface ActionDashboardProps {
   onSelectSymbolForChart: (sym: string) => void;
   onOpenCalculator: (setup: DivergenceSetup) => void;
+  scannerResults?: any[];
+}
+
+interface RankedActionAdvice extends TradeAdvice {
+  leaderRank?: number;
+  convictionGrade?: ConvictionGrade;
+  convictionScore?: number;
+  directionSide: 'BULLISH' | 'BEARISH';
+  relPerfVsSpyPct?: number | null;
+  tosLabels?: string[];
+  presence?: PresenceAnnotation;
 }
 
 const ALL_ZONES: { zone: TradeActionZone; label: string }[] = [
@@ -63,18 +85,23 @@ const PAGE_SIZE = 24;
 export const ActionDashboard: React.FC<ActionDashboardProps> = ({
   onSelectSymbolForChart,
   onOpenCalculator,
+  scannerResults = [],
 }) => {
-  const [adviceList, setAdviceList] = useState<TradeAdvice[]>([]);
+  const [apiAdviceList, setApiAdviceList] = useState<TradeAdvice[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
+  const [actionDirection, setActionDirection] = useState<'BULLISH' | 'BEARISH'>('BULLISH');
+  const [presenceMap, setPresenceMap] = useState<Map<string, PresenceAnnotation>>(new Map());
 
-  // Filters
-  const [filters, setFilters] = useState<TradeAdviceFilters>(DEFAULT_TRADE_FILTERS);
+  // Default to minConfidence = 70 (Grade B+ Strong & above) to eliminate Grade C/D noise
+  const [filters, setFilters] = useState<TradeAdviceFilters>({
+    ...DEFAULT_TRADE_FILTERS,
+    minConfidence: 70,
+  });
   const [selectedSector, setSelectedSector] = useState<string>('ALL');
 
-  // Fetch advice from API across full S&P 500 index
+  // Fetch advice from API only as fallback or enrichment when scannerResults lacks candles
   const fetchAdvice = async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -88,8 +115,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
         }),
       });
       if (resp.ok && resp.data) {
-        setAdviceList(resp.data.advice || []);
-        setLastUpdated(new Date());
+        setApiAdviceList(resp.data.advice || []);
       } else {
         setErrorMsg(resp.error || 'Failed to retrieve live trade advice.');
       }
@@ -101,14 +127,230 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
     }
   };
 
-
   useEffect(() => {
-    fetchAdvice();
-  }, []);
+    if (scannerResults.length === 0) {
+      fetchAdvice();
+    }
+  }, [scannerResults.length]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [filters, selectedSector]);
+  }, [filters, selectedSector, actionDirection]);
+
+  // Unified Top-50 Bullish & Bearish leaderboards from live Scanner
+  const leaderboards = useMemo(() => {
+    const minScore = filters.minConfidence < HIGH_CONVICTION_MIN_SCORE ? Math.max(55, filters.minConfidence) : HIGH_CONVICTION_MIN_SCORE;
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore,
+      maxItems: 50,
+    });
+  }, [scannerResults, filters.minConfidence]);
+
+  const strictLeaderboards = useMemo(() => {
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore: HIGH_CONVICTION_MIN_SCORE,
+      maxItems: 50,
+    });
+  }, [scannerResults]);
+
+  useEffect(() => {
+    const nextMap = new Map<string, PresenceAnnotation>();
+    if (strictLeaderboards.bullish.length > 0) {
+      const bullPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bullish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'long'
+      );
+      for (const [sym, ann] of bullPresence.entries()) {
+        nextMap.set(`BULLISH:${sym}`, ann);
+      }
+    }
+    if (strictLeaderboards.bearish.length > 0) {
+      const bearPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bearish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'short'
+      );
+      for (const [sym, ann] of bearPresence.entries()) {
+        nextMap.set(`BEARISH:${sym}`, ann);
+      }
+    }
+    if (nextMap.size > 0) {
+      setPresenceMap(nextMap);
+    }
+  }, [strictLeaderboards]);
+
+  // Convert active Top-50 directional leaders into Action Zone advice cards
+  const adviceList = useMemo<RankedActionAdvice[]>(() => {
+    const apiBySym = new Map<string, TradeAdvice>();
+    for (const item of apiAdviceList) {
+      apiBySym.set(item.symbol.toUpperCase(), item);
+    }
+
+    const buildFromLeaders = (
+      leaders: RankedMarketLeader[],
+      side: 'BULLISH' | 'BEARISH'
+    ): RankedActionAdvice[] => {
+      const out: RankedActionAdvice[] = [];
+      for (const leader of leaders) {
+        let baseAdvice: TradeAdvice | null = null;
+        if (Array.isArray(leader.candles) && leader.candles.length >= 25) {
+          const candles: Candle[] = leader.candles.map((c: any) => ({
+            timestamp: Number(c.timestamp) || Date.now(),
+            dateStr: c.dateStr,
+            open: Number(c.open ?? c.close),
+            high: Number(c.high ?? c.close),
+            low: Number(c.low ?? c.close),
+            close: Number(c.close),
+            volume: Number(c.volume) || 0,
+          }));
+          baseAdvice = evaluateTradeAdvice(
+            leader.symbol,
+            candles,
+            leader.matchingDivergence,
+            leader.companyName,
+            leader.sector
+          );
+        } else {
+          baseAdvice = apiBySym.get(leader.symbol) ?? null;
+        }
+
+        if (!baseAdvice) continue;
+        const unifiedConfidence = Math.max(baseAdvice.confidenceScore, leader.score);
+        const tosLabels = leader.matchingTosSignals.slice(0, 2).map((s) => s.shortLabel || s.name || s.id);
+        let resolvedAdvice = baseAdvice;
+
+        const isCompletedHistoricalBullDiv =
+          side === 'BULLISH' &&
+          baseAdvice.actionZone === 'SELL_TAKE_PROFIT' &&
+          leader.matchingTosSignals.length > 0 &&
+          (!leader.matchingDivergence || leader.currentPrice > leader.matchingDivergence.targets.tp2 * 1.03);
+
+        const isCompletedHistoricalBearDiv =
+          side === 'BEARISH' &&
+          baseAdvice.actionZone === 'SELL_TAKE_PROFIT' &&
+          leader.matchingTosSignals.length > 0 &&
+          (!leader.matchingDivergence || leader.currentPrice < leader.matchingDivergence.targets.tp2 * 0.97);
+
+        const isWrongSideFallbackShort =
+          side === 'BEARISH' &&
+          (baseAdvice.actionZone === 'STRONG_BUY' || baseAdvice.actionZone === 'NEUTRAL_CHOP') &&
+          leader.matchingTosSignals.length > 0 &&
+          !leader.matchingDivergence;
+
+        if (
+          (baseAdvice.actionZone === 'NEUTRAL_CHOP' && leader.matchingTosSignals.length > 0) ||
+          isCompletedHistoricalBullDiv ||
+          isCompletedHistoricalBearDiv ||
+          isWrongSideFallbackShort
+        ) {
+          const isShort = side === 'BEARISH';
+          const ids = leader.matchingTosSignals.map((s) => String(s.id).toUpperCase());
+          const isCoiled = ids.some(
+            (id) =>
+              id.includes('SQUEEZE') ||
+              id.includes('VSCORE') ||
+              id.includes('FVG_RETEST')
+          );
+          const isReversalDemand = ids.some(
+            (id) =>
+              id.includes('SMA50_REVERSION') ||
+              id.includes('FALSE_BREAKOUT') ||
+              id.includes('ROC_EXTREME')
+          );
+          const isBreakoutThrust = ids.some(
+            (id) =>
+              id.includes('DMI_POWER_MOVE') ||
+              id.includes('MACD_ZERO_CROSS') ||
+              id.includes('UNUSUAL_VOLUME')
+          );
+
+          const atr = leader.atr > 0 ? leader.atr : leader.currentPrice * 0.02;
+          const triggerPrice = isShort
+            ? Number((leader.currentPrice * 0.992).toFixed(2))
+            : Number((leader.currentPrice * 1.008).toFixed(2));
+          const stopLoss = isShort
+            ? Number((triggerPrice + 1.4 * atr).toFixed(2))
+            : Number(Math.max(0.01, triggerPrice - 1.4 * atr).toFixed(2));
+          const riskDist = Math.max(0.01, Math.abs(triggerPrice - stopLoss));
+          const target1 = isShort
+            ? Number(Math.max(0.01, triggerPrice - 1.618 * riskDist).toFixed(2))
+            : Number((triggerPrice + 1.618 * riskDist).toFixed(2));
+          const target2 = isShort
+            ? Number(Math.max(0.01, triggerPrice - 2.618 * riskDist).toFixed(2))
+            : Number((triggerPrice + 2.618 * riskDist).toFixed(2));
+
+          let promotedZone: TradeActionZone;
+          if (isShort) {
+            if (isReversalDemand) promotedZone = 'STRONG_BUY';
+            else if (isCoiled) promotedZone = 'PRE_BREAKOUT';
+            else if (isBreakoutThrust) promotedZone = 'BREAKOUT_CONFIRMED';
+            else promotedZone = 'HOLD_PROFIT';
+          } else {
+            if (isReversalDemand) promotedZone = 'STRONG_BUY';
+            else if (isCoiled) promotedZone = 'PRE_BREAKOUT';
+            else if (isBreakoutThrust) promotedZone = 'BREAKOUT_CONFIRMED';
+            else promotedZone = 'HOLD_PROFIT';
+          }
+
+          resolvedAdvice = {
+            ...baseAdvice,
+            actionZone: promotedZone,
+            headline: isShort
+              ? `Bearish Top-50 Setup: ${tosLabels.join(' + ')}`
+              : `Bullish Top-50 Setup: ${tosLabels.join(' + ')}`,
+            subAdvice: `${leader.stageLabel} · ${leader.matchingTosSignals.length} current-bar scan(s) aligned (Grade ${leader.grade}, ${leader.score}%).`,
+            triggerPrice,
+            distanceToTriggerPct: Number((((triggerPrice - leader.currentPrice) / leader.currentPrice) * 100).toFixed(2)),
+            stopLoss,
+            target1,
+            target2,
+            riskRewardRatio: 2.62,
+            rationale: leader.why.slice(0, 3),
+            suggestedAction: isShort
+              ? `Monitor breakdown trigger below $${triggerPrice.toFixed(2)} with stop at $${stopLoss.toFixed(2)}.`
+              : `Scale starter position near $${triggerPrice.toFixed(2)} with protective stop at $${stopLoss.toFixed(2)} (TP2 $${target2.toFixed(2)}).`,
+          };
+        }
+
+        out.push({
+          ...resolvedAdvice,
+          confidenceScore: unifiedConfidence,
+          leaderRank: leader.rank,
+          convictionGrade: leader.grade,
+          convictionScore: leader.score,
+          directionSide: side,
+          relPerfVsSpyPct: leader.relPerfVsSpyPct,
+          tosLabels,
+          presence: presenceMap.get(`${side}:${leader.symbol}`),
+        });
+      }
+      return out;
+    };
+
+    if (scannerResults.length > 0) {
+      return actionDirection === 'BULLISH'
+        ? buildFromLeaders(leaderboards.bullish, 'BULLISH')
+        : buildFromLeaders(leaderboards.bearish, 'BEARISH');
+    }
+
+    // Fallback to API results (strictly excluding baseline signal-less noise when minConfidence >= 70)
+    return apiAdviceList
+      .filter((item) => {
+        const hl = (item.headline || '').toLowerCase();
+        const isBear =
+          (item.trullasSetup?.type?.includes('BEAR') ?? false) ||
+          hl.includes('short') ||
+          hl.includes('bear') ||
+          hl.includes('breakdown') ||
+          item.actionZone === 'SELL_TAKE_PROFIT';
+        return actionDirection === 'BEARISH' ? isBear : !isBear;
+      })
+      .slice(0, 50)
+      .map((item, idx) => ({
+        ...item,
+        leaderRank: idx + 1,
+        directionSide: actionDirection,
+      }));
+  }, [scannerResults.length, leaderboards, actionDirection, apiAdviceList, presenceMap]);
 
   // Zone selection toggle
   const handleToggleZone = (zone: TradeActionZone) => {
@@ -131,13 +373,6 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
     }));
   };
 
-  const handleClearZones = () => {
-    setFilters((prev) => ({
-      ...prev,
-      zones: [],
-    }));
-  };
-
   // Distinct sectors
   const availableSectors = useMemo(() => {
     const set = new Set<string>();
@@ -147,15 +382,20 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
     return ['ALL', ...Array.from(set)];
   }, [adviceList]);
 
-  // Filtered & prioritized advice (actionable zones + confidence score first)
+  // Filtered & prioritized advice (actionable zones + confidence score first, max 50)
   const filteredAdvice = useMemo(() => {
     const withSector = { ...filters, sector: selectedSector };
-    return filterTradeAdviceList(adviceList, withSector).sort((a, b) => {
-      const pa = ZONE_PRIORITY[a.actionZone] ?? 99;
-      const pb = ZONE_PRIORITY[b.actionZone] ?? 99;
-      if (pa !== pb) return pa - pb;
-      return b.confidenceScore - a.confidenceScore;
-    });
+    return (filterTradeAdviceList(adviceList, withSector) as RankedActionAdvice[])
+      .sort((a, b) => {
+        if ((a.leaderRank ?? 999) !== (b.leaderRank ?? 999)) {
+          return (a.leaderRank ?? 999) - (b.leaderRank ?? 999);
+        }
+        const pa = ZONE_PRIORITY[a.actionZone] ?? 99;
+        const pb = ZONE_PRIORITY[b.actionZone] ?? 99;
+        if (pa !== pb) return pa - pb;
+        return b.confidenceScore - a.confidenceScore;
+      })
+      .slice(0, 50);
   }, [adviceList, filters, selectedSector]);
 
   const visibleAdvice = useMemo(
@@ -190,11 +430,40 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center space-x-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <div className="flex items-center bg-zinc-950 p-1 rounded-xl border border-zinc-800 gap-1">
+              <button
+                type="button"
+                onClick={() => setActionDirection('BULLISH')}
+                data-testid="action-dir-bullish"
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition whitespace-nowrap ${
+                  actionDirection === 'BULLISH'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                    : 'text-zinc-400 hover:text-emerald-400'
+                }`}
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Bullish Top 50 ({leaderboards.bullish.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActionDirection('BEARISH')}
+                data-testid="action-dir-bearish"
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition whitespace-nowrap ${
+                  actionDirection === 'BEARISH'
+                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                    : 'text-zinc-400 hover:text-rose-400'
+                }`}
+              >
+                <TrendingDown className="w-3.5 h-3.5" />
+                <span>Bearish Top 50 ({leaderboards.bearish.length})</span>
+              </button>
+            </div>
+
             <button
               onClick={fetchAdvice}
               disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-semibold border border-zinc-700 transition"
+              className="flex items-center space-x-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-semibold border border-zinc-700 transition whitespace-nowrap"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
               <span>{loading ? 'Analyzing Market...' : 'Refresh Signals'}</span>
@@ -224,6 +493,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             {/* 1. PRE-BREAKOUT */}
             {(() => {
               const isSelected = filters.zones.includes('PRE_BREAKOUT');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -237,7 +507,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <span className={`text-[11px] font-medium block ${isSelected ? 'text-cyan-300 font-bold' : 'text-zinc-400'}`}>
-                      Pre-Breakout
+                      {isBear ? 'Pre-Breakdown' : 'Pre-Breakout'}
                     </span>
                     {isSelected && <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>}
                   </div>
@@ -254,6 +524,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             {/* 2. BREAKOUT CONFIRMED */}
             {(() => {
               const isSelected = filters.zones.includes('BREAKOUT_CONFIRMED');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -261,18 +532,20 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                   data-testid="kpi-filter-breakout-confirmed"
                   className={`p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
                     isSelected
-                      ? 'bg-indigo-950/60 border-indigo-500/80 ring-2 ring-indigo-500/20 shadow-lg shadow-indigo-500/10'
+                      ? isBear
+                        ? 'bg-rose-950/60 border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
+                        : 'bg-indigo-950/60 border-indigo-500/80 ring-2 ring-indigo-500/20 shadow-lg shadow-indigo-500/10'
                       : 'bg-zinc-950/50 border-zinc-800/80 opacity-50 hover:opacity-100 hover:border-zinc-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className={`text-[11px] font-medium block ${isSelected ? 'text-indigo-300 font-bold' : 'text-zinc-400'}`}>
-                      Breakout Confirmed
+                    <span className={`text-[11px] font-medium block ${isSelected ? (isBear ? 'text-rose-300 font-bold' : 'text-indigo-300 font-bold') : 'text-zinc-400'}`}>
+                      {isBear ? 'Breakdown Confirmed' : 'Breakout Confirmed'}
                     </span>
-                    {isSelected && <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>}
+                    {isSelected && <span className={`w-2 h-2 rounded-full animate-pulse ${isBear ? 'bg-rose-400' : 'bg-indigo-400'}`}></span>}
                   </div>
                   <div className="flex items-baseline space-x-2 mt-1">
-                    <span className={`text-2xl font-bold font-mono ${isSelected ? 'text-indigo-400' : 'text-zinc-300'}`}>
+                    <span className={`text-2xl font-bold font-mono ${isSelected ? (isBear ? 'text-rose-400' : 'text-indigo-400') : 'text-zinc-300'}`}>
                       {zoneCounts['BREAKOUT_CONFIRMED'] || 0}
                     </span>
                     <span className="text-[10px] text-zinc-500 font-mono">Tranche 1</span>
@@ -281,9 +554,10 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
               );
             })()}
 
-            {/* 3. STRONG BUY */}
+            {/* 3. STRONG BUY / SHORT */}
             {(() => {
               const isSelected = filters.zones.includes('STRONG_BUY');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -291,21 +565,23 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                   data-testid="kpi-filter-strong-buy"
                   className={`p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
                     isSelected
-                      ? 'bg-emerald-950/60 border-emerald-500/80 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/10'
+                      ? isBear
+                        ? 'bg-rose-950/60 border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
+                        : 'bg-emerald-950/60 border-emerald-500/80 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/10'
                       : 'bg-zinc-950/50 border-zinc-800/80 opacity-50 hover:opacity-100 hover:border-zinc-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className={`text-[11px] font-medium block ${isSelected ? 'text-emerald-300 font-bold' : 'text-zinc-400'}`}>
-                      Strong Buy
+                    <span className={`text-[11px] font-medium block ${isSelected ? (isBear ? 'text-rose-300 font-bold' : 'text-emerald-300 font-bold') : 'text-zinc-400'}`}>
+                      {isBear ? 'Strong Short' : 'Strong Buy'}
                     </span>
-                    {isSelected && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>}
+                    {isSelected && <span className={`w-2 h-2 rounded-full animate-pulse ${isBear ? 'bg-rose-400' : 'bg-emerald-400'}`}></span>}
                   </div>
                   <div className="flex items-baseline space-x-2 mt-1">
-                    <span className={`text-2xl font-bold font-mono ${isSelected ? 'text-emerald-400' : 'text-zinc-300'}`}>
+                    <span className={`text-2xl font-bold font-mono ${isSelected ? (isBear ? 'text-rose-400' : 'text-emerald-400') : 'text-zinc-300'}`}>
                       {zoneCounts['STRONG_BUY'] || 0}
                     </span>
-                    <span className="text-[10px] text-zinc-500 font-mono">Demand</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">{isBear ? 'Supply' : 'Demand'}</span>
                   </div>
                 </button>
               );
@@ -314,6 +590,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             {/* 4. HOLD / RUNNING */}
             {(() => {
               const isSelected = filters.zones.includes('HOLD_PROFIT');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -327,7 +604,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <span className={`text-[11px] font-medium block ${isSelected ? 'text-blue-300 font-bold' : 'text-zinc-400'}`}>
-                      Hold / Running
+                      {isBear ? 'Hold Short' : 'Hold / Running'}
                     </span>
                     {isSelected && <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>}
                   </div>
@@ -341,9 +618,10 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
               );
             })()}
 
-            {/* 5. LATE TO BUY */}
+            {/* 5. LATE TO BUY / SHORT */}
             {(() => {
               const isSelected = filters.zones.includes('LATE_TO_BUY');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -357,7 +635,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <span className={`text-[11px] font-medium block ${isSelected ? 'text-amber-300 font-bold' : 'text-zinc-400'}`}>
-                      Late To Buy
+                      {isBear ? 'Late To Short' : 'Late To Buy'}
                     </span>
                     {isSelected && <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>}
                   </div>
@@ -371,9 +649,10 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
               );
             })()}
 
-            {/* 6. SELL / TAKE PROFIT */}
+            {/* 6. SELL / COVER PROFIT */}
             {(() => {
               const isSelected = filters.zones.includes('SELL_TAKE_PROFIT');
+              const isBear = actionDirection === 'BEARISH';
               return (
                 <button
                   type="button"
@@ -381,18 +660,20 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                   data-testid="kpi-filter-sell-take-profit"
                   className={`p-3.5 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
                     isSelected
-                      ? 'bg-rose-950/60 border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
+                      ? isBear
+                        ? 'bg-emerald-950/60 border-emerald-500/80 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-500/10'
+                        : 'bg-rose-950/60 border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
                       : 'bg-zinc-950/50 border-zinc-800/80 opacity-50 hover:opacity-100 hover:border-zinc-700'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className={`text-[11px] font-medium block ${isSelected ? 'text-rose-300 font-bold' : 'text-zinc-400'}`}>
-                      Sell / Take Profit
+                    <span className={`text-[11px] font-medium block ${isSelected ? (isBear ? 'text-emerald-300 font-bold' : 'text-rose-300 font-bold') : 'text-zinc-400'}`}>
+                      {isBear ? 'Cover / Take Profit' : 'Sell / Take Profit'}
                     </span>
-                    {isSelected && <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>}
+                    {isSelected && <span className={`w-2 h-2 rounded-full animate-pulse ${isBear ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>}
                   </div>
                   <div className="flex items-baseline space-x-2 mt-1">
-                    <span className={`text-2xl font-bold font-mono ${isSelected ? 'text-rose-400' : 'text-zinc-300'}`}>
+                    <span className={`text-2xl font-bold font-mono ${isSelected ? (isBear ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-300'}`}>
                       {zoneCounts['SELL_TAKE_PROFIT'] || 0}
                     </span>
                     <span className="text-[10px] text-zinc-500 font-mono">Target Hit</span>
@@ -421,10 +702,10 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
               All Zones ({adviceList.length})
             </button>
 
-            {ALL_ZONES.map(({ zone, label }) => {
+            {ALL_ZONES.map(({ zone }) => {
               const count = zoneCounts[zone] || 0;
               const isSelected = filters.zones.includes(zone);
-              const meta = getActionZoneMeta(zone);
+              const meta = getActionZoneMeta(zone, actionDirection);
               return (
                 <button
                   key={zone}
@@ -435,7 +716,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                       : 'bg-zinc-950/60 border-zinc-800/80 text-zinc-500 opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <span>{label}</span>
+                  <span>{meta.label}</span>
                   <span className="text-[10px] opacity-80">({count})</span>
                 </button>
               );
@@ -494,8 +775,8 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
             </div>
           </div>
 
-          <span className="font-mono text-emerald-400 text-[11px]">
-            Showing {visibleAdvice.length} of {filteredAdvice.length} matched ({adviceList.length} evaluated S&amp;P 500)
+          <span className="font-mono text-emerald-400 text-[11px] tabular-nums">
+            Showing {visibleAdvice.length} of {filteredAdvice.length} matched ({actionDirection === 'BULLISH' ? 'Bullish' : 'Bearish'} Top {adviceList.length})
           </span>
 
         </div>
@@ -521,32 +802,61 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
       {filteredAdvice.length > 0 ? (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {visibleAdvice.map((item) => {
-            const meta = getActionZoneMeta(item.actionZone);
-            const isBull = item.trullasSetup ? item.trullasSetup.type.includes('BULL') : true;
+            {visibleAdvice.map((item, idx) => {
+            const meta = getActionZoneMeta(item.actionZone, item.directionSide);
+            const isBearCard = item.directionSide === 'BEARISH';
 
             return (
               <div
-                key={item.symbol}
+                key={`${item.directionSide}-${item.symbol}`}
+                data-testid={`action-card-${item.symbol}`}
                 className={`bg-zinc-900 border rounded-2xl p-6 space-y-5 transition relative overflow-hidden ${
                   item.actionZone === 'BREAKOUT_CONFIRMED' || item.actionZone === 'STRONG_BUY'
-                    ? 'border-emerald-500/40 shadow-lg shadow-emerald-500/5'
+                    ? isBearCard
+                      ? 'border-rose-500/40 shadow-lg shadow-rose-500/5'
+                      : 'border-emerald-500/40 shadow-lg shadow-emerald-500/5'
                     : item.actionZone === 'PRE_BREAKOUT'
                     ? 'border-cyan-500/40 shadow-lg shadow-cyan-500/5'
                     : item.actionZone === 'LATE_TO_BUY'
                     ? 'border-amber-500/40'
                     : item.actionZone === 'SELL_TAKE_PROFIT'
-                    ? 'border-rose-500/40'
+                    ? isBearCard
+                      ? 'border-emerald-500/40'
+                      : 'border-rose-500/40'
                     : 'border-zinc-800 hover:border-zinc-700'
                 }`}
               >
-                {/* Card Top: Ticker & Main Zone Badge */}
+                {/* Card Top: Rank, Ticker, Grade, Days & Main Zone Badge */}
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center space-x-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      <span className="text-[11px] font-mono tabular-nums font-bold px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-zinc-200">
+                        #{item.leaderRank ?? idx + 1}
+                      </span>
                       <strong className="text-white text-lg font-bold tracking-tight">
                         {item.symbol}
                       </strong>
+                      {item.convictionGrade && (
+                        <span
+                          className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                            item.convictionGrade === 'A+' || item.convictionGrade === 'A'
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                              : item.convictionGrade === 'B'
+                              ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                              : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                          }`}
+                        >
+                          Grade {item.convictionGrade}
+                        </span>
+                      )}
+                      {item.presence && (
+                        <span
+                          title={`First seen: ${item.presence.firstSeenDate} · Streak: ${item.presence.consecutiveDays}d · Best: #${item.presence.bestRank}`}
+                          className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300"
+                        >
+                          {item.presence.daysInWatchlist}d in Top 50
+                        </span>
+                      )}
                       {item.companyName && (
                         <span className="text-xs text-zinc-400 truncate max-w-[140px]">
                           {item.companyName}
@@ -557,14 +867,24 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-baseline space-x-2 mt-1">
-                      <span className="text-white font-mono font-bold text-sm">
+                    <div className="flex items-baseline flex-wrap gap-2 mt-1">
+                      <span className="text-white font-mono tabular-nums font-bold text-sm">
                         ${item.currentPrice.toFixed(2)}
                       </span>
-                      <span className="text-xs font-mono text-zinc-500">
+                      <span className="text-xs font-mono tabular-nums text-zinc-500">
                         {item.distanceToTriggerPct >= 0 ? '+' : ''}
                         {item.distanceToTriggerPct}% from trigger
                       </span>
+                      {typeof item.relPerfVsSpyPct === 'number' && (
+                        <span
+                          className={`text-[11px] font-mono tabular-nums font-semibold ${
+                            item.relPerfVsSpyPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}
+                        >
+                          30D vs SPY: {item.relPerfVsSpyPct >= 0 ? '+' : ''}
+                          {item.relPerfVsSpyPct.toFixed(1)}%
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -647,6 +967,11 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
                   {item.hasActiveOrderBlock && (
                     <span className="px-2 py-0.5 rounded border bg-indigo-500/10 border-indigo-500/30 text-indigo-300">
                       Order Block: ACTIVE
+                    </span>
+                  )}
+                  {item.tosLabels && item.tosLabels.length > 0 && (
+                    <span className="px-2 py-0.5 rounded border bg-cyan-500/10 border-cyan-500/30 text-cyan-300">
+                      TOS: {item.tosLabels.join(' · ')}
                     </span>
                   )}
                 </div>

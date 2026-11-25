@@ -64,7 +64,17 @@ import { useAuth } from '../lib/AuthProvider';
 import { AutomatedPortfolioManager } from './AutomatedPortfolioManager';
 import { OptionsAutomatedPortfolioManager } from './OptionsAutomatedPortfolioManager';
 import { BacktesterView } from './BacktesterView';
-import { computeJournalRuleAttribution } from '../utils/tradeAttribution';
+import {
+  computeJournalRuleAttribution,
+  computeJournalRegimeAttribution,
+} from '../utils/tradeAttribution';
+import { useMarketHealth } from '../hooks/useMarketHealth';
+import {
+  backfillEntryMarketContextFromHistory,
+  buildEntryMarketContextFromReport,
+  formatEntryMarketContextBadge,
+  storeEntryMarketContextSnapshot,
+} from '../utils/entryMarketContext';
 
 export type JournalSubTab = 'automated' | 'options' | 'manual' | 'backtester';
 
@@ -80,6 +90,9 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   requestedSubTab,
 }) => {
   const { user } = useAuth();
+  const { report: marketHealth } = useMarketHealth();
+  const marketHealthRef = useRef(marketHealth);
+  marketHealthRef.current = marketHealth;
   const [journalTab, setJournalTab] = useState<JournalSubTab>(requestedSubTab || 'automated');
 
   useEffect(() => {
@@ -193,7 +206,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         return;
       }
       setAlpacaSyncStatus('connected');
-      const syncResult = syncAlpacaOverviewToLocalJournal(data);
+      const syncResult = syncAlpacaOverviewToLocalJournal(data, marketHealthRef.current);
       setEntries(syncResult.entries);
       if (!silent || syncResult.addedCount > 0 || syncResult.updatedCount > 0) {
         setExportToast(
@@ -500,8 +513,31 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
       pnlPct = Number(pnlPct.toFixed(2));
     }
 
+    const manualId = `journal-${Date.now()}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`;
+    const riskPerUnit = Math.abs(Number(formEntryPrice) - Number(formStopLoss));
+    const initialRiskDollars = riskPerUnit > 0 ? Number((riskPerUnit * Number(formQuantity)).toFixed(2)) : null;
+    const manualCtx = marketHealthRef.current
+      ? backfillEntryMarketContextFromHistory(formEntryDate, marketHealthRef.current, {
+          initialRiskDollars,
+          assetMode: 'EQUITY',
+        }) ||
+        buildEntryMarketContextFromReport(marketHealthRef.current, {
+          entryDate: formEntryDate,
+          initialRiskDollars,
+          assetMode: 'EQUITY',
+          source: 'MANUAL_ENTRY',
+        })
+      : null;
+
+    if (manualCtx) {
+      storeEntryMarketContextSnapshot(
+        { symbol: formSymbol.toUpperCase().trim(), entryDate: formEntryDate },
+        manualCtx
+      );
+    }
+
     const newEntry: JournalEntry = {
-      id: `journal-${Date.now()}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`,
+      id: manualId,
       symbol: formSymbol.toUpperCase().trim(),
       companyName: formCompanyName.trim() || undefined,
       setupType: formSetupType,
@@ -525,6 +561,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
         .filter(Boolean),
       executionRating: formRating,
       createdAt: Date.now(),
+      entryMarketContext: manualCtx,
     };
 
     const updated = [newEntry, ...entries];
@@ -556,6 +593,11 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
   const journalAttribution = useMemo(
     () => computeJournalRuleAttribution(epochEntries),
     [epochEntries]
+  );
+
+  const regimeAttribution = useMemo(
+    () => computeJournalRegimeAttribution(epochEntries, marketHealth),
+    [epochEntries, marketHealth]
   );
 
   // Filtered List for active epoch
@@ -959,6 +1001,83 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                 </tbody>
               </table>
             </div>
+
+            {regimeAttribution.length > 0 && (
+              <div className="pt-2 space-y-2" data-testid="journal-regime-attribution">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>Entry Market-Regime Attribution (Sentiment &amp; VIX at Order Open)</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-zinc-500">
+                    Bayesian Shrinkage K=8 · Reveals which regimes print edge
+                  </span>
+                </div>
+                <div className="overflow-x-auto border border-zinc-800/80 rounded-lg bg-zinc-950/60">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-400">
+                      <tr>
+                        <th className="py-2 px-3">Entry Sentiment</th>
+                        <th className="py-2 px-3 text-right">Trades</th>
+                        <th className="py-2 px-3 text-right">Avg VIX</th>
+                        <th className="py-2 px-3 text-right">Win Rate</th>
+                        <th className="py-2 px-3 text-right">Avg R</th>
+                        <th className="py-2 px-3 text-right">Expectancy</th>
+                        <th className="py-2 px-3 text-right">Net P&amp;L</th>
+                        <th className="py-2 px-3 text-right">Model Scale</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono tabular-nums">
+                      {regimeAttribution.map((row) => (
+                        <tr key={row.regime}>
+                          <td className="py-1.5 px-3 text-zinc-200 font-semibold">{row.regime}</td>
+                          <td className="py-1.5 px-3 text-right text-zinc-300">
+                            {row.trades}
+                            {!row.sampleSufficient && (
+                              <span className="text-[10px] text-zinc-500 ml-1">(n&lt;10)</span>
+                            )}
+                          </td>
+                          <td className="py-1.5 px-3 text-right text-zinc-400">
+                            {row.avgVix !== null ? row.avgVix.toFixed(1) : '—'}
+                          </td>
+                          <td className="py-1.5 px-3 text-right text-zinc-200">{row.winRatePct.toFixed(1)}%</td>
+                          <td className="py-1.5 px-3 text-right text-amber-400">
+                            {row.avgRealizedR !== null
+                              ? `${row.avgRealizedR >= 0 ? '+' : ''}${row.avgRealizedR.toFixed(2)}R`
+                              : '—'}
+                          </td>
+                          <td
+                            className={`py-1.5 px-3 text-right ${
+                              row.expectancyDollars >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {row.expectancyDollars >= 0 ? '+' : '-'}${Math.abs(row.expectancyDollars).toFixed(2)}
+                          </td>
+                          <td
+                            className={`py-1.5 px-3 text-right font-bold ${
+                              row.netPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            }`}
+                          >
+                            {row.netPnl >= 0 ? '+' : '-'}${Math.abs(row.netPnl).toFixed(2)}
+                          </td>
+                          <td
+                            className={`py-1.5 px-3 text-right font-bold ${
+                              row.shrunkMultiplier > 1.02
+                                ? 'text-emerald-400'
+                                : row.shrunkMultiplier < 0.98
+                                ? 'text-amber-400'
+                                : 'text-zinc-400'
+                            }`}
+                          >
+                            {row.shrunkMultiplier.toFixed(2)}x
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1193,6 +1312,12 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                             <span className="text-[10px] text-zinc-400 truncate max-w-[140px]">
                               {item.setupType.replace('_', ' ')}
                             </span>
+                            {item.entryMarketContext && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/25 truncate max-w-[175px]">
+                                {item.entryMarketContext.sentimentLabel}
+                                {item.entryMarketContext.vix !== null ? ` · VIX ${item.entryMarketContext.vix.toFixed(1)}` : ''}
+                              </span>
+                            )}
                           </div>
                         </td>
 
@@ -1330,7 +1455,7 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                               {/* Header & Meta */}
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div>
-                                  <div className="flex items-center space-x-2">
+                                  <div className="flex flex-wrap items-center gap-2">
                                     <strong className="text-white text-base font-bold font-mono">
                                       {item.symbol} &bull; {item.companyName || 'Stock'}
                                     </strong>
@@ -1340,6 +1465,11 @@ export const TradeJournalView: React.FC<TradeJournalViewProps> = ({
                                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 font-bold">
                                       Rating: {item.executionRating}/5 Stars
                                     </span>
+                                    {item.entryMarketContext && (
+                                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                                        Entry Market: {formatEntryMarketContextBadge(item.entryMarketContext)}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-xs text-zinc-400 font-sans mt-0.5">
                                     Entered: <strong className="text-white">{item.entryDate}</strong> &bull; Exit: <strong className="text-white">{item.exitDate || 'Open'}</strong> &bull; Size: {item.quantity} shares (${(item.quantity * item.entryPrice).toFixed(2)})

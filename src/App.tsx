@@ -532,6 +532,7 @@ export default function App() {
               <ActionDashboard
                 onSelectSymbolForChart={handleSelectSymbolForChart}
                 onOpenCalculator={(s) => setCalculatorSetup(s)}
+                scannerResults={results}
               />
             )}
             {scannerSubTab === 'watchlists' && (

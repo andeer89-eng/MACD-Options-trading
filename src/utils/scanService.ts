@@ -6,6 +6,7 @@
 
 import { Levels, calculateLevels, DataQuality, loadSettings } from './masterPlanCore';
 import { DivergenceSetup } from './trullasStrategy';
+import { evaluateTosScans, TosScanReport } from './tosScansEngine';
 import { SP500_UNIVERSE, getCompanyName } from '../data/sp500Universe';
 import { fetchJsonSafe } from './safeFetchJson';
 
@@ -23,6 +24,9 @@ export interface UnifiedScanResult {
   setups: DivergenceSetup[];
   hasTripleDivergence: boolean;
   hasDoubleDivergence: boolean;
+  tosScans?: TosScanReport;
+  relPerfVsSpyPct?: number | null;
+  return30dPct?: number | null;
   stage: 1 | 2 | 3 | 4;
   stageName: 'Stage 1 Basing' | 'Stage 2 Advancing' | 'Stage 3 Topping' | 'Stage 4 Declining';
   levels: Levels;
@@ -129,6 +133,12 @@ class ScanService {
       ma150,
     });
 
+    const tosScans: TosScanReport | undefined = raw.tosScans
+      ? raw.tosScans
+      : Array.isArray(raw.candles) && raw.candles.length >= 20
+      ? evaluateTosScans(symbol, raw.candles)
+      : undefined;
+
     return {
       symbol,
       companyName,
@@ -143,6 +153,15 @@ class ScanService {
       setups,
       hasTripleDivergence: setups.some((s) => s.type.includes('TRIPLE')),
       hasDoubleDivergence: setups.some((s) => s.type.includes('DOUBLE')),
+      tosScans,
+      relPerfVsSpyPct:
+        typeof raw.relPerfVsSpyPct === 'number' && Number.isFinite(raw.relPerfVsSpyPct)
+          ? raw.relPerfVsSpyPct
+          : null,
+      return30dPct:
+        typeof raw.return30dPct === 'number' && Number.isFinite(raw.return30dPct)
+          ? raw.return30dPct
+          : null,
       stage,
       stageName,
       levels,

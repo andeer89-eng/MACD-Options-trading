@@ -12,6 +12,8 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 
+import type { EntryMarketContext } from './entryMarketContext';
+
 export interface JournalEntry {
   id: string;
   symbol: string;
@@ -44,6 +46,7 @@ export interface JournalEntry {
   macdEntryModelReason?: string;
   macdExitModelReason?: string;
   epochId?: string;
+  entryMarketContext?: EntryMarketContext | null;
 }
 
 export interface JournalStats {

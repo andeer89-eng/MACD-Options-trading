@@ -445,7 +445,8 @@ export function optimizeStrategyParameters(
     baseConfig.initialBalance,
     spanDays
   );
-  const baselineMaxDd = baselineMetrics.maxDrawdownPct ?? 0.08;
+  const baselineWinRatePct = Number(((baselineMetrics.winRate ?? 0) * 100).toFixed(1));
+  const baselineMaxDdPct = Number((((baselineMetrics.maxDrawdownPct ?? 0.08) * 100)).toFixed(2));
 
   // 2. Define Parameter Grid Search
   const minQualityScores = [50, 60, 70, 75, 80, 85];
@@ -471,10 +472,10 @@ export function optimizeStrategyParameters(
       targetMode: baseConfig.targetMode,
     },
     tradeCount: baselineMetrics.closedTrades,
-    winRatePct: baselineMetrics.winRate ?? 0,
+    winRatePct: baselineWinRatePct,
     totalNetPnl: baselineMetrics.netPnl,
     sharpeRatio: baselineSharpe,
-    maxDrawdownPct: baselineMaxDd,
+    maxDrawdownPct: baselineMaxDdPct,
     profitFactor: baselineMetrics.profitFactor ?? 1.0,
     luxAlgoEdgeScore: baselineResult.edgeScore.score ?? 85,
   });
@@ -514,10 +515,10 @@ export function optimizeStrategyParameters(
             targetMode: tMode,
           },
           tradeCount: metrics.closedTrades,
-          winRatePct: metrics.winRate ?? 0,
+          winRatePct: Number(((metrics.winRate ?? 0) * 100).toFixed(1)),
           totalNetPnl: metrics.netPnl,
           sharpeRatio,
-          maxDrawdownPct: metrics.maxDrawdownPct ?? baselineMaxDd,
+          maxDrawdownPct: Number((((metrics.maxDrawdownPct ?? (baselineMaxDdPct / 100)) * 100)).toFixed(2)),
           profitFactor: metrics.profitFactor ?? 1.0,
           luxAlgoEdgeScore: result.edgeScore.score ?? 85,
         };
@@ -553,10 +554,10 @@ export function optimizeStrategyParameters(
       targetMode: baseConfig.targetMode,
     },
     tradeCount: baselineMetrics.closedTrades,
-    winRatePct: baselineMetrics.winRate ?? 0,
+    winRatePct: baselineWinRatePct,
     totalNetPnl: baselineMetrics.netPnl,
     sharpeRatio: baselineSharpe,
-    maxDrawdownPct: baselineMaxDd,
+    maxDrawdownPct: baselineMaxDdPct,
     profitFactor: baselineMetrics.profitFactor ?? 1.0,
     luxAlgoEdgeScore: baselineResult.edgeScore.score ?? 85,
   };
@@ -578,14 +579,14 @@ export function optimizeStrategyParameters(
     (((bestCandidate.sharpeRatio - baselineSharpe) / Math.max(0.1, Math.abs(baselineSharpe))) * 100).toFixed(1)
   );
   const drawdownDeltaPct = Number(
-    ((baselineMaxDd - bestCandidate.maxDrawdownPct) * 100).toFixed(1)
+    (baselineMaxDdPct - bestCandidate.maxDrawdownPct).toFixed(1)
   );
   const drawdownNote =
     drawdownDeltaPct > 0.05
       ? `while reducing max drawdown by ${drawdownDeltaPct.toFixed(1)}pp`
       : drawdownDeltaPct < -0.05
-      ? `with max drawdown at ${(bestCandidate.maxDrawdownPct * 100).toFixed(1)}%`
-      : `while keeping max drawdown flat at ${(bestCandidate.maxDrawdownPct * 100).toFixed(1)}%`;
+      ? `with max drawdown at ${bestCandidate.maxDrawdownPct.toFixed(1)}%`
+      : `while keeping max drawdown flat at ${bestCandidate.maxDrawdownPct.toFixed(1)}%`;
 
   const wfSuffix = walkForward.available
     ? ` Walk-Forward 70/30 OOS Sharpe: ${walkForward.outOfSampleSharpe.toFixed(2)} (DSR ${deflatedSharpe.deflatedSharpePct}%, Overfit Risk: ${deflatedSharpe.overfitRisk}).`
@@ -598,9 +599,9 @@ export function optimizeStrategyParameters(
     baselineMetrics: {
       minQualityScore: baseConfig.minQualityScore,
       sharpeRatio: baselineSharpe,
-      winRatePct: baselineMetrics.winRate ?? 0,
+      winRatePct: baselineWinRatePct,
       totalNetPnl: baselineMetrics.netPnl,
-      maxDrawdownPct: baselineMaxDd,
+      maxDrawdownPct: baselineMaxDdPct,
       tradeCount: baselineMetrics.closedTrades,
     },
     optimalCandidate: bestCandidate,

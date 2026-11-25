@@ -177,5 +177,14 @@ describe('Strategy Optimizer Unit Tests', () => {
     });
     assert.ok(dsrGood.deflatedSharpePct >= 70, `Expected high DSR for strong OOS edge, got ${dsrGood.deflatedSharpePct}%`);
     assert.equal(dsrGood.overfitRisk, 'LOW');
+
+    // Regression: baseline and candidate winRatePct / maxDrawdownPct must be 0..100 percentages (matching OOS scale)
+    assert.ok(report.baselineMetrics.winRatePct >= 0 && report.baselineMetrics.winRatePct <= 100);
+    assert.ok(report.baselineMetrics.maxDrawdownPct >= 0 && report.baselineMetrics.maxDrawdownPct <= 100);
+    assert.ok(report.optimalCandidate.winRatePct >= 0 && report.optimalCandidate.winRatePct <= 100);
+    assert.ok(report.optimalCandidate.maxDrawdownPct >= 0 && report.optimalCandidate.maxDrawdownPct <= 100);
+    if (report.optimalCandidate.winRatePct > 1) {
+      assert.ok(report.optimalCandidate.winRatePct >= 1 && report.optimalCandidate.winRatePct <= 100);
+    }
   });
 });

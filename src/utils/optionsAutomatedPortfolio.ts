@@ -28,6 +28,7 @@ export interface OptionsTradeRecord {
   goldenZoneSupportLevel: number;
   whyOpenedThesis: string;
   session?: MarketRegimeType;
+  entryMarketContext?: EntryMarketContext | null;
 }
 
 import {
@@ -38,6 +39,17 @@ import {
 import { calculateBlackScholesGreeks } from './cboeOptionsEngine.ts';
 import { getTradeExecutionRegime, MarketRegimeType } from './marketSession.ts';
 import { escapeCsvCell } from './csvExport.ts';
+import type { MarketHealthReport } from './marketHealthEngine.ts';
+import {
+  backfillEntryMarketContextFromHistory,
+  lookupEntryMarketContextSnapshot,
+  type EntryMarketContext,
+} from './entryMarketContext.ts';
+import {
+  recomputeRegimeMatrix,
+  type RegimePerformanceStat,
+  type TradeEpisode,
+} from './activeLearningEngine.ts';
 
 export interface OptionsPosition {
   id: string;
@@ -98,6 +110,7 @@ export interface OptionsTradeEpisode {
   pnl: number;
   pnlPercent: number;
   outcome: 'WIN' | 'BREAKEVEN' | 'LOSS';
+  entryMarketContext?: EntryMarketContext | null;
   reflectionCritique: string;
   learnedRule: string;
   synapticWeightDelta: number;
@@ -107,6 +120,7 @@ export interface OptionsActiveMemoryState {
   version: string;
   episodes: OptionsTradeEpisode[];
   learnedRules: string[];
+  regimeStats?: Record<string, RegimePerformanceStat>;
   calibratedMaxDelta: number; // e.g. 0.12 (dynamic based on market volatility)
   calibratedProfitTakePct: number; // e.g. 75%
   minGoldenZoneDistancePct: number; // e.g. 3.0%
@@ -206,7 +220,10 @@ function deduplicateEntityIds<T extends { id?: string }>(
 /**
  * Synthesizes epistemic memory episodes from real closed options trade records.
  */
-export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeRecord[]): OptionsTradeEpisode[] {
+export function synthesizeOptionsEpisodesFromHistory(
+  tradeHistory: OptionsTradeRecord[],
+  marketHealth?: MarketHealthReport | null
+): OptionsTradeEpisode[] {
   return tradeHistory.map((trade, idx) => {
     const isWin = trade.profitDollars > 0;
     const isBreakEven = trade.outcomeReason === 'Break Even';
@@ -215,6 +232,13 @@ export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeR
     const outcome: OptionsTradeEpisode['outcome'] = isError ? 'LOSS' : isBreakEven ? 'BREAKEVEN' : 'WIN';
     const pattern = trade.tradingWarzPattern || 'GOLDEN_ZONE_BOUNCE';
     const patternLabel = pattern.replace(/_/g, ' ');
+    const entryCtx: EntryMarketContext | null =
+      trade.entryMarketContext ||
+      lookupEntryMarketContextSnapshot({ symbol: trade.contract, entryDate: trade.date }) ||
+      (marketHealth
+        ? backfillEntryMarketContextFromHistory(trade.date, marketHealth, { assetMode: 'OPTIONS' })
+        : null);
+    const ctxTag = entryCtx ? ` [Entry: ${entryCtx.sentimentLabel}, VIX ${entryCtx.vix?.toFixed(1) ?? 'N/A'}]` : '';
 
     let reflectionCritique = '';
     let learnedRule = '';
@@ -223,19 +247,23 @@ export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeR
     if (outcome === 'WIN') {
       synapticWeightDelta = Math.min(0.25, Number((0.05 + (trade.profitPercent / 100) * 0.10).toFixed(3)));
       if (trade.profitPercent >= 95) {
-        reflectionCritique = `Held ${trade.contract} to expiration; full 100% premium (+$${trade.profitDollars.toFixed(2)}) captured as underlying traded safely above Golden Zone support floor ($${trade.goldenZoneSupportLevel}).`;
-        learnedRule = `TradingWarz ${patternLabel} setups at Delta ≤ ${trade.delta} reliably expire worthless; full premium capture maximizes long-term portfolio growth.`;
+        reflectionCritique = `Held ${trade.contract} to expiration; full 100% premium (+$${trade.profitDollars.toFixed(2)}) captured as underlying traded safely above Golden Zone support floor ($${trade.goldenZoneSupportLevel}).${ctxTag}`;
+        learnedRule = entryCtx
+          ? `[${entryCtx.sentimentLabel}] TradingWarz ${patternLabel} short puts at Delta ≤ ${trade.delta} expired worthless in ${entryCtx.sentimentLabel}.`
+          : `TradingWarz ${patternLabel} setups at Delta ≤ ${trade.delta} reliably expire worthless; full premium capture maximizes long-term portfolio growth.`;
       } else {
-        reflectionCritique = `Executed disciplined early profit-take (${trade.profitPercent}%) on ${trade.contract}, banking +$${trade.profitDollars.toFixed(2)} within weekly cycle and liberating collateral.`;
-        learnedRule = `Early profit take at 60-85% locks in compounded returns while cutting weekend gamma risk to zero.`;
+        reflectionCritique = `Executed disciplined early profit-take (${trade.profitPercent}%) on ${trade.contract}, banking +$${trade.profitDollars.toFixed(2)} within weekly cycle and liberating collateral.${ctxTag}`;
+        learnedRule = entryCtx
+          ? `[${entryCtx.sentimentLabel}] Early 60–85% profit take on ${trade.ticker} short puts preserved theta edge.`
+          : `Early profit take at 60-85% locks in compounded returns while cutting weekend gamma risk to zero.`;
       }
     } else if (outcome === 'BREAKEVEN') {
       synapticWeightDelta = +0.02; // Capital preservation positive reinforcement
-      reflectionCritique = `Underlying tested support near strike; bot executed defensive break-even exit on ${trade.contract} (P&L $${trade.profitDollars.toFixed(2)}), preserving capital without taking catastrophic tail loss.`;
+      reflectionCritique = `Underlying tested support near strike; bot executed defensive break-even exit on ${trade.contract} (P&L $${trade.profitDollars.toFixed(2)}), preserving capital without taking catastrophic tail loss.${ctxTag}`;
       learnedRule = `Immediate break-even exit when strike is pressured protects 100% of underlying capital and ensures 99x profit factor.`;
     } else {
       synapticWeightDelta = -0.15;
-      reflectionCritique = `Order execution anomaly on ${trade.contract} (-$${Math.abs(trade.profitDollars).toFixed(2)}); active memory enforced automated syntax and strike validation checks.`;
+      reflectionCritique = `Order execution anomaly on ${trade.contract} (-$${Math.abs(trade.profitDollars).toFixed(2)}); active memory enforced automated syntax and strike validation checks.${ctxTag}`;
       learnedRule = `Always run pre-flight contract specification validation before routing short put orders to broker API.`;
     }
 
@@ -250,6 +278,7 @@ export function synthesizeOptionsEpisodesFromHistory(tradeHistory: OptionsTradeR
       pnl: trade.profitDollars,
       pnlPercent: trade.profitPercent,
       outcome,
+      entryMarketContext: entryCtx,
       reflectionCritique,
       learnedRule,
       synapticWeightDelta,
@@ -304,12 +333,38 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
 /**
  * Re-runs continual learning synthesis strictly over genuine executed trade records in the portfolio.
  */
-export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount): OptionsPortfolioAccount {
+export function relearnOptionsMemoryFromHistory(
+  account: OptionsPortfolioAccount,
+  marketHealth?: MarketHealthReport | null
+): OptionsPortfolioAccount {
   const historyToUse = [
     ...(account.tradeHistory || []),
     ...(account.legacyHistory || []),
   ];
-  const allEpisodes = synthesizeOptionsEpisodesFromHistory(historyToUse);
+  const allEpisodes = synthesizeOptionsEpisodesFromHistory(historyToUse, marketHealth);
+
+  const syntheticForMatrix: TradeEpisode[] = allEpisodes.map((ep) => ({
+    id: ep.id,
+    timestamp: ep.timestamp,
+    symbol: ep.contract,
+    companyName: ep.contract,
+    setupType: ep.tradingWarzPattern || 'GOLDEN ZONE PUT',
+    direction: 'BULLISH',
+    assetMode: 'OPTIONS',
+    entryPrice: 1,
+    exitPrice: 1,
+    pnl: ep.pnl,
+    pnlPercent: ep.pnlPercent,
+    realizedR: ep.pnl >= 0 ? Math.min(3, ep.pnlPercent / 35) : Math.max(-3, ep.pnlPercent / 35),
+    outcome: ep.outcome,
+    qualityScore: 80,
+    atrPercent: 2.0,
+    entryMarketContext: ep.entryMarketContext ?? null,
+    reflectionCritique: ep.reflectionCritique,
+    learnedRule: ep.learnedRule,
+    synapticWeightDelta: ep.synapticWeightDelta,
+  }));
+  const regimeStats = recomputeRegimeMatrix(syntheticForMatrix, { assetMode: 'OPTIONS' });
 
   const wins = allEpisodes.filter((e) => e.outcome === 'WIN').length;
   const winRate = allEpisodes.length > 0 ? (wins / allEpisodes.length) * 100 : 100;
@@ -325,9 +380,19 @@ export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount
 
   const totalThetaHarvested = historyToUse.reduce((sum, t) => sum + (t.profitDollars || 0), 0);
 
+  const regimeRuleInsights = Object.values(regimeStats)
+    .filter((r) => r.axis === 'SENTIMENT' && r.tradesCount >= 2)
+    .sort((a, b) => b.shrunkMultiplier - a.shrunkMultiplier)
+    .slice(0, 2)
+    .map(
+      (r) =>
+        `[OPTIONS ${r.label}]: ${r.winRate}% WR, ${r.totalPnL >= 0 ? '+' : ''}$${r.totalPnL.toFixed(0)} across ${r.tradesCount} contract(s) (Bayesian ${r.shrunkMultiplier}x).`
+    );
+
   const updatedMemory: OptionsActiveMemoryState = {
     ...account.activeMemory,
     episodes: allEpisodes,
+    regimeStats,
     learningIterations: allEpisodes.length,
     calibratedMaxDelta,
     calibratedProfitTakePct: 75.0,
@@ -339,6 +404,7 @@ export function relearnOptionsMemoryFromHistory(account: OptionsPortfolioAccount
       'Auto-close options when 65% - 85% of total premium is captured early rather than taking tail gamma risk into expiry.',
       'If market conditions trigger VIX expansion (>22), widen strike distance to at least 4.5% OTM.',
       'On rapid market sell-offs testing strike within 1.0%, execute defensive break-even exit per Rule 4 to protect 100% of collateral.',
+      ...regimeRuleInsights,
     ],
   };
 

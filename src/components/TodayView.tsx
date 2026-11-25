@@ -22,6 +22,7 @@ import {
   ExternalLink,
   Cloud,
   CloudOff,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   MasterPlanSettings,
@@ -73,17 +74,23 @@ import { calculateStageAnalysis } from '../utils/trendSpiderEngine';
 import { computeLevelLadderGeometry } from '../utils/levelGeometry';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
 import { useAuth } from '../lib/AuthProvider';
+import {
+  buildDualMarketLeaderboards,
+  HIGH_CONVICTION_MIN_SCORE,
+  ConvictionGrade,
+  scoreToConvictionGrade,
+} from '../utils/watchlistRankingEngine';
+import {
+  recordTop50PresenceSnapshot,
+  PresenceAnnotation,
+  getTradingDateKey,
+} from '../utils/watchlistPersistenceTracker';
 
 interface TodayViewProps {
   onOpenChart?: (symbol: string) => void;
   scannerResults?: any[];
   onScanNow?: () => void;
 }
-
-const NDX_CORE_SET = new Set([
-  'NVDA', 'AAPL', 'MSFT', 'AMZN', 'META', 'GOOGL', 'GOOG', 'TSLA', 'AVGO',
-  'COST', 'NFLX', 'AMD', 'ADBE', 'CSCO', 'PEP', 'TMUS', 'LIN', 'INTC', 'QCOM', 'INTU',
-]);
 
 interface SectorRrgPoint {
   symbol: string;
@@ -94,6 +101,7 @@ interface SectorRrgPoint {
 }
 
 interface WatchlistDisplayRow {
+  rank: number;
   s: string;
   sec: string;
   u: ('sp500' | 'ndx100')[];
@@ -103,10 +111,21 @@ interface WatchlistDisplayRow {
   atr: number;
   status: string;
   score: number;
+  grade: ConvictionGrade;
+  relPerfVsSpyPct: number | null;
+  daysInWatchlist: number;
+  consecutiveDays: number;
+  firstSeenDate: string;
+  bestRank: number;
+  rankDelta: number | null;
+  isNewToday: boolean;
+  stageLabel: string;
   why: string[];
   levels: Levels;
   gate: ReturnType<typeof canTrade>;
 }
+
+type WatchlistSortKey = 'score' | 'days' | 'alpha' | 'rr' | 'symbol';
 
 export const TodayView: React.FC<TodayViewProps> = ({
   onOpenChart,
@@ -122,7 +141,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
   const syncTimerRef = React.useRef<number | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('');
   const [universeFilter, setUniverseFilter] = useState<'both' | 'sp500' | 'ndx100'>('both');
-  const [statusFilter, setStatusFilter] = useState<'active' | 'all'>('active');
+  const [directionView, setDirectionView] = useState<'long' | 'short'>('long');
+  const [gradeGate, setGradeGate] = useState<'strong' | 'includeC' | 'saved'>('strong');
+  const [sortBy, setSortBy] = useState<WatchlistSortKey>('score');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [presenceMap, setPresenceMap] = useState<Map<string, PresenceAnnotation>>(new Map());
 
   // Live macro & market state
   const [liveSectors, setLiveSectors] = useState<GicsSectorPerformance[]>([]);
@@ -211,6 +234,19 @@ export const TodayView: React.FC<TodayViewProps> = ({
     return Math.round(
       regimeComponents.reduce((acc, c) => acc + (c.weight * c.value) / 100, 0)
     );
+  }, [marketHealth, regimeComponents]);
+
+  // Keep Panel A bars synchronized with the active source driving regimeScore
+  const activeRegimeBars = useMemo(() => {
+    if (marketHealth && marketHealth.isLive) {
+      return [
+        { key: 'SPY Trend & Momentum', weight: 25, value: marketHealth.current.momentumScore, ready: true },
+        { key: 'VIX & Term Structure', weight: 25, value: marketHealth.current.vixScore, ready: true },
+        { key: 'Net Buying vs Selling Vol', weight: 25, value: marketHealth.current.volumeScore, ready: true },
+        { key: 'Sector Breadth & Safe-Haven', weight: 25, value: marketHealth.current.breadthScore, ready: true },
+      ];
+    }
+    return regimeComponents;
   }, [marketHealth, regimeComponents]);
 
   const regimeBand = useMemo(() => getRegimeBand(regimeScore), [regimeScore]);
@@ -401,24 +437,121 @@ export const TodayView: React.FC<TodayViewProps> = ({
     scheduleCloudSync(updated);
   };
 
-  // Watchlist Items derived strictly from live Scanner setups + saved Watchlist items
+  // Unified Top-50 Bullish & Bearish leaderboards (excludes Grade C/D noise unless explicitly requested)
+  const leaderboards = useMemo(() => {
+    const minScore = gradeGate === 'includeC' ? 55 : HIGH_CONVICTION_MIN_SCORE;
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore,
+      maxItems: 50,
+    });
+  }, [scannerResults, gradeGate]);
+
+  const strictLeaderboards = useMemo(() => {
+    return buildDualMarketLeaderboards(scannerResults, {
+      minScore: HIGH_CONVICTION_MIN_SCORE,
+      maxItems: 50,
+    });
+  }, [scannerResults]);
+
+  // Persist daily Top-50 presence history & streak counts strictly from high-conviction Top-50
+  useEffect(() => {
+    const nextMap = new Map<string, PresenceAnnotation>();
+    if (strictLeaderboards.bullish.length > 0) {
+      const bullPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bullish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'long'
+      );
+      for (const [sym, ann] of bullPresence.entries()) {
+        nextMap.set(`long:${sym}`, ann);
+      }
+    }
+    if (strictLeaderboards.bearish.length > 0) {
+      const bearPresence = recordTop50PresenceSnapshot(
+        strictLeaderboards.bearish.map((l) => ({ symbol: l.symbol, rank: l.rank, score: l.score })),
+        'short'
+      );
+      for (const [sym, ann] of bearPresence.entries()) {
+        nextMap.set(`short:${sym}`, ann);
+      }
+    }
+    if (nextMap.size > 0) {
+      setPresenceMap(nextMap);
+    }
+  }, [strictLeaderboards]);
+
+  const handleHeaderSort = (key: WatchlistSortKey) => {
+    if (sortBy === key) {
+      setSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortBy(key);
+      setSortDir(key === 'symbol' ? 'asc' : 'desc');
+    }
+  };
+
+  // Watchlist Items derived strictly from Top-50 Bullish/Bearish high-conviction leaders (or saved items)
   const watchlistItems = useMemo<WatchlistDisplayRow[]>(() => {
-    const spMap = new Map(SP500_UNIVERSE.map((c) => [c.symbol, c]));
-    const bySymbol = new Map<string, WatchlistDisplayRow>();
+    const todayKey = getTradingDateKey();
 
-    // 1. Live scanner detections
-    for (const r of scannerResults) {
-      const sym = (r.symbol || '').toUpperCase();
-      if (!sym) continue;
-      const mainSetup = r.setups?.[0];
-      const currentPrice = Number(r.currentPrice ?? r.price) || Number(mainSetup?.currentPrice) || 0;
-      const atr = Number(r.atr) || Number((currentPrice * 0.02).toFixed(2));
-      if (currentPrice <= 0) continue;
+    if (gradeGate === 'saved') {
+      const savedRows: WatchlistDisplayRow[] = [];
+      savedWatchlist.forEach((w, idx) => {
+        const sym = w.symbol.toUpperCase();
+        if (!sym || w.currentPrice <= 0) return;
+        const atr = w.atr > 0 ? w.atr : Number((w.currentPrice * 0.02).toFixed(2));
+        const levels =
+          w.levels ||
+          calculateLevels({
+            symbol: sym,
+            direction: w.direction,
+            currentPrice: w.currentPrice,
+            atr14: atr,
+            recentBars: [],
+            dataQuality: settings.dataQuality,
+          });
+        const gate = canTrade({
+          symbol: sym,
+          direction: w.direction,
+          sector: w.sector,
+          setupScore: w.totalScore,
+          levels,
+          currentPrice: w.currentPrice,
+          regimeScore,
+          customSettings: settings,
+        });
+        const { grade } = scoreToConvictionGrade(w.totalScore);
+        const pres = presenceMap.get(`${w.direction}:${sym}`);
+        savedRows.push({
+          rank: idx + 1,
+          s: sym,
+          sec: w.sector,
+          u: w.universe,
+          setup: w.setup,
+          dir: w.direction,
+          p: w.currentPrice,
+          atr,
+          status: w.status,
+          score: w.totalScore,
+          grade,
+          relPerfVsSpyPct: null,
+          daysInWatchlist: pres?.daysInWatchlist ?? 1,
+          consecutiveDays: pres?.consecutiveDays ?? 1,
+          firstSeenDate: pres?.firstSeenDate ?? todayKey,
+          bestRank: pres?.bestRank ?? idx + 1,
+          rankDelta: pres?.rankDelta ?? null,
+          isNewToday: pres?.isNewToday ?? true,
+          stageLabel: 'Saved Watchlist',
+          why: w.why.length > 0 ? w.why.map(normalizeThesisLine) : [`Saved watchlist item (${w.status})`],
+          levels,
+          gate,
+        });
+      });
+      return savedRows.sort((a, b) => b.score - a.score).slice(0, 50);
+    }
 
-      const isBear = mainSetup?.type?.includes('BEAR');
-      const dir: 'long' | 'short' = isBear ? 'short' : 'long';
-      const recentBars = Array.isArray(r.candles)
-        ? r.candles.slice(-20).map((c: any) => ({
+    const activeList = directionView === 'long' ? leaderboards.bullish : leaderboards.bearish;
+    return activeList.map((leader) => {
+      const recentBars = Array.isArray(leader.candles)
+        ? leader.candles.slice(-20).map((c) => ({
             o: Number(c.open ?? c.close),
             h: Number(c.high ?? c.close),
             l: Number(c.low ?? c.close),
@@ -427,115 +560,94 @@ export const TodayView: React.FC<TodayViewProps> = ({
         : [];
 
       const levels = calculateLevels({
-        symbol: sym,
-        direction: dir,
-        currentPrice,
-        atr14: atr,
+        symbol: leader.symbol,
+        direction: leader.direction,
+        currentPrice: leader.currentPrice,
+        atr14: leader.atr,
         recentBars,
         dataQuality: settings.dataQuality,
       });
 
-      const score = Number(mainSetup?.qualityScore) || 65;
-      const sec = r.sector || spMap.get(sym)?.sector || 'Equities';
       const gate = canTrade({
-        symbol: sym,
-        direction: dir,
-        sector: sec,
-        setupScore: score,
+        symbol: leader.symbol,
+        direction: leader.direction,
+        sector: leader.sector,
+        setupScore: leader.score,
         levels,
-        currentPrice,
+        currentPrice: leader.currentPrice,
         regimeScore,
         customSettings: settings,
       });
 
-      const universe: ('sp500' | 'ndx100')[] = [];
-      if (spMap.has(sym)) universe.push('sp500');
-      if (NDX_CORE_SET.has(sym)) universe.push('ndx100');
-      if (universe.length === 0) universe.push('sp500');
-
-      const why: string[] = [];
-      if (mainSetup) {
-        why.push(`${mainSetup.type.replace(/_/g, ' ')} on ${mainSetup.timeframe} (Score ${score})`);
-        if (mainSetup.confluenceChecks?.rsiDivergence) why.push('Confirmed RSI divergence');
-        if (mainSetup.confluenceChecks?.volumeExhaustion) why.push('Confirmed volume exhaustion');
-      }
-      why.push(`ATR ${(Number(r.atrPercent) || 0).toFixed(2)}% • Live price $${currentPrice.toFixed(2)}`);
-
-      bySymbol.set(sym, {
-        s: sym,
-        sec,
-        u: universe,
-        setup: mainSetup ? mainSetup.type.replace(/_/g, ' ') : 'Live Divergence Setup',
-        dir,
-        p: currentPrice,
-        atr,
-        status: r.setups?.length ? 'TRIGGERED' : 'WATCHING',
-        score,
-        why,
+      const pres = presenceMap.get(`${leader.direction}:${leader.symbol}`);
+      return {
+        rank: leader.rank,
+        s: leader.symbol,
+        sec: leader.sector,
+        u: leader.universe,
+        setup: leader.primarySetup,
+        dir: leader.direction,
+        p: leader.currentPrice,
+        atr: leader.atr,
+        status: leader.hasDivergence ? 'TRIGGERED' : 'COILED',
+        score: leader.score,
+        grade: leader.grade,
+        relPerfVsSpyPct: leader.relPerfVsSpyPct,
+        daysInWatchlist: pres?.daysInWatchlist ?? 1,
+        consecutiveDays: pres?.consecutiveDays ?? 1,
+        firstSeenDate: pres?.firstSeenDate ?? todayKey,
+        bestRank: pres?.bestRank ?? leader.rank,
+        rankDelta: pres?.rankDelta ?? null,
+        isNewToday: pres?.isNewToday ?? true,
+        stageLabel: leader.stageLabel,
+        why: leader.why,
         levels,
         gate,
-      });
-    }
-
-    // 2. Saved user watchlist items (without overwriting fresh live scanner rows)
-    for (const w of savedWatchlist) {
-      const sym = w.symbol.toUpperCase();
-      if (bySymbol.has(sym) || w.currentPrice <= 0) continue;
-      const atr = w.atr > 0 ? w.atr : Number((w.currentPrice * 0.02).toFixed(2));
-      const levels =
-        w.levels ||
-        calculateLevels({
-          symbol: sym,
-          direction: w.direction,
-          currentPrice: w.currentPrice,
-          atr14: atr,
-          recentBars: [],
-          dataQuality: settings.dataQuality,
-        });
-
-      const gate = canTrade({
-        symbol: sym,
-        direction: w.direction,
-        sector: w.sector,
-        setupScore: w.totalScore,
-        levels,
-        currentPrice: w.currentPrice,
-        regimeScore,
-        customSettings: settings,
-      });
-
-      bySymbol.set(sym, {
-        s: sym,
-        sec: w.sector,
-        u: w.universe,
-        setup: w.setup,
-        dir: w.direction,
-        p: w.currentPrice,
-        atr,
-        status: w.status,
-        score: w.totalScore,
-        why: w.why.length > 0 ? w.why.map(normalizeThesisLine) : [`Saved watchlist item (${w.status})`],
-        levels,
-        gate,
-      });
-    }
-
-    return Array.from(bySymbol.values()).sort((a, b) => b.score - a.score);
-  }, [scannerResults, savedWatchlist, settings, regimeScore]);
+      };
+    });
+  }, [gradeGate, savedWatchlist, directionView, leaderboards, settings, regimeScore, presenceMap]);
 
   const filteredWatchlist = useMemo(() => {
-    return watchlistItems.filter((item) => {
-      const matchUni = universeFilter === 'both' || item.u.includes(universeFilter);
-      const matchStatus =
-        statusFilter === 'all' || ['NEW', 'WATCHING', 'TRIGGERED'].includes(item.status);
-      return matchUni && matchStatus;
+    const filtered = watchlistItems.filter((item) => {
+      return universeFilter === 'both' || item.u.includes(universeFilter);
     });
-  }, [watchlistItems, universeFilter, statusFilter]);
+    const mult = sortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'days': {
+          if (a.daysInWatchlist !== b.daysInWatchlist) {
+            return (a.daysInWatchlist - b.daysInWatchlist) * mult;
+          }
+          if (a.consecutiveDays !== b.consecutiveDays) {
+            return (a.consecutiveDays - b.consecutiveDays) * mult;
+          }
+          return (a.score - b.score) * mult;
+        }
+        case 'alpha': {
+          const aVal = a.relPerfVsSpyPct !== null ? (a.dir === 'long' ? a.relPerfVsSpyPct : -a.relPerfVsSpyPct) : -999;
+          const bVal = b.relPerfVsSpyPct !== null ? (b.dir === 'long' ? b.relPerfVsSpyPct : -b.relPerfVsSpyPct) : -999;
+          if (aVal !== bVal) return (aVal - bVal) * mult;
+          return b.score - a.score;
+        }
+        case 'rr': {
+          if (a.levels.rr !== b.levels.rr) return (a.levels.rr - b.levels.rr) * mult;
+          return b.score - a.score;
+        }
+        case 'symbol':
+          return a.s.localeCompare(b.s) * mult;
+        case 'score':
+        default: {
+          if (a.score !== b.score) return (a.score - b.score) * mult;
+          return a.rank - b.rank;
+        }
+      }
+    });
+  }, [watchlistItems, universeFilter, sortBy, sortDir]);
 
   const selectedItem = useMemo(() => {
-    if (watchlistItems.length === 0) return null;
-    return watchlistItems.find((i) => i.s === selectedSymbol) || watchlistItems[0];
-  }, [watchlistItems, selectedSymbol]);
+    if (filteredWatchlist.length === 0) return null;
+    return filteredWatchlist.find((i) => i.s === selectedSymbol) || filteredWatchlist[0];
+  }, [filteredWatchlist, selectedSymbol]);
 
   // Review & Signal Quality derived strictly from REAL closed trades in user journal
   const [selectedExitPolicy, setSelectedExitPolicy] = useState<string>('X1_fixed_v1');
@@ -881,7 +993,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
 
           <div className="space-y-2 text-xs">
-            {regimeComponents.map((c, i) => (
+            {activeRegimeBars.map((c, i) => (
               <div key={i} className="space-y-1">
                 <div className="flex justify-between text-[11px]">
                   <span className="text-zinc-400">
@@ -1079,129 +1191,293 @@ export const TodayView: React.FC<TodayViewProps> = ({
       </div>
 
       {/* 5. WATCHLIST & LEVEL PREVIEW SPLIT VIEW (§4.1 & §4.2) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Watchlist Table (7 cols) */}
-        <div className="lg:col-span-7 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md">
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-zinc-800">
-            <div className="flex items-center space-x-2">
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                Live Daily Watchlist ({filteredWatchlist.length} setups)
-              </h3>
-            </div>
-
-            <div className="flex items-center space-x-2 text-xs">
-              <div className="flex bg-zinc-950 p-0.5 rounded-lg border border-zinc-800 text-[11px]">
-                {(['both', 'sp500', 'ndx100'] as const).map((uni) => (
-                  <button
-                    key={uni}
-                    onClick={() => setUniverseFilter(uni)}
-                    className={`px-2 py-0.5 rounded transition ${
-                      universeFilter === uni
-                        ? 'bg-zinc-800 text-white font-bold'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    {uni === 'both' ? 'All' : uni === 'sp500' ? 'S&P 500' : 'NDX 100'}
-                  </button>
-                ))}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Watchlist Table (8 cols) */}
+        <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md min-w-0">
+          <div className="flex flex-col gap-3 pb-2.5 border-b border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Live Daily Watchlist &mdash; Top 50 {directionView === 'long' ? 'Bullish' : 'Bearish'} ({filteredWatchlist.length})
+                </h3>
+                <p className="text-[11px] text-zinc-400 mt-0.5">
+                  High-conviction leaders only ({gradeGate === 'strong' ? 'Grade B+ / A / A+' : gradeGate === 'includeC' ? 'Includes Grade C' : 'Saved Watchlist'}). Weak &amp; signal-less tickers excluded.
+                </p>
               </div>
 
-              <select
-                aria-label="Filter watchlist by setup status"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="bg-zinc-950 border border-zinc-800 text-zinc-300 text-[11px] rounded px-2 py-1"
-              >
-                <option value="active">Active (NEW, WATCHING, TRIGGERED)</option>
-                <option value="all">All Statuses</option>
-              </select>
+              {/* Dual Top-50 Bullish / Bearish Switcher */}
+              <div className="flex items-center bg-zinc-950 p-0.5 rounded-lg border border-zinc-800 gap-1">
+                <button
+                  type="button"
+                  data-testid="watchlist-dir-bullish"
+                  onClick={() => setDirectionView('long')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold flex items-center space-x-1 transition whitespace-nowrap shrink-0 ${
+                    directionView === 'long'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : 'text-zinc-400 hover:text-emerald-400'
+                  }`}
+                >
+                  <TrendingUp className="w-3 h-3" />
+                  <span>Bullish Top 50 ({leaderboards.bullish.length})</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="watchlist-dir-bearish"
+                  onClick={() => setDirectionView('short')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold flex items-center space-x-1 transition whitespace-nowrap shrink-0 ${
+                    directionView === 'short'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                      : 'text-zinc-400 hover:text-rose-400'
+                  }`}
+                >
+                  <TrendingDown className="w-3 h-3" />
+                  <span>Bearish Top 50 ({leaderboards.bearish.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Secondary Controls: Universe, Conviction Gate, Sort By */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex bg-zinc-950 p-0.5 rounded-lg border border-zinc-800 text-[11px]">
+                  {(['both', 'sp500', 'ndx100'] as const).map((uni) => (
+                    <button
+                      key={uni}
+                      type="button"
+                      onClick={() => setUniverseFilter(uni)}
+                      className={`px-2 py-0.5 rounded transition whitespace-nowrap ${
+                        universeFilter === uni
+                          ? 'bg-zinc-800 text-white font-bold'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {uni === 'both' ? 'All' : uni === 'sp500' ? 'S&P 500' : 'NDX 100'}
+                    </button>
+                  ))}
+                </div>
+
+                <select
+                  aria-label="Filter watchlist by conviction grade gate"
+                  data-testid="watchlist-grade-gate"
+                  value={gradeGate}
+                  onChange={(e) => setGradeGate(e.target.value as 'strong' | 'includeC' | 'saved')}
+                  className="bg-zinc-950 border border-zinc-800 text-zinc-300 text-[11px] rounded px-2 py-1"
+                >
+                  <option value="strong">Grade B+ Strong (Top 50)</option>
+                  <option value="includeC">Include Grade C</option>
+                  <option value="saved">Saved Watchlist Items</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-zinc-500">Sort:</span>
+                <select
+                  aria-label="Sort watchlist column"
+                  data-testid="watchlist-sort-select"
+                  value={sortBy}
+                  onChange={(e) => {
+                    const nextKey = e.target.value as WatchlistSortKey;
+                    setSortBy(nextKey);
+                    setSortDir(nextKey === 'symbol' ? 'asc' : 'desc');
+                  }}
+                  className="bg-zinc-950 border border-zinc-800 text-zinc-200 text-[11px] rounded px-2 py-1"
+                >
+                  <option value="score">Rank / Score</option>
+                  <option value="days">Days in Watchlist</option>
+                  <option value="alpha">Alpha vs SPY</option>
+                  <option value="rr">Risk : Reward</option>
+                  <option value="symbol">Symbol (A-Z)</option>
+                </select>
+                <button
+                  type="button"
+                  data-testid="watchlist-sort-dir"
+                  onClick={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                  title={sortDir === 'desc' ? 'Descending (Highest first)' : 'Ascending (Lowest first)'}
+                  className="px-2 py-1 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded text-[11px] font-mono flex items-center gap-1 whitespace-nowrap"
+                >
+                  <ArrowUpDown className="w-3 h-3" />
+                  <span>{sortDir === 'desc' ? 'DESC' : 'ASC'}</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto overflow-y-auto max-h-[580px] pr-1">
-            <table className="w-full text-left text-xs font-mono">
+          <div className="overflow-x-auto overflow-y-auto max-h-[580px]">
+            <table className="w-full text-left text-[11px] font-mono tabular-nums">
               <thead className="sticky top-0 bg-zinc-900 z-10">
                 <tr className="border-b border-zinc-800 text-[10px] text-zinc-500 uppercase tracking-wider">
-                  <th className="py-2 px-2.5">Symbol</th>
-                  <th className="py-2 px-2">Setup</th>
-                  <th className="py-2 px-2 text-right">Score</th>
-                  <th className="py-2 px-2 text-right">Entry Zone</th>
-                  <th className="py-2 px-2 text-right">SL</th>
-                  <th className="py-2 px-2 text-right">TP1</th>
-                  <th className="py-2 px-2 text-right">R:R</th>
-                  <th className="py-2 px-2">Status</th>
-                  <th className="py-2 px-2 text-right">canTrade()</th>
+                  <th className="py-2 px-1.5">#</th>
+                  <th className="py-2 px-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort('symbol')}
+                      className="hover:text-white transition uppercase tracking-wider"
+                    >
+                      Symbol {sortBy === 'symbol' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                    </button>
+                  </th>
+                  <th className="py-2 px-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort('score')}
+                      className="hover:text-white transition uppercase tracking-wider"
+                    >
+                      Grade {sortBy === 'score' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+                    </button>
+                  </th>
+                  <th className="py-2 px-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort('days')}
+                      className="hover:text-white transition uppercase tracking-wider"
+                    >
+                      Days {sortBy === 'days' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+                    </button>
+                  </th>
+                  <th className="py-2 px-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort('alpha')}
+                      className="hover:text-white transition uppercase tracking-wider"
+                    >
+                      vs SPY {sortBy === 'alpha' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+                    </button>
+                  </th>
+                  <th className="py-2 px-1.5">Setup</th>
+                  <th className="py-2 px-1.5 text-right">Entry</th>
+                  <th className="py-2 px-1.5 text-right">SL</th>
+                  <th className="py-2 px-1.5 text-right">TP1</th>
+                  <th className="py-2 px-1.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort('rr')}
+                      className="hover:text-white transition uppercase tracking-wider"
+                    >
+                      R:R {sortBy === 'rr' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+                    </button>
+                  </th>
+                  <th className="py-2 px-1.5 text-right">Gate</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
                 {filteredWatchlist.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-10 text-center text-zinc-500">
-                      No active setups yet. Run Live Scanner or add symbols to your Watchlist.
+                    <td colSpan={11} className="py-10 text-center text-zinc-500">
+                      {scannerResults.length === 0
+                        ? 'Scanning S&P 500 universe for high-conviction Top 50 setups...'
+                        : `No ${directionView === 'long' ? 'Bullish' : 'Bearish'} Grade B+ leaders match the current filter.`}
                     </td>
                   </tr>
                 ) : (
-                  filteredWatchlist.map((item) => {
+                  filteredWatchlist.map((item, idx) => {
                     const isSelected = item.s === (selectedItem?.s ?? '');
+                    const gradeColor =
+                      item.grade === 'A+' || item.grade === 'A'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                        : item.grade === 'B'
+                        ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                        : 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+                    const rankDeltaLabel =
+                      item.rankDelta === null
+                        ? item.isNewToday
+                          ? 'NEW'
+                          : null
+                        : item.rankDelta > 0
+                        ? `▲${item.rankDelta}`
+                        : item.rankDelta < 0
+                        ? `▼${Math.abs(item.rankDelta)}`
+                        : '•';
+
                     return (
                       <tr
-                        key={item.s}
+                        key={`${item.dir}-${item.s}`}
+                        data-testid={`watchlist-row-${item.s}`}
                         onClick={() => setSelectedSymbol(item.s)}
                         className={`cursor-pointer transition hover:bg-zinc-800/40 ${
                           isSelected ? 'bg-zinc-800/70 border-l-2 border-emerald-500' : ''
                         }`}
                       >
-                        <td className="py-2.5 px-2.5 font-bold text-white flex items-center space-x-1.5">
+                        <td className="py-2 px-1.5 text-zinc-400 font-bold whitespace-nowrap">
+                          <span>#{sortBy === 'score' && sortDir === 'desc' ? item.rank : idx + 1}</span>
+                          {rankDeltaLabel && (
+                            <span
+                              className={`ml-1 text-[9px] ${
+                                rankDeltaLabel === 'NEW'
+                                  ? 'text-sky-400'
+                                  : rankDeltaLabel.startsWith('▲')
+                                  ? 'text-emerald-400'
+                                  : rankDeltaLabel.startsWith('▼')
+                                  ? 'text-rose-400'
+                                  : 'text-zinc-600'
+                              }`}
+                            >
+                              {rankDeltaLabel}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-1.5 font-bold text-white whitespace-nowrap">
                           <span>{item.s}</span>
                           {item.u.includes('ndx100') && !item.u.includes('sp500') && (
-                            <span className="text-[9px] bg-sky-500/20 text-sky-400 px-1 rounded">
+                            <span className="ml-1 text-[9px] bg-sky-500/20 text-sky-400 px-1 rounded">
                               NDX
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 px-2 text-zinc-300">
-                          <span className="truncate block max-w-[140px]">{item.setup}</span>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-bold text-emerald-400">
-                          {item.score}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-zinc-300">
-                          ${item.levels.entryZone.lo.toFixed(1)}–
-                          {item.levels.entryZone.hi.toFixed(1)}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-rose-400">
-                          ${item.levels.stop.price.toFixed(1)}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-emerald-400">
-                          ${item.levels.targets[0]?.price.toFixed(1)}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-zinc-300">
-                          1:{item.levels.rr.toFixed(1)}
-                        </td>
-                        <td className="py-2.5 px-2">
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
-                              item.status === 'TRIGGERED'
-                                ? 'bg-emerald-500/20 text-emerald-400'
-                                : item.status === 'WATCHING'
-                                ? 'bg-amber-500/20 text-amber-400'
-                                : 'bg-zinc-800 text-zinc-300'
-                            }`}
-                          >
-                            {item.status}
+                        <td className="py-2 px-1.5 text-right whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold ${gradeColor}`}>
+                            <span>{item.grade}</span>
+                            <span className="opacity-80">{item.score}</span>
                           </span>
                         </td>
-                        <td className="py-2.5 px-2 text-right">
+                        <td
+                          className="py-2 px-1.5 text-right whitespace-nowrap"
+                          title={`First seen: ${item.firstSeenDate} · Streak: ${item.consecutiveDays}d · Best rank: #${item.bestRank}`}
+                        >
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 border border-zinc-700 text-[10px] font-semibold">
+                            {item.daysInWatchlist}d
+                          </span>
+                        </td>
+                        <td
+                          className={`py-2 px-1.5 text-right whitespace-nowrap font-semibold ${
+                            item.relPerfVsSpyPct === null
+                              ? 'text-zinc-500'
+                              : item.relPerfVsSpyPct >= 0
+                              ? 'text-emerald-400'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          {item.relPerfVsSpyPct === null
+                            ? '—'
+                            : `${item.relPerfVsSpyPct >= 0 ? '+' : ''}${item.relPerfVsSpyPct.toFixed(1)}%`}
+                        </td>
+                        <td className="py-2 px-1.5 text-zinc-300">
+                          <span className="truncate block max-w-[115px]" title={item.setup}>
+                            {item.setup}
+                          </span>
+                        </td>
+                        <td className="py-2 px-1.5 text-right text-zinc-300 whitespace-nowrap">
+                          ${item.levels.entryZone.lo.toFixed(0)}–{item.levels.entryZone.hi.toFixed(0)}
+                        </td>
+                        <td className="py-2 px-1.5 text-right text-rose-400 whitespace-nowrap">
+                          ${item.levels.stop.price.toFixed(1)}
+                        </td>
+                        <td className="py-2 px-1.5 text-right text-emerald-400 whitespace-nowrap">
+                          ${item.levels.targets[0]?.price.toFixed(1)}
+                        </td>
+                        <td className="py-2 px-1.5 text-right text-zinc-300 whitespace-nowrap">
+                          1:{item.levels.rr.toFixed(1)}
+                        </td>
+                        <td className="py-2 px-1.5 text-right whitespace-nowrap">
                           {item.gate.allow ? (
                             <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30 whitespace-nowrap">
-                              ACCEPT &times; {item.gate.suggestedQty}
+                              OK &times;{item.gate.suggestedQty}
                             </span>
                           ) : (
                             <span
                               className="text-[10px] text-rose-400 font-bold bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/30 whitespace-nowrap"
                               title={item.gate.fails.map((f) => f.name).join(', ')}
                             >
-                              BLOCKED ({item.gate.fails[0]?.shortName})
+                              {item.gate.fails[0]?.shortName || 'BLOCKED'}
                             </span>
                           )}
                         </td>
@@ -1214,10 +1490,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </div>
         </div>
 
-        {/* Selected Symbol Detail & SVG Levels Preview (5 cols) */}
+        {/* Selected Symbol Detail & SVG Levels Preview (4 cols) */}
         <div
           data-testid="levels-diagnostics-panel"
-          className="lg:col-span-5 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md lg:sticky lg:top-20"
+          className="lg:col-span-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3.5 shadow-md lg:sticky lg:top-20 min-w-0"
         >
           {!selectedItem ? (
             <div className="py-16 text-center space-y-2 text-zinc-500 text-xs font-mono">
@@ -1252,6 +1528,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
                 {/* Setup Summary Telemetry Strip */}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-zinc-200 font-bold">
+                      #{selectedItem.rank}
+                    </span>
                     <span
                       className={`px-2 py-0.5 rounded font-bold border ${
                         isShort
@@ -1265,7 +1544,13 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       {selectedItem.setup}
                     </span>
                     <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400 font-bold">
-                      Score {selectedItem.score}
+                      Grade {selectedItem.grade} ({selectedItem.score})
+                    </span>
+                    <span
+                      title={`First seen: ${selectedItem.firstSeenDate} · Streak: ${selectedItem.consecutiveDays}d · Best: #${selectedItem.bestRank}`}
+                      className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 font-semibold"
+                    >
+                      {selectedItem.daysInWatchlist}d in Top 50 (Best #{selectedItem.bestRank})
                     </span>
                   </div>
                   <span className="text-zinc-400 tabular-nums">

@@ -1,4 +1,10 @@
 import type { JournalEntry } from './tradeJournal';
+import type { MarketHealthReport } from './marketHealthEngine';
+import {
+  backfillEntryMarketContextFromHistory,
+  lookupEntryMarketContextSnapshot,
+  type EntryMarketContext,
+} from './entryMarketContext';
 
 export interface RuleAttributionRow {
   rule: string;
@@ -13,6 +19,20 @@ export interface RuleAttributionRow {
   avgRealizedR: number | null;
   expectancyDollars: number;
   sampleSufficient: boolean; // >= 10 closed trades for statistical reliability
+}
+
+export interface RegimeAttributionRow {
+  regime: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  winRatePct: number;
+  avgRealizedR: number | null;
+  expectancyDollars: number;
+  netPnl: number;
+  avgVix: number | null;
+  shrunkMultiplier: number; // Empirical Bayes K=8 toward 1.0x
+  sampleSufficient: boolean;
 }
 
 export interface JournalAttributionSummary {
@@ -230,4 +250,123 @@ export function computeJournalRuleAttribution(
     avgMaePct: maeCount > 0 ? Number((maeSum / maeCount).toFixed(2)) : null,
     bySetup,
   };
+}
+
+/**
+ * Aggregates closed journal entries by Market Sentiment Regime at entry (`entryMarketContext`),
+ * falling back cleanly to `MarketHealthReport.history1M` backfill by `entryDate` when available.
+ */
+export function computeJournalRegimeAttribution(
+  entries: JournalEntry[],
+  marketHealth?: MarketHealthReport | null
+): RegimeAttributionRow[] {
+  const closed = entries.filter((e) => e.status !== 'OPEN');
+  if (closed.length === 0) return [];
+
+  const buckets = new Map<
+    string,
+    {
+      trades: number;
+      wins: number;
+      losses: number;
+      netPnl: number;
+      rSum: number;
+      rCount: number;
+      vixSum: number;
+      vixCount: number;
+    }
+  >();
+
+  for (const e of closed) {
+    const openOrderTag = e.tags?.find((t) => t.startsWith('alpaca-order:'))?.slice('alpaca-order:'.length);
+    const isOption = e.tags?.includes('Alpaca Options') || e.symbol.length > 10;
+    const multiplier = isOption ? 100 : 1;
+    const riskPerUnit = Math.abs((e.entryPrice || 0) - (e.stopLoss || 0));
+    const plannedDollarRisk = riskPerUnit * (e.quantity || 0) * multiplier;
+
+    let ctx: EntryMarketContext | null =
+      e.entryMarketContext ||
+      lookupEntryMarketContextSnapshot({
+        orderId: openOrderTag,
+        symbol: e.symbol,
+        entryDate: e.entryDate,
+      });
+
+    if (!ctx && marketHealth) {
+      ctx = backfillEntryMarketContextFromHistory(e.entryDate, marketHealth, {
+        initialRiskDollars: plannedDollarRisk > 0 ? plannedDollarRisk : null,
+        assetMode: isOption ? 'OPTIONS' : 'EQUITY',
+      });
+    }
+
+    const regimeKey = ctx?.sentimentLabel || 'Unattributed';
+    const pnl = typeof e.realizedPnL === 'number' && Number.isFinite(e.realizedPnL) ? e.realizedPnL : 0;
+    const isWin = e.status === 'CLOSED_WIN' || (e.status !== 'CLOSED_LOSS' && pnl > 0);
+    const isLoss = e.status === 'CLOSED_LOSS' || (e.status !== 'CLOSED_WIN' && pnl < 0);
+    const riskDenom = ctx?.initialRiskDollars && ctx.initialRiskDollars > 0 ? ctx.initialRiskDollars : plannedDollarRisk;
+    const rVal = riskDenom > 0 ? pnl / riskDenom : null;
+
+    const acc = buckets.get(regimeKey) || {
+      trades: 0,
+      wins: 0,
+      losses: 0,
+      netPnl: 0,
+      rSum: 0,
+      rCount: 0,
+      vixSum: 0,
+      vixCount: 0,
+    };
+    acc.trades += 1;
+    if (isWin) acc.wins += 1;
+    else if (isLoss) acc.losses += 1;
+    acc.netPnl += pnl;
+    if (rVal !== null && Number.isFinite(rVal)) {
+      acc.rSum += rVal;
+      acc.rCount += 1;
+    }
+    if (ctx?.vix !== null && ctx?.vix !== undefined && Number.isFinite(ctx.vix)) {
+      acc.vixSum += ctx.vix;
+      acc.vixCount += 1;
+    }
+    buckets.set(regimeKey, acc);
+  }
+
+  const ORDER = ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed', 'Unattributed'];
+  const PRIOR_K = 8;
+
+  return Array.from(buckets.entries())
+    .map(([regime, s]) => {
+      const wrFrac = s.trades > 0 ? s.wins / s.trades : 0.5;
+      const avgR = s.rCount > 0 ? s.rSum / s.rCount : null;
+      const rawFactor = Math.max(
+        0.4,
+        Math.min(1.65, 1.0 + (wrFrac - 0.5) * 0.7 + (avgR !== null ? Math.max(-0.45, Math.min(0.5, avgR * 0.25)) : 0))
+      );
+      const shrunkMultiplier =
+        regime === 'Unattributed'
+          ? 1.0
+          : Number(Math.max(0.55, Math.min(1.45, (s.trades * rawFactor + PRIOR_K * 1.0) / (s.trades + PRIOR_K))).toFixed(2));
+
+      return {
+        regime,
+        trades: s.trades,
+        wins: s.wins,
+        losses: s.losses,
+        winRatePct: s.trades > 0 ? Number(((s.wins / s.trades) * 100).toFixed(1)) : 0,
+        avgRealizedR: avgR !== null ? Number(avgR.toFixed(2)) : null,
+        expectancyDollars: s.trades > 0 ? Number((s.netPnl / s.trades).toFixed(2)) : 0,
+        netPnl: Number(s.netPnl.toFixed(2)),
+        avgVix: s.vixCount > 0 ? Number((s.vixSum / s.vixCount).toFixed(1)) : null,
+        shrunkMultiplier,
+        sampleSufficient: s.trades >= 10,
+      };
+    })
+    .sort((a, b) => {
+      const ia = ORDER.indexOf(a.regime);
+      const ib = ORDER.indexOf(b.regime);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return b.trades - a.trades;
+    });
 }

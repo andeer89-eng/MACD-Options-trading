@@ -243,5 +243,60 @@ describe('HTTP Express Integration Routes', () => {
     assert.equal(body.history1M.length, 22);
     assert.ok(body.snapshots?.now && body.snapshots?.previousClose && body.snapshots?.oneWeekAgo && body.snapshots?.oneMonthAgo && body.snapshots?.oneYearAgo);
   });
+
+  it('POST /api/scan evaluates both Trullas divergences and TOS multi-scan setups', async () => {
+    const res = await fetch(`${baseUrl}/api/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers: ['AAPL', 'EMPTY'], timeframe: '1d' }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as any;
+    assert.equal(body.results.length, 1);
+    const aapl = body.results[0];
+    assert.equal(aapl.symbol, 'AAPL');
+    assert.ok(aapl.tosScans, 'Expected tosScans object attached to /api/scan result');
+    assert.ok(Array.isArray(aapl.tosScans.signals));
+    assert.ok(Array.isArray(aapl.tosScans.matchedIds));
+    assert.equal(typeof aapl.tosScans.snapshot?.relVolStDev, 'number');
+    assert.equal(typeof aapl.relPerfVsSpyPct, 'number');
+    assert.equal(typeof aapl.return30dPct, 'number');
+  });
+
+  it('POST /api/backtest supports TOS strategyMode options and rejects invalid strategyMode with 400', async () => {
+    const invalidRes = await fetch(`${baseUrl}/api/backtest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: 'AAPL',
+        strategyMode: 'invalid_mode',
+      }),
+    });
+    assert.equal(invalidRes.status, 400);
+
+    for (const mode of ['trullas_divergence', 'ttm_squeeze_stack', 'stacked_ema_pullback']) {
+      const okRes = await fetch(`${baseUrl}/api/backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: 'AAPL',
+          timeframe: '1d',
+          range: '1y',
+          initialBalance: 10000,
+          riskPerTradePct: 1.5,
+          targetMode: 'tranches',
+          minQualityScore: 40,
+          strategyMode: mode,
+        }),
+      });
+      assert.equal(okRes.status, 200, `Expected 200 for strategyMode=${mode}`);
+      const report = (await okRes.json()) as any;
+      assert.equal(report.symbol, 'AAPL');
+      assert.equal(report.config?.strategyMode, mode);
+      assert.ok(Array.isArray(report.trades));
+      assert.ok(Array.isArray(report.equityCurvePoints));
+      assert.ok(report.metrics && typeof report.metrics.totalTrades === 'number');
+    }
+  });
 });
 

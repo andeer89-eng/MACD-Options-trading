@@ -7,6 +7,12 @@ import {
   MarketHealthReport,
 } from '../../src/utils/marketHealthEngine.ts';
 import {
+  ExternalFearGreedSeries,
+  mergeExternalFearGreedData,
+  parseCnnFearGreedGraphData,
+  parseFearGreedTrackerHtml,
+} from '../../src/utils/fearGreedProvider.ts';
+import {
   CboeMarketOverview,
   TickerOptionsSummary,
   RawCboeOptionRecord,
@@ -766,6 +772,59 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
     }
   }
 
+    async function fetchFearGreedTrackerProvider(): Promise<ExternalFearGreedSeries | null> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      try {
+        const res = await fetch('https://feargreedtracker.com/fear-greed-index-stock-market', {
+          headers: {
+            'User-Agent': USER_AGENT,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          console.warn(`[FearGreed Sync] feargreedtracker.com returned HTTP ${res.status}`);
+          return null;
+        }
+        const html = await res.text();
+        const parsed = parseFearGreedTrackerHtml(html);
+        if (!parsed) {
+          console.warn('[FearGreed Sync] feargreedtracker.com HTML parsed empty payload');
+        }
+        return parsed;
+      } catch (err: any) {
+        console.warn('[FearGreed Sync] feargreedtracker.com fetch failed:', err?.message || err);
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function fetchCnnFearGreedFeed(): Promise<ExternalFearGreedSeries | null> {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      try {
+        const res = await fetch('https://production.dataviz.cnn.io/index/fearandgreed/graphdata', {
+          headers: {
+            'User-Agent': USER_AGENT,
+            Accept: 'application/json',
+            Referer: 'https://www.cnn.com/',
+            Origin: 'https://www.cnn.com',
+          },
+          signal: controller.signal,
+        });
+        if (!res.ok) return null;
+        const json = await res.json();
+        return parseCnnFearGreedGraphData(json);
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     async function fetchMarketHealthReport(forceRefresh: boolean = false): Promise<MarketHealthReport | null> {
       const now = Date.now();
       if (!forceRefresh && cachedMarketHealth && now - cachedMarketHealth.timestamp < 60_000) {
@@ -774,13 +833,15 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
 
       const sectorEtfs = GICS_SECTORS_METADATA.map((m) => m.etf);
       const benchmarkSymbols = ['SPY', 'QQQ', 'IWM'];
-      const volSymbols = ['^VIX', '^VIX3M', 'TLT'];
+      const macroSymbols = ['^VIX', '^VIX3M', '^VVIX', 'TLT', 'HYG', 'IEF', 'RSP'];
 
-      const allSymbols = [...benchmarkSymbols, ...volSymbols, ...sectorEtfs];
-      const [results, spyWeeklyCandles, qqqWeeklyCandles] = await Promise.all([
+      const allSymbols = [...benchmarkSymbols, ...macroSymbols, ...sectorEtfs];
+      const [results, spyWeeklyCandles, qqqWeeklyCandles, fgtSeries, cnnSeries] = await Promise.all([
         Promise.all(allSymbols.map((sym) => fetchYahooData(sym, '1d', '1y', 20))),
         fetchYahooData('SPY', '1wk', '2y', 10),
         fetchYahooData('QQQ', '1wk', '2y', 10),
+        fetchFearGreedTrackerProvider(),
+        fetchCnnFearGreedFeed(),
       ]);
 
       const bySym = new Map<string, Candle[]>();
@@ -808,15 +869,22 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
         }
       }
 
+      const externalFearGreed = mergeExternalFearGreedData(fgtSeries, cnnSeries);
+
       const report = computeMarketHealthReport({
         spyCandles,
         vixCandles,
         vix3mCandles: bySym.get('^VIX3M') || [],
+        vvixCandles: bySym.get('^VVIX') || [],
         tltCandles: bySym.get('TLT') || [],
+        hygCandles: bySym.get('HYG') || [],
+        iefCandles: bySym.get('IEF') || [],
+        rspCandles: bySym.get('RSP') || [],
         flowBenchmarkCandles,
         sectorEtfs: sectorMap,
         spyWeeklyCandles,
         qqqWeeklyCandles,
+        externalFearGreed,
       });
 
       cachedMarketHealth = { timestamp: now, data: report };

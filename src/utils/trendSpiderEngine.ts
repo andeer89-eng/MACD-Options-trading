@@ -60,6 +60,35 @@ export interface StageAnalysisResult {
   stageThesis: string;
 }
 
+function parseBarTimeMs(t: number | string): number | null {
+  if (typeof t === 'number' && Number.isFinite(t)) {
+    return t < 1e11 ? t * 1000 : t;
+  }
+  if (typeof t === 'string' && t.trim()) {
+    const parsed = Date.parse(t);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function inferIsDailyCadence(candles: CandleData[]): boolean {
+  if (candles.length < 4) return false;
+  const diffs: number[] = [];
+  const start = Math.max(1, candles.length - 12);
+  for (let i = start; i < candles.length; i++) {
+    const prevMs = parseBarTimeMs(candles[i - 1].time);
+    const curMs = parseBarTimeMs(candles[i].time);
+    if (prevMs !== null && curMs !== null && curMs > prevMs) {
+      diffs.push(curMs - prevMs);
+    }
+  }
+  if (diffs.length === 0) return false;
+  diffs.sort((a, b) => a - b);
+  const medianMs = diffs[Math.floor(diffs.length / 2)];
+  // Weekly bars are ~7 calendar days (>= 4 days); daily/intraday are < 4 days
+  return medianMs < 4 * 86_400_000;
+}
+
 /**
  * Calculates Stan Weinstein 4-Stage Analysis
  * Re-engineers TrendSpider's Stage Analysis indicator as seen in TrendSpider's breakdown alerts.
@@ -94,16 +123,20 @@ export function calculateStageAnalysis(
   const closes = candles.map((c) => c.close);
   const n = closes.length;
   const currentPrice = closes[n - 1];
+  const isDailyCadence = inferIsDailyCadence(candles);
+  const targetBars = isDailyCadence ? lookbackWeeks * 5 : lookbackWeeks;
 
-  // Effective period for MA (use 30 on weekly, or 150-day / 30-period on available data)
-  const period = Math.min(lookbackWeeks, Math.max(10, Math.floor(n * 0.75)));
+  // Effective period for MA (150 daily bars = 30 weeks when enough daily bars exist; scaled cleanly on shorter slices)
+  const period = Math.min(targetBars, Math.max(10, Math.floor(n * 0.75)));
   
   // Calculate current SMA
   const sliceCurrent = closes.slice(n - period);
   const ma30 = sliceCurrent.reduce((a, b) => a + b, 0) / period;
 
-  // Calculate prior SMA (5 bars ago to measure slope)
-  const slopeLookback = Math.min(5, Math.floor(period / 3));
+  // Calculate prior SMA (5 weekly bars, or ~4-5 weeks of daily bars when period >= 60)
+  const slopeLookback = isDailyCadence && period >= 60
+    ? Math.min(25, Math.max(5, Math.floor(period / 6)))
+    : Math.min(5, Math.floor(period / 3));
   const slicePrior = closes.slice(Math.max(0, n - period - slopeLookback), n - slopeLookback);
   const ma30Prior = slicePrior.length > 0 ? slicePrior.reduce((a, b) => a + b, 0) / slicePrior.length : ma30;
 

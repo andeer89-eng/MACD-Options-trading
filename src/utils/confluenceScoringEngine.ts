@@ -32,6 +32,10 @@ export interface AngleEvaluation {
 
 export interface ConfluenceContext {
   sectorAlphaPct?: number | null;
+  relPerfVsSpyPct?: number | null;
+  relVolStDev?: number | null;
+  matchingSetup?: { type: string; qualityScore: number; timeframe?: string } | null;
+  tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>;
   cboeSummary?: TickerOptionsSummary | null;
   recordedStats?: { wins: number; total: number };
 }
@@ -72,7 +76,8 @@ export interface Candidate360Confluence {
 function evaluateTrullasPillarsAngle(
   symbol: string,
   candles: Candle[],
-  direction: 'BULLISH' | 'BEARISH'
+  direction: 'BULLISH' | 'BEARISH',
+  context?: ConfluenceContext
 ): AngleEvaluation {
   const isBull = direction === 'BULLISH';
   const indicatorPoints = calculateIndicators(candles);
@@ -88,19 +93,32 @@ function evaluateTrullasPillarsAngle(
   const matchingSetups = detectedSetups.filter((s) =>
     isBull ? s.type.startsWith('BULLISH') : s.type.startsWith('BEARISH')
   );
-  const latestSetup = matchingSetups[matchingSetups.length - 1];
-  const hasTriple = matchingSetups.some((s) => s.type.includes('TRIPLE'));
-  const hasDouble = matchingSetups.some((s) => s.type.includes('DOUBLE'));
+  const latestSetup = matchingSetups[0];
+  const extSetupType = context?.matchingSetup?.type?.toUpperCase() || '';
+  const matchingTos = Array.isArray(context?.tosSignals)
+    ? context.tosSignals.filter((s) => s.direction === direction)
+    : [];
+
+  const hasTriple =
+    matchingSetups.some((s) => s.type.includes('TRIPLE')) || extSetupType.includes('TRIPLE');
+  const hasDouble =
+    matchingSetups.some((s) => s.type.includes('DOUBLE')) || extSetupType.includes('DOUBLE');
 
   let score = 45;
   const evidence: string[] = [];
 
-  if (isBull && rsiVal < 35) {
+  const isHealthyBullMomentum = isBull && rsiVal >= 46 && rsiVal <= 74 && (matchingTos.length > 0 || hasDouble || hasTriple);
+  const isHealthyBearMomentum = !isBull && rsiVal >= 26 && rsiVal <= 54 && (matchingTos.length > 0 || hasDouble || hasTriple);
+
+  if (isBull && rsiVal < 38) {
     score += 18;
-    evidence.push(`RSI Oversold Exhaustion at ${rsiVal.toFixed(1)} (<35 threshold)`);
-  } else if (!isBull && rsiVal > 65) {
+    evidence.push(`RSI Oversold Exhaustion at ${rsiVal.toFixed(1)} (<38 threshold)`);
+  } else if (!isBull && rsiVal > 62) {
     score += 18;
-    evidence.push(`RSI Overbought Exhaustion at ${rsiVal.toFixed(1)} (>65 threshold)`);
+    evidence.push(`RSI Overbought Exhaustion at ${rsiVal.toFixed(1)} (>62 threshold)`);
+  } else if (isHealthyBullMomentum || isHealthyBearMomentum) {
+    score += 15;
+    evidence.push(`RSI Trend Momentum zone at ${rsiVal.toFixed(1)} supporting ${direction} follow-through`);
   } else {
     score += 6;
     evidence.push(`RSI reading at ${rsiVal.toFixed(1)}`);
@@ -112,19 +130,31 @@ function evaluateTrullasPillarsAngle(
   } else if (!isBull && hist < prevHist) {
     score += 12;
     evidence.push(`MACD Histogram turning downward (Δ ${(hist - prevHist).toFixed(3)})`);
+  } else if ((isBull && macdLine > signalLine) || (!isBull && macdLine < signalLine)) {
+    score += 8;
+    evidence.push(`MACD Line aligned with ${direction} regime (Spread ${(macdLine - signalLine).toFixed(3)})`);
   } else {
     evidence.push(`MACD Histogram Δ ${(hist - prevHist).toFixed(3)}`);
   }
 
   let divLabel = 'No Active Divergence';
+  const qualityDisplay = latestSetup?.qualityScore ?? context?.matchingSetup?.qualityScore ?? 75;
   if (hasTriple) {
-    score += 22;
+    score += 24;
     divLabel = 'Triple Divergence';
-    evidence.push(`Confirmed Triple MACD Divergence detected in real OHLCV structure`);
+    evidence.push(`Confirmed Triple MACD Divergence (${qualityDisplay}% quality) in OHLCV structure`);
   } else if (hasDouble) {
-    score += 14;
+    score += 18;
     divLabel = 'Double Divergence';
-    evidence.push(`Confirmed Double MACD Divergence detected in real OHLCV structure`);
+    evidence.push(`Confirmed Double MACD Divergence (${qualityDisplay}% quality) in OHLCV structure`);
+  } else if (matchingTos.length >= 2) {
+    score += 16;
+    divLabel = `TOS Multi-Signal (${matchingTos.length})`;
+    evidence.push(`${matchingTos.length} ThinkScript momentum/breakout triggers aligned ${direction}`);
+  } else if (matchingSetups.length > 0 || matchingTos.length === 1) {
+    score += 11;
+    divLabel = matchingSetups.length > 0 ? 'Single Divergence' : 'TOS Momentum Signal';
+    evidence.push(`Confirmed ${divLabel.toLowerCase()} in current window`);
   } else {
     evidence.push(`No qualifying ${direction.toLowerCase()} MACD divergence in current bar window`);
   }
@@ -137,9 +167,10 @@ function evaluateTrullasPillarsAngle(
     weightPct: 25,
     score,
     verdict: score >= 70 ? direction : 'NEUTRAL',
-    headline: latestSetup
-      ? `${divLabel} (${latestSetup.qualityScore}% quality) · RSI ${rsiVal.toFixed(1)}`
-      : `${divLabel} · RSI ${rsiVal.toFixed(1)}`,
+    headline:
+      latestSetup || context?.matchingSetup
+        ? `${divLabel} (${qualityDisplay}% quality) · RSI ${rsiVal.toFixed(1)}`
+        : `${divLabel} · RSI ${rsiVal.toFixed(1)}`,
     evidencePoints: evidence,
     metrics: {
       'RSI (14)': rsiVal.toFixed(1),
@@ -158,22 +189,27 @@ function evaluateLuxAlgoAngle(
   const nwe = calculateNadarayaWatsonEnvelope(candles, 8.0, 2.5);
   const smc = calculateSmartMoneyConcepts(candles);
 
-  let score = 50;
+  let score = 47;
   const evidence: string[] = [];
 
   const currentPrice = candles[candles.length - 1].close;
   const lastLower = nwe.lower[nwe.lower.length - 1] ?? currentPrice;
   const lastUpper = nwe.upper[nwe.upper.length - 1] ?? currentPrice;
+  const lastMid = (lastLower + lastUpper) / 2;
 
   if (isBull) {
     const distToLower = currentPrice > 0 ? ((currentPrice - lastLower) / currentPrice) * 100 : 0;
     if (distToLower <= 1.5) {
       score += 25;
       evidence.push(`Price touching LuxAlgo Nadaraya-Watson lower envelope band ($${lastLower.toFixed(2)})`);
-    } else if (distToLower <= 3.5) {
-      score += 14;
+    } else if (distToLower <= 4.0) {
+      score += 18;
       evidence.push(`Price operating near Nadaraya-Watson lower mean-reversion band (+${distToLower.toFixed(1)}%)`);
+    } else if (currentPrice >= lastMid && currentPrice <= lastUpper * 1.02) {
+      score += 18;
+      evidence.push(`Price riding bullish trend channel above NWE midline ($${lastMid.toFixed(2)})`);
     } else {
+      score += 8;
       evidence.push(`Price ${distToLower.toFixed(1)}% above NWE lower envelope ($${lastLower.toFixed(2)})`);
     }
   } else {
@@ -181,24 +217,34 @@ function evaluateLuxAlgoAngle(
     if (distToUpper <= 1.5) {
       score += 25;
       evidence.push(`Price testing LuxAlgo Nadaraya-Watson upper envelope boundary ($${lastUpper.toFixed(2)})`);
-    } else if (distToUpper <= 3.5) {
-      score += 14;
+    } else if (distToUpper <= 4.0) {
+      score += 18;
       evidence.push(`Price operating near Nadaraya-Watson upper overbought band (${distToUpper.toFixed(1)}% below)`);
+    } else if (currentPrice <= lastMid && currentPrice >= lastLower * 0.98) {
+      score += 18;
+      evidence.push(`Price riding bearish breakdown channel below NWE midline ($${lastMid.toFixed(2)})`);
     } else {
+      score += 8;
       evidence.push(`Price ${distToUpper.toFixed(1)}% below NWE upper envelope ($${lastUpper.toFixed(2)})`);
     }
   }
 
   const hasDemandOB = smc.orderBlocks.some((ob) => ob.type === 'BULLISH_OB' && !ob.mitigated);
   const hasSupplyOB = smc.orderBlocks.some((ob) => ob.type === 'BEARISH_OB' && !ob.mitigated);
+  const hasBullFvg = smc.fairValueGaps.some((f) => f.type === 'BULLISH_FVG' && !f.mitigated);
+  const hasBearFvg = smc.fairValueGaps.some((f) => f.type === 'BEARISH_FVG' && !f.mitigated);
 
   if (isBull && hasDemandOB) {
-    score += 20;
-    evidence.push(`Institutional Demand Order Block [SMC] intact below current price`);
+    score += hasBullFvg ? 25 : 20;
+    evidence.push(`Institutional Demand Order Block${hasBullFvg ? ' + Bullish FVG' : ''} [SMC] intact below price`);
   } else if (!isBull && hasSupplyOB) {
-    score += 20;
-    evidence.push(`Institutional Supply Order Block [SMC] intact above current price`);
+    score += hasBearFvg ? 25 : 20;
+    evidence.push(`Institutional Supply Order Block${hasBearFvg ? ' + Bearish FVG' : ''} [SMC] intact above price`);
+  } else if ((isBull && hasBullFvg) || (!isBull && hasBearFvg)) {
+    score += 15;
+    evidence.push(`Unmitigated ${isBull ? 'Bullish' : 'Bearish'} Fair Value Gap [SMC] supporting structure`);
   } else {
+    score += 6;
     evidence.push(`${smc.orderBlocks.length} Order Blocks / ${smc.fairValueGaps.length} FVGs tracked`);
   }
 
@@ -223,7 +269,9 @@ function evaluateLuxAlgoAngle(
 
 function evaluateIndicatorLibraryAngle(
   candles: Candle[],
-  direction: 'BULLISH' | 'BEARISH'
+  direction: 'BULLISH' | 'BEARISH',
+  tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>,
+  relVolStDev?: number | null
 ): AngleEvaluation {
   const isBull = direction === 'BULLISH';
   const len = candles.length;
@@ -248,7 +296,7 @@ function evaluateIndicatorLibraryAngle(
   const bbLower = sma - 2 * stdDev;
   const bbPercentB = bbUpper - bbLower > 0 ? (currentPrice - bbLower) / (bbUpper - bbLower) : 0.5;
 
-  let score = 55;
+  let score = 48;
   const evidence: string[] = [];
 
   if (isBull && currentPrice >= vwap * 0.99) {
@@ -259,12 +307,22 @@ function evaluateIndicatorLibraryAngle(
     evidence.push(`VWAP Resistance: Price rejected below 20d VWAP benchmark ($${vwap.toFixed(2)})`);
   }
 
-  if (isBull && bbPercentB < 0.2) {
+  const matchingTos = Array.isArray(tosSignals)
+    ? tosSignals.filter((s) => s.direction === direction)
+    : [];
+
+  if (isBull && bbPercentB < 0.25) {
     score += 15;
     evidence.push(`Bollinger Band %B at ${(bbPercentB * 100).toFixed(1)}% (lower band compression)`);
-  } else if (!isBull && bbPercentB > 0.8) {
+  } else if (!isBull && bbPercentB > 0.75) {
     score += 15;
     evidence.push(`Bollinger Band %B at ${(bbPercentB * 100).toFixed(1)}% (upper band stretch)`);
+  } else if (
+    (isBull && bbPercentB >= 0.45 && bbPercentB <= 0.92 && matchingTos.length > 0) ||
+    (!isBull && bbPercentB >= 0.08 && bbPercentB <= 0.55 && matchingTos.length > 0)
+  ) {
+    score += 13;
+    evidence.push(`Bollinger Band %B at ${(bbPercentB * 100).toFixed(1)}% confirming directional expansion`);
   } else {
     score += 6;
     evidence.push(`Bollinger Band %B balanced at ${(bbPercentB * 100).toFixed(1)}%`);
@@ -281,7 +339,7 @@ function evaluateIndicatorLibraryAngle(
   const stage = calculateStageAnalysis(candleData);
   if (stage.currentStage === 'STAGE_4_DECLINING') {
     if (isBull) {
-      score -= 20;
+      score -= 18;
       evidence.push(`Stage 4 Markdown (${stage.distanceFromMaPercent}% below declining MA $${stage.ma30Week.toFixed(2)}). Counter-trend risk.`);
     } else {
       score += 15;
@@ -295,6 +353,17 @@ function evaluateIndicatorLibraryAngle(
       score -= 15;
       evidence.push(`Stage 2 Bull Trend resists short thesis.`);
     }
+  }
+
+  if (matchingTos.length > 0) {
+    score += Math.min(20, matchingTos.length * 7);
+    evidence.push(
+      `TOS Multi-Scan (${matchingTos.length}): ${matchingTos.slice(0, 3).map((s) => s.label).join(', ')}`
+    );
+  }
+  if (typeof relVolStDev === 'number' && Number.isFinite(relVolStDev) && relVolStDev >= 1.5) {
+    score += relVolStDev >= 2.2 ? 8 : 4;
+    evidence.push(`Institutional Volume Surge +${relVolStDev.toFixed(1)}σ`);
   }
 
   score = Math.min(100, Math.max(25, score));
@@ -394,7 +463,9 @@ function evaluateCboeAngle(
 function evaluateSignalWeightingAngle(
   symbol: string,
   candles: Candle[],
-  recordedStats?: { wins: number; total: number }
+  recordedStats?: { wins: number; total: number },
+  tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>,
+  direction: 'BULLISH' | 'BEARISH' = 'BULLISH'
 ): AngleEvaluation {
   const rollingCorrelation = calculateRollingPriceMacdCorrelation(candles, 30);
   const { winRate, totalSignals, hasHistory } = computeEmpiricalHistoricalAccuracy(
@@ -404,14 +475,22 @@ function evaluateSignalWeightingAngle(
     recordedStats
   );
 
-  const corrPts = Math.min(45, Math.round(Math.abs(rollingCorrelation) * 45));
-  const winPts = hasHistory ? Math.min(55, Math.round((winRate / 100) * 55)) : 28;
+  const matchingTosCount = Array.isArray(tosSignals)
+    ? tosSignals.filter((s) => s.direction === direction).length
+    : 0;
+
+  // MACD Histogram vs Price correlation saturates well before r=1.0; normalize at r=0.55
+  const corrPts = Math.min(45, Math.round(Math.min(1, Math.abs(rollingCorrelation) / 0.55) * 45));
+  const priorWinPts = matchingTosCount >= 2 ? 44 : matchingTosCount === 1 ? 37 : 28;
+  const winPts = hasHistory ? Math.min(55, Math.round((winRate / 100) * 55)) : priorWinPts;
   const score = Math.min(100, Math.max(30, corrPts + winPts));
 
   const evidence: string[] = [
     `30d Price-MACD Histogram Pearson correlation: r = ${rollingCorrelation.toFixed(2)}`,
     hasHistory
       ? `Empirical setup accuracy on ${symbol}: ${winRate.toFixed(1)}% across ${totalSignals} resolved setups`
+      : matchingTosCount > 0
+      ? `Multi-indicator consensus prior (${matchingTosCount} aligned TOS scans) applied alongside correlation`
       : `No prior resolved setups in this candle window for ${symbol} (neutral prior weight applied)`,
   ];
 
@@ -420,10 +499,10 @@ function evaluateSignalWeightingAngle(
     name: 'Signal Weighting & Accuracy',
     weightPct: 10,
     score,
-    verdict: score >= 75 ? 'BULLISH' : 'NEUTRAL',
+    verdict: score >= 75 ? direction : 'NEUTRAL',
     headline: hasHistory
       ? `Empirical Win Rate ${winRate.toFixed(1)}% & r=${rollingCorrelation.toFixed(2)}`
-      : `Price-MACD Correlation r=${rollingCorrelation.toFixed(2)}`,
+      : `Price-MACD Correlation r=${rollingCorrelation.toFixed(2)}${matchingTosCount > 0 ? ` · ${matchingTosCount} TOS Scans` : ''}`,
     evidencePoints: evidence,
     metrics: {
       'Confidence Score': `${score}%`,
@@ -437,17 +516,19 @@ function evaluateSignalWeightingAngle(
 function evaluateSectorMacroAngle(
   sector: string,
   candles: Candle[],
-  sectorAlphaPct?: number | null
+  sectorAlphaPct?: number | null,
+  relPerfVsSpyPct?: number | null,
+  direction: 'BULLISH' | 'BEARISH' = 'BULLISH'
 ): AngleEvaluation {
   const vol = getLatestVolatilityMetrics(candles, 14);
   const atr = vol.atr;
   const atrPct = vol.atrPercent;
 
-  let score = 55;
+  let score = 48;
   const evidence: string[] = [];
 
   if (atrPct >= 1.2) {
-    score += 20;
+    score += 18;
     evidence.push(`ATR Volatility ${atrPct.toFixed(2)}% exceeds 1.0% momentum hurdle`);
   } else {
     score += 6;
@@ -455,7 +536,22 @@ function evaluateSectorMacroAngle(
   }
 
   let alphaLabel = 'N/A';
-  if (typeof sectorAlphaPct === 'number' && Number.isFinite(sectorAlphaPct)) {
+  if (typeof relPerfVsSpyPct === 'number' && Number.isFinite(relPerfVsSpyPct)) {
+    const dirAlpha = direction === 'BULLISH' ? relPerfVsSpyPct : -relPerfVsSpyPct;
+    alphaLabel = `${relPerfVsSpyPct >= 0 ? '+' : ''}${relPerfVsSpyPct.toFixed(1)}% vs SPY`;
+    if (dirAlpha >= 15) {
+      score += 27;
+      evidence.push(`30-Bar Ticker Alpha (${alphaLabel}) shows elite ${direction} market leadership`);
+    } else if (dirAlpha >= 5) {
+      score += 22;
+      evidence.push(`30-Bar Ticker Alpha (${alphaLabel}) strongly confirms ${direction} leadership`);
+    } else if (dirAlpha > 0) {
+      score += 14;
+      evidence.push(`30-Bar Ticker Alpha (${alphaLabel}) aligns with ${direction} bias`);
+    } else {
+      evidence.push(`30-Bar Ticker Alpha (${alphaLabel}) trailing benchmark`);
+    }
+  } else if (typeof sectorAlphaPct === 'number' && Number.isFinite(sectorAlphaPct)) {
     alphaLabel = `${sectorAlphaPct >= 0 ? '+' : ''}${sectorAlphaPct.toFixed(2)}% vs SPY`;
     if (sectorAlphaPct >= 0) {
       score += 20;
@@ -475,7 +571,7 @@ function evaluateSectorMacroAngle(
     name: 'Sector Alpha & ATR Volatility',
     weightPct: 10,
     score,
-    verdict: score >= 70 ? 'BULLISH' : 'NEUTRAL',
+    verdict: score >= 70 ? direction : 'NEUTRAL',
     headline: `${sector} · ATR ${atrPct.toFixed(2)}%${alphaLabel !== 'N/A' ? ` (${alphaLabel})` : ''}`,
     evidencePoints: evidence,
     metrics: {
@@ -537,35 +633,51 @@ export function evaluateCandidate360Confluence(
   const volMetrics = getLatestVolatilityMetrics(candles, 14);
   const atrVal = volMetrics.atr > 0 ? volMetrics.atr : currentPrice * 0.015;
 
-  const angle1 = evaluateTrullasPillarsAngle(stockMeta.symbol, candles, forcedDirection);
+  const angle1 = evaluateTrullasPillarsAngle(stockMeta.symbol, candles, forcedDirection, context);
   const angle2 = evaluateLuxAlgoAngle(candles, forcedDirection);
-  const angle3 = evaluateIndicatorLibraryAngle(candles, forcedDirection);
-  const angle4 = evaluateCboeAngle(context?.cboeSummary, forcedDirection);
-  const angle5 = evaluateSignalWeightingAngle(stockMeta.symbol, candles, context?.recordedStats);
-  const angle6 = evaluateSectorMacroAngle(stockMeta.sector, candles, context?.sectorAlphaPct);
-
-  const compositeScore = Math.round(
-    angle1.score * (angle1.weightPct / 100) +
-      angle2.score * (angle2.weightPct / 100) +
-      angle3.score * (angle3.weightPct / 100) +
-      angle4.score * (angle4.weightPct / 100) +
-      angle5.score * (angle5.weightPct / 100) +
-      angle6.score * (angle6.weightPct / 100)
+  const angle3 = evaluateIndicatorLibraryAngle(
+    candles,
+    forcedDirection,
+    context?.tosSignals,
+    context?.relVolStDev
   );
+  const angle4 = evaluateCboeAngle(context?.cboeSummary, forcedDirection);
+  const angle5 = evaluateSignalWeightingAngle(
+    stockMeta.symbol,
+    candles,
+    context?.recordedStats,
+    context?.tosSignals,
+    forcedDirection
+  );
+  const angle6 = evaluateSectorMacroAngle(
+    stockMeta.sector,
+    candles,
+    context?.sectorAlphaPct,
+    context?.relPerfVsSpyPct,
+    forcedDirection
+  );
+
+  // Normalize across live available engines when CBOE option chain has not been fetched in batch mode
+  const cboeAvailable = Boolean(context?.cboeSummary?.chainAvailable);
+  const activeEngines = [angle1, angle2, angle3, ...(cboeAvailable ? [angle4] : []), angle5, angle6];
+  const activeWeightSum = activeEngines.reduce((sum, a) => sum + a.weightPct, 0) || 100;
+  const weightedSum = activeEngines.reduce((sum, a) => sum + a.score * a.weightPct, 0);
+  const compositeScore = Math.min(100, Math.max(20, Math.round(weightedSum / activeWeightSum)));
 
   let grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F' = 'B';
   let tier: Candidate360Confluence['confidenceTier'] = 'QUALIFIED SETUP';
 
-  if (compositeScore >= 90) {
+  // Unified thresholds matching Watchlist Ranking Engine (A+ >= 88, A >= 78, B >= 68, C >= 55)
+  if (compositeScore >= 88) {
     grade = 'A+';
     tier = 'ELITE CONFLUENCE';
-  } else if (compositeScore >= 80) {
+  } else if (compositeScore >= 78) {
     grade = 'A';
     tier = 'HIGH CONVICTION';
-  } else if (compositeScore >= 70) {
+  } else if (compositeScore >= 68) {
     grade = 'B';
     tier = 'QUALIFIED SETUP';
-  } else if (compositeScore >= 60) {
+  } else if (compositeScore >= 55) {
     grade = 'C';
     tier = 'SPECULATIVE';
   } else {
@@ -585,6 +697,11 @@ export function evaluateCandidate360Confluence(
     allBadges.push('Stage 4 Markdown');
   } else if (angle3.evidencePoints.some((e) => e.includes('Stage 2 Markup'))) {
     allBadges.push('Stage 2 Markup');
+  }
+  if (Array.isArray(context?.tosSignals)) {
+    for (const sig of context.tosSignals.filter((s) => s.direction === forcedDirection).slice(0, 2)) {
+      allBadges.push(sig.label);
+    }
   }
 
   const entryTrigger = forcedDirection === 'BULLISH' ? currentPrice * 1.008 : currentPrice * 0.992;
@@ -667,7 +784,7 @@ export function rankCandidatesByConfluence(
   entries: Array<{ symbol: string; candles: Candle[]; direction?: 'BULLISH' | 'BEARISH'; context?: ConfluenceContext }>
 ): Candidate360Confluence[] {
   const list: Candidate360Confluence[] = [];
-  for (const item of entries.slice(0, 30)) {
+  for (const item of entries.slice(0, 50)) {
     const res = evaluateCandidate360Confluence(item.symbol, item.candles, item.direction ?? 'BULLISH', item.context);
     if (res) list.push(res);
   }
