@@ -134,6 +134,18 @@ export function createWatchlistTriggerService(options: {
   }
 
   async function transition(input: WatchlistTriggerInput): Promise<{ status: 'TRIGGERED'; replayed: boolean }> {
+    if (
+      typeof input.ownerId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input.ownerId) ||
+      typeof input.symbol !== 'string' || !/^[A-Za-z0-9.=_-]{1,20}$/.test(input.symbol) ||
+      typeof input.triggerId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(input.triggerId) ||
+      !input.evidence || typeof input.evidence.ruleId !== 'string' || input.evidence.ruleId.length < 1 || input.evidence.ruleId.length > 64 ||
+      typeof input.evidence.source !== 'string' || input.evidence.source.length < 1 || input.evidence.source.length > 64 ||
+      typeof input.evidence.observedPrice !== 'number' || !Number.isFinite(input.evidence.observedPrice) || input.evidence.observedPrice <= 0 ||
+      typeof input.evidence.threshold !== 'number' || !Number.isFinite(input.evidence.threshold) || input.evidence.threshold <= 0 ||
+      typeof input.evidence.evaluatedAt !== 'string' || !Number.isFinite(Date.parse(input.evidence.evaluatedAt))
+    ) {
+      throw new WatchlistTriggerError('Invalid watchlist trigger input.', 400);
+    }
     const ownerId = input.ownerId;
     const symbol = input.symbol.toUpperCase();
     const docId = symbol.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -142,7 +154,7 @@ export function createWatchlistTriggerService(options: {
     const existingEvent = await firestore(eventPath);
     if (existingEvent.ok) {
       const event = decodeFields(await existingEvent.json());
-      if (event.ownerId !== ownerId || event.symbol !== symbol) {
+      if (event.triggerId !== input.triggerId || event.ownerId !== ownerId || event.symbol !== symbol) {
         throw new WatchlistTriggerError('triggerId was already used for a different watchlist item.', 409);
       }
       return { status: 'TRIGGERED', replayed: true };
@@ -155,6 +167,12 @@ export function createWatchlistTriggerService(options: {
     if (!itemResponse.ok) throw new WatchlistTriggerError('Watchlist item could not be read.', 503);
     const item = await itemResponse.json() as any;
     const current = decodeFields(item);
+    if (current.ownerId !== ownerId || String(current.symbol || '').toUpperCase() !== symbol) {
+      throw new WatchlistTriggerError('Watchlist item owner or symbol does not match its document path.', 409);
+    }
+    if (typeof item.updateTime !== 'string' || !item.updateTime) {
+      throw new WatchlistTriggerError('Watchlist item is missing its Firestore update-time precondition.', 503);
+    }
     if (!['NEW', 'WATCHING'].includes(current.status)) {
       throw new WatchlistTriggerError(`Cannot trigger an item in status ${String(current.status)}.`, 409);
     }
