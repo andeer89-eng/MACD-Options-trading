@@ -208,8 +208,10 @@ export function createAlpacaRouter(
       const completedAt = new Date().toISOString();
       const nonMatched = reconciliation.summary.unattributedOrExternalActivity +
         reconciliation.summary.unexplainedVariance;
+      const currentPositionAlertIds = new Set<string>();
       for (const row of reconciliation.rows) {
         const alertId = 'position-' + createHash('sha256').update(row.symbol).digest('hex').slice(0, 48);
+        currentPositionAlertIds.add(alertId);
         if (row.classification === 'LEDGER_NET_EQUALS_BROKER') {
           await executionLedger.resolveOperationalAlert(alertId, 'Position quantity now matches the application-ledger net fills.');
         } else {
@@ -234,6 +236,21 @@ export function createAlpacaRouter(
           });
         }
       }
+      const activeAlerts = await executionLedger.listOperationalAlerts({ status: 'ACTIVE', limit: 200 });
+      for (const alert of activeAlerts) {
+        if (alert.source === 'POSITION_RECONCILIATION' &&
+            ['POSITION_QUANTITY_VARIANCE', 'UNATTRIBUTED_POSITION'].includes(String(alert.type)) &&
+            !currentPositionAlertIds.has(String(alert.alertId))) {
+          await executionLedger.resolveOperationalAlert(
+            String(alert.alertId),
+            'The symbol is no longer present in the current broker/ledger comparison.'
+          );
+        }
+      }
+      await executionLedger.resolveOperationalAlert(
+        'position-reconciliation-unavailable',
+        'A new position reconciliation completed successfully.'
+      );
       const runId = 'positions-' + randomUUID();
       await executionLedger.recordReconciliationRun({
         runId,
@@ -271,6 +288,16 @@ export function createAlpacaRouter(
         readOnly: true,
       });
     } catch (error) {
+      if (executionLedger) {
+        await executionLedger.upsertOperationalAlert({
+          alertId: 'position-reconciliation-unavailable',
+          type: 'POSITION_RECONCILIATION_UNAVAILABLE',
+          severity: 'CRITICAL',
+          title: 'Position reconciliation unavailable',
+          message: error instanceof Error ? error.message : 'Position reconciliation could not be completed.',
+          source: 'POSITION_RECONCILIATION',
+        }).catch(() => undefined);
+      }
       res.status(503).json({
         error: error instanceof Error ? error.message : 'Position reconciliation could not be completed.',
         mode: 'PAPER',
