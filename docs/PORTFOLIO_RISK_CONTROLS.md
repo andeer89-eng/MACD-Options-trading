@@ -73,3 +73,50 @@ retains the same ID. It is not a substitute for a durable local execution
 ledger: broker lookup availability and persistence of local risk/audit
 decisions remain separate P1.6 follow-up work. All order submission remains
 Paper-only.
+
+
+## P1.6b — Persistent execution ledger
+
+The server can persist broker order-acceptance events in a dedicated Firestore collection,
+separate from the browser-owned journal and localStorage audit chain.
+
+### Server configuration
+
+Set these variables in the server runtime (never in Vite/client-prefixed variables):
+
+- `FIREBASE_PROJECT_ID`: the Firebase project containing the default Firestore database.
+- `FIREBASE_SERVICE_ACCOUNT_JSON`: the complete service-account JSON document. Store it as a secret; never commit it.
+- `EXECUTION_LEDGER_REQUIRED=true`: require the ledger before accepting an order. Production defaults to required unless explicitly set to `false`.
+
+The service account needs Firestore data access (for example, the **Cloud Datastore User**
+IAM role) on the same project. The server uses a server-side service-account OAuth assertion
+and the Firestore REST API; no service-account credential is exposed to the browser. Firestore
+Security Rules do not authorize or constrain this privileged server identity, so IAM is the
+authorization boundary. Use a dedicated least-privilege service account.
+
+### Stored records and guarantees
+
+- One parent document per SHA-256 hash of `client_order_id`.
+- Event documents are immutable-by-convention and have deterministic IDs, preventing duplicate
+  event creation when the same accepted order is retried.
+- A metadata head document stores the latest sequence and hash.
+- Event append writes the event and advances the head in one Firestore commit with document
+  preconditions; concurrent writers retry on contention.
+- Each event includes sequence, timestamp, broker order ID, client order ID, symbol, payload,
+  previous hash and SHA-256 entry hash.
+- Authenticated history endpoint:
+  `GET /api/alpaca/orders/:clientOrderId/ledger`
+  returns events and a chain-verification result.
+
+If Alpaca accepts an order but Firestore persistence fails, the API returns HTTP 503 with the
+broker and client order IDs. The caller must retry using the **same** `client_order_id`;
+Alpaca idempotency recovers the original order and the ledger append can be retried safely.
+Never create a new client order ID for that retry.
+
+### Current scope / not yet claimed
+
+This increment records accepted order submissions. The schema supports fill and cancellation
+events, but automatic fill-activity ingestion, order-state reconciliation after restart,
+retention/backup policy, and production IAM verification remain follow-up work. Do not treat
+this increment as a complete execution/fill ledger until those items are implemented and
+validated against a configured Paper account.
