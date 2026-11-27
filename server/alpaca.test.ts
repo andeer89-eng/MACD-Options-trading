@@ -95,6 +95,27 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     assert.equal(liveViolation.paperViolation, true);
   });
 
+  it('fails closed when the Alpaca owner UID allowlist is empty', async () => {
+    const { app } = await createApp({
+      attachFrontend: false,
+      alpacaAllowedUidsOverride: [],
+      firebaseProjectIdOverride: TEST_FIREBASE_PROJECT_ID,
+      firebaseAuthFetchOverride,
+      alpacaEnvOverride: {},
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address();
+    if (!addr || typeof addr === 'string') throw new Error('Bind error');
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/alpaca/status`);
+      assert.equal(res.status, 503);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   describe('HTTP routes when Alpaca env credentials are NOT configured', () => {
     let server: http.Server;
     let baseUrl = '';
