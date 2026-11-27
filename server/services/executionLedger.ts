@@ -612,7 +612,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     const orders = (body.documents || []).map(doc => ({
       ...fromDocument(doc),
       indexKey: String(doc.name || '').split('/').pop() || '',
-    })).filter(item => item.clientOrderId && item.symbol) as Array<TrackedExecutionOrder & { indexKey: string }>;
+    })) as Array<TrackedExecutionOrder & { indexKey: string }>;
     return { orders, nextPageToken: body.nextPageToken || '' };
   }
 
