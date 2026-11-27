@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
   createWatchlistTriggerService,
   WatchlistTriggerError,
@@ -15,6 +15,8 @@ function createFixture(options: {
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const requests: Array<{ url: string; method: string; body?: string }> = [];
+  const triggerId = 'eeeeeeeeeeeeeeeeeeeeeeee';
+  const eventId = createHash('sha256').update(triggerId).digest('hex');
   let eventFields: Record<string, unknown> | null = null;
   let commitCount = 0;
   const fetchImpl: typeof fetch = async (input, init = {}) => {
@@ -24,7 +26,7 @@ function createFixture(options: {
     if (url === 'https://oauth2.googleapis.com/token') {
       return new Response(JSON.stringify({ access_token: 'admin-token', expires_in: 3600 }), { status: 200 });
     }
-    if (url.endsWith('/watchlistTriggerEvents/' + 'e'.repeat(64))) {
+    if (url.endsWith('/watchlistTriggerEvents/' + eventId)) {
       if (eventFields) return new Response(JSON.stringify({ fields: eventFields }), { status: 200 });
       return new Response('{}', { status: 404 });
     }
@@ -62,7 +64,7 @@ function createFixture(options: {
   const input = {
     ownerId: 'owner-1',
     symbol: 'AAPL',
-    triggerId: 'eeeeeeeeeeeeeeeeeeeeeeee',
+    triggerId,
     evidence: {
       ruleId: 'breakout-v1',
       source: 'trusted-feed',
