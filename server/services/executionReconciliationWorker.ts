@@ -21,13 +21,14 @@ export function createExecutionReconciliationWorker(options: {
   ledger: ExecutionLedger;
   intervalMs?: number;
   concurrency?: number;
+  leaseMs?: number;
 }) {
   const intervalMs = Math.max(30_000, options.intervalMs ?? 60_000);
   const concurrency = Math.max(1, Math.min(10, options.concurrency ?? 3));
   let timer: ReturnType<typeof setInterval> | undefined;
   let running = false;
   let lastRun: (ReconciliationRunResult & { startedAt: string; completedAt: string; status: string }) | null = null;
-  const leaseMs = Math.max(120_000, intervalMs * 4);
+  const leaseMs = Math.max(120_000, options.leaseMs ?? intervalMs * 4);
 
   async function reconcileOrder(clientOrderId: string): Promise<void> {
     const snapshot = await options.alpaca.getExecutionSnapshot(clientOrderId);
