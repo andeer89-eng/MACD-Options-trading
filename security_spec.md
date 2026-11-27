@@ -30,3 +30,13 @@
 - An authenticated owner may update non-status metadata on a terminal item, but cannot change its status or reactivate it.
 - A live item may transition into a terminal state; the rules do not claim to validate market-trigger conditions. Server-attested transition design remains separate work.
 - Behavioral tests run against the Firestore Emulator with `@firebase/rules-unit-testing`; static source inspection alone is not accepted as validation.
+
+
+## P1.16 — Server-authoritative TRIGGERED state
+
+- Client Firestore creates may not start in `TRIGGERED`.
+- Client Firestore updates may not transition an item into `TRIGGERED`; only trusted server code using the Admin SDK may do so.
+- Owners may still update allowed non-status metadata on a server-triggered item.
+- Client-side state transitions reject `TRIGGERED` and do not reactivate `EXPIRED` or `INVALIDATED` records.
+- Terminal records remain in Firestore as audit history; local archival must not delete them.
+- Emulator tests prove client denial and the trusted Admin-SDK-equivalent rules-bypass path. This is not proof that a production server trigger endpoint exists; that endpoint remains a separate implementation requirement.
