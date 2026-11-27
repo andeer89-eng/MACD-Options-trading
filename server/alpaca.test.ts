@@ -126,6 +126,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const anonymousStatus = await fetch(`${baseUrl}/api/alpaca/status`);
       assert.equal(anonymousStatus.status, 401);
 
+      const validToken = createFirebaseTestToken();
+      const [tokenHeader, tokenClaims, tokenSignature] = validToken.split('.');
+      const tamperedSignature = `${tokenSignature[0] === 'A' ? 'B' : 'A'}${tokenSignature.slice(1)}`;
+      const invalidTokenRes = await fetch(`${baseUrl}/api/alpaca/status`, {
+        headers: { Authorization: `Bearer ${tokenHeader}.${tokenClaims}.${tamperedSignature}` },
+      });
+      assert.equal(invalidTokenRes.status, 401);
+
       const anonymousOrder = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -334,6 +342,13 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
             );
           }
 
+          if (url.includes('/v2/orders/') && method === 'DELETE') {
+            return new Response(JSON.stringify({ id: 'ord-cancelled-11', status: 'canceled' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
           if (url.includes('/v2/positions/') && method === 'DELETE') {
             return new Response(
               JSON.stringify({ id: 'ord-close-77', symbol: 'NVDA', status: 'accepted' }),
@@ -447,6 +462,13 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         headers: firebaseAuthHeaders(),
       });
       assert.equal(fullCloseRes.status, 200);
+
+      const cancelRes = await fetch(`${baseUrl}/api/alpaca/orders/order-to-cancel`, {
+        method: 'DELETE',
+        headers: firebaseAuthHeaders(),
+      });
+      assert.equal(cancelRes.status, 200);
+      assert.equal(((await cancelRes.json()) as any).cancelled, true);
       const fullCloseCall = calls.find(
         (c) => c.method === 'DELETE' && c.url.includes('/v2/positions/NVDA?cancel_orders=true')
       );
