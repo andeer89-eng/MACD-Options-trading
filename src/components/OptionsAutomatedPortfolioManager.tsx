@@ -79,6 +79,7 @@ import {
   formatEntryMarketContextBadge,
 } from '../utils/entryMarketContext';
 import type { RegimePerformanceStat } from '../utils/activeLearningEngine';
+import { acquirePortfolioCycleLock, evaluatePortfolioRisk, evaluateShortPutOrderRisk } from '../utils/portfolioRiskEngine';
 
 interface OptionsAutomatedPortfolioManagerProps {
   onSelectSymbolForChart: (sym: string) => void;
@@ -166,11 +167,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       overview.orders || [],
       account.profitTakePercent
     );
-    const liveHistory = alpacaOrdersToOptionsHistory(
-      overview.orders || [],
-      overview.fills || [],
-      overview.fillHistoryComplete ?? Boolean(overview.fills?.length)
-    );
+    const liveHistory = alpacaOrdersToOptionsHistory(overview.orders || []);
     const liveLogs = alpacaOrdersToOptionsSessionLogs(overview.orders || []);
     const totalRealized = Number(liveHistory.reduce((s, r) => s + r.profitDollars, 0).toFixed(2));
     const totalUnrealized = Number(livePositions.reduce((s, p) => s + p.unrealizedPnL, 0).toFixed(2));
@@ -243,6 +240,14 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
 
   // Run autonomous Alpaca Paper options cycle (shared by button & scheduler)
   const executeAlpacaOptionsCycle = async (signal?: AbortSignal, fromScheduler = false) => {
+    const releasePortfolioLock = acquirePortfolioCycleLock('options');
+    if (!releasePortfolioLock) {
+      if (!fromScheduler && isMountedRef.current) {
+        setCycleFeedbackMessage('Another portfolio automation cycle is running. Options cycle skipped to prevent overlapping orders.');
+      }
+      return;
+    }
+    try {
     const activeOverview = overviewRef.current;
     if (!activeOverview?.configured || !activeOverview?.account) {
       if (!fromScheduler && isMountedRef.current) {
@@ -268,6 +273,19 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       activeOverview.orders || [],
       latestAccount.profitTakePercent
     );
+    const portfolioRisk = evaluatePortfolioRisk({
+      account: activeOverview.account,
+      positions: [
+        ...(activeOverview.equityPositions || []),
+        ...(activeOverview.optionPositions || []),
+      ],
+      openOrders: activeOverview.orders || [],
+      equityHistory: activeOverview.portfolioHistory || [],
+      fetchedAt: activeOverview.fetchedAt,
+    });
+    if (!portfolioRisk.allowNewEntries) {
+      actionsLog.push(`Portfolio risk gate ${portfolioRisk.status}: ${portfolioRisk.reasons.join(' ')} New option entries blocked; risk-reducing exits remain enabled.`);
+    }
 
     // 1. Evaluate open Alpaca OCC option positions for TP / expiration exits (Deterministic: #1 Cancel -> #2 Close)
     for (const pos of currentOpenPositions) {
@@ -308,7 +326,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       activeHealth !== null &&
       (activeHealth.current.safetyStatus === 'CRASH_DEFENSE' || !activeHealth.current.allowNewEntries);
 
-    if (openSlots > 0 && optionsCrashHalted && activeHealth) {
+    if (openSlots > 0 && !portfolioRisk.allowNewEntries) {
+      // The portfolio-wide gate is authoritative for both equity and options entries.
+    } else if (openSlots > 0 && optionsCrashHalted && activeHealth) {
       const netVolStr =
         activeHealth.current.netVolume1MBillions < 0
           ? `-$${Math.abs(activeHealth.current.netVolume1MBillions).toFixed(1)}B`
@@ -378,6 +398,33 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           .sort((a, b) => b.strike_price - a.strike_price);
         const chosen = tradable.find((c) => (c.close_price ?? 0) >= 0.15) || tradable[0];
         if (!chosen) continue;
+        const proposedPortfolioRisk = evaluatePortfolioRisk({
+          account: activeOverview.account,
+          positions: [
+            ...(activeOverview.equityPositions || []),
+            ...(activeOverview.optionPositions || []),
+          ],
+          openOrders: [
+            ...(activeOverview.orders || []),
+            { symbol: chosen.symbol, asset_class: 'us_option', side: 'sell' as const, qty: 1, status: 'new' },
+          ],
+          equityHistory: activeOverview.portfolioHistory || [],
+          fetchedAt: activeOverview.fetchedAt,
+        });
+        if (!proposedPortfolioRisk.allowNewEntries) {
+          actionsLog.push(`Skipped ${chosen.symbol}: proposed position breaches portfolio limits — ${proposedPortfolioRisk.reasons.join(' ')}`);
+          continue;
+        }
+        const orderRisk = evaluateShortPutOrderRisk({
+          symbol: chosen.symbol,
+          contracts: 1,
+          premiumPerShare: chosen.close_price ?? 0,
+          equity: portfolioRisk.equity,
+        });
+        if (!orderRisk.allowed) {
+          actionsLog.push(`Skipped ${chosen.symbol}: ${orderRisk.reason || 'single-trade risk limit exceeded'}`);
+          continue;
+        }
 
         const clientOrderId = buildIdempotentClientOrderId({
           symbol: chosen.symbol,
@@ -426,6 +473,9 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       setCycleFeedbackMessage(
         `Alpaca Paper Options Cycle complete: Evaluated ${currentOpenPositions.length} open contract(s) across ${marketCandidates.length} underlyings.`
       );
+    }
+    } finally {
+      releasePortfolioLock();
     }
   };
 

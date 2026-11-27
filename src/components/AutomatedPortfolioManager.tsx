@@ -55,6 +55,7 @@ import {
 } from '../utils/automatedPortfolio';
 import { downloadCSV, loadJournalEntries } from '../utils/tradeJournal';
 import { loadSettings } from '../utils/masterPlanCore';
+import { acquirePortfolioCycleLock, evaluatePortfolioRisk } from '../utils/portfolioRiskEngine';
 import {
   alpacaPositionsToAutomatedPositions,
   alpacaOrdersToAutomatedLogs,
@@ -364,6 +365,11 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       }
     }
     if (cycleInFlightRef.current) return;
+    const releasePortfolioLock = acquirePortfolioCycleLock('equity');
+    if (!releasePortfolioLock) {
+      setLastCycleMessage('Another portfolio automation cycle is running. This cycle was skipped to prevent overlapping orders.');
+      return;
+    }
     cycleInFlightRef.current = true;
     cycleAbortRef.current?.abort();
     const controller = new AbortController();
@@ -392,24 +398,47 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       if (!isMountedRef.current || controller.signal.aborted) return;
 
       const activeHealth = marketHealthRef.current || (await refreshMarketHealth(false));
+      const portfolioRisk = evaluatePortfolioRisk({
+        account: activeOverview.account,
+        positions: activeOverview.positions || [],
+        openOrders: activeOverview.orders || [],
+        equityHistory: activeOverview.portfolioHistory || [],
+        fetchedAt: activeOverview.fetchedAt,
+      });
       const masterSettings = {
         ...loadSettings(),
         maxRiskPerTradePct: accountRef.current.riskPerTradePercent || 1.0,
       };
       const currentQueue = loadBotCandidateQueue();
       const liveMemory = accountRef.current.activeMemory || loadActiveMemoryState();
-      const { ordersToPlace, positionsToClose, reversalRequests, skippedByRiskGates } =
-        selectAlpacaEquityCandidates(
-          activeOverview,
-          marketItems,
-          masterSettings,
-          accountRef.current.maxOpenPositions || 5,
-          {
-            marketHealth: activeHealth,
-            queuedCandidates: currentQueue,
-            activeMemory: liveMemory,
-          }
-        );
+      const candidateSelection = selectAlpacaEquityCandidates(
+        activeOverview,
+        marketItems,
+        masterSettings,
+        accountRef.current.maxOpenPositions || 5,
+        {
+          marketHealth: activeHealth,
+          queuedCandidates: currentQueue,
+          activeMemory: liveMemory,
+        }
+      );
+      const ordersToPlace = portfolioRisk.allowNewEntries ? candidateSelection.ordersToPlace : [];
+      const positionsToClose = candidateSelection.positionsToClose;
+      const reversalRequests = portfolioRisk.allowNewEntries ? candidateSelection.reversalRequests : [];
+      const skippedByRiskGates = [
+        ...candidateSelection.skippedByRiskGates,
+        ...(!portfolioRisk.allowNewEntries
+          ? candidateSelection.ordersToPlace.map((candidate) => ({
+              symbol: candidate.symbol,
+              sector: 'Portfolio Risk',
+              setupType: 'PORTFOLIO_RISK',
+                            reasons: [portfolioRisk.reasons.join(' ') || 'Portfolio risk gate blocked new entries.'],
+            }))
+          : []),
+      ];
+      if (!portfolioRisk.allowNewEntries) {
+        setLastCycleMessage(`Portfolio risk gate ${portfolioRisk.status}: ${portfolioRisk.reasons.join(' ')} Existing risk-reducing exits remain enabled; new entries are blocked.`);
+      }
 
       // Map candidate EntryMarketContext by client_order_id / symbol so submitOrder captures it immutably
       const contextByOrderKey = new Map(
@@ -446,12 +475,15 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       }
       const cycleShadowBase = buildEntryMarketContextFromReport(activeHealth, { assetMode: 'EQUITY' });
       const newShadowInputs = skippedByRiskGates
-        .filter((s) => typeof s.signalPrice === 'number' && s.signalPrice > 0)
+        .filter((s) => {
+          const observedPrice = priceLookup[String(s.symbol).toUpperCase()];
+          return typeof observedPrice === 'number' && Number.isFinite(observedPrice) && observedPrice > 0;
+        })
         .map((s) => ({
           symbol: s.symbol,
           setupType: s.setupType || 'BULLISH TRIPLE',
           assetMode: 'EQUITY' as const,
-          signalPrice: s.signalPrice!,
+          signalPrice: priceLookup[String(s.symbol).toUpperCase()],
           blockReason: s.reasons[0] || 'Risk gate veto',
           entryMarketContext: cycleShadowBase,
         }));
@@ -525,6 +557,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       }
     } finally {
       cycleInFlightRef.current = false;
+      releasePortfolioLock();
       if (isMountedRef.current) setIsCycleRunning(false);
     }
   };
