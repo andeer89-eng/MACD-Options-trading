@@ -366,6 +366,136 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (!response.ok) throw new ExecutionLedgerUnavailableError('Reconciliation run audit record could not be persisted.');
   }
 
+  async function backfillTrackedOrderIndex(options: { maxEvents?: number } = {}): Promise<{
+    scannedEvents: number;
+    indexedOrders: number;
+    alreadyIndexed: number;
+    skippedInvalid: number;
+  }> {
+    const maxEvents = Math.max(1, Math.min(1_000_000, options.maxEvents ?? 500_000));
+    const orders = new Map<string, {
+      clientOrderId: string;
+      brokerOrderId: string;
+      symbol: string;
+      lastEventType: ExecutionEventType;
+      updatedAt: string;
+      latestSequence: number;
+      status?: string;
+      statusSequence: number;
+    }>();
+    const seenCursors = new Set<string>();
+    let cursorName = '';
+    let scannedEvents = 0;
+    let skippedInvalid = 0;
+
+    for (let page = 0; page < 10_000; page++) {
+      const structuredQuery = {
+        from: [{ collectionId: 'events', allDescendants: true }],
+        orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+        limit: 1000,
+        ...(cursorName ? { startAt: { values: [{ referenceValue: cursorName }], before: false } } : {}),
+      };
+      const response = await request(':runQuery', {
+        method: 'POST',
+        body: JSON.stringify({ structuredQuery }),
+      });
+      if (!response.ok) throw new ExecutionLedgerUnavailableError('Historical execution events could not be enumerated for index backfill.');
+      const rows = await response.json() as Array<{ document?: any }>;
+      const documents = rows.map(row => row.document).filter(Boolean);
+      if (!documents.length) break;
+
+      for (const document of documents) {
+        scannedEvents++;
+        if (scannedEvents > maxEvents) {
+          throw new ExecutionLedgerUnavailableError('Historical index backfill exceeded its configured event safety limit.');
+        }
+        const name = String(document.name || '');
+        const match = name.match(/\/alpacaExecutionLedger\/([a-f0-9]{64})\/events\/[^/]+$/);
+        const event = fromDocument(document);
+        const clientOrderId = String(event.clientOrderId || '');
+        if (!match || !clientOrderId || createHash('sha256').update(clientOrderId).digest('hex') !== match[1]) {
+          skippedInvalid++;
+          continue;
+        }
+        const sequence = Number(event.sequence);
+        if (!Number.isSafeInteger(sequence) || sequence < 1 || !event.symbol || !event.eventType) {
+          skippedInvalid++;
+          continue;
+        }
+        const current = orders.get(match[1]);
+        const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+        const occurredAt = String(event.occurredAt || '');
+        if (!current || sequence > current.latestSequence) {
+          orders.set(match[1], {
+            clientOrderId,
+            brokerOrderId: String(event.brokerOrderId || current?.brokerOrderId || ''),
+            symbol: String(event.symbol).toUpperCase(),
+            lastEventType: event.eventType as ExecutionEventType,
+            updatedAt: occurredAt,
+            latestSequence: sequence,
+            status: current?.status,
+            statusSequence: current?.statusSequence || 0,
+          });
+        }
+        const aggregate = orders.get(match[1])!;
+        if (payload.status !== undefined && sequence >= aggregate.statusSequence) {
+          aggregate.status = String(payload.status);
+          aggregate.statusSequence = sequence;
+        }
+      }
+
+      const lastName = String(documents[documents.length - 1]?.name || '');
+      if (!lastName || seenCursors.has(lastName)) {
+        throw new ExecutionLedgerUnavailableError('Historical index backfill encountered a repeated or invalid Firestore cursor.');
+      }
+      seenCursors.add(lastName);
+      cursorName = lastName;
+      if (documents.length < 1000) break;
+      if (page === 9_999) throw new ExecutionLedgerUnavailableError('Historical index backfill exceeded the safe pagination limit.');
+    }
+
+    let indexedOrders = 0;
+    let alreadyIndexed = 0;
+    for (const [orderKey, order] of orders) {
+      const indexPath = '/alpacaExecutionOrderIndex/' + orderKey;
+      const existing = await request(indexPath);
+      if (existing.ok) {
+        alreadyIndexed++;
+        continue;
+      }
+      if (existing.status !== 404) throw new ExecutionLedgerUnavailableError('Existing order index could not be checked during backfill.');
+      const nowMs = now();
+      const commit = await request(':commit', {
+        method: 'POST',
+        body: JSON.stringify({ writes: [{
+          update: {
+            name: databaseRoot + indexPath,
+            fields: fields({
+              clientOrderId: order.clientOrderId,
+              brokerOrderId: order.brokerOrderId,
+              symbol: order.symbol,
+              lastEventType: order.lastEventType,
+              status: order.status || '',
+              updatedAt: order.updatedAt || new Date(nowMs).toISOString(),
+              backfilledAt: new Date(nowMs).toISOString(),
+              backfillSource: 'historical-ledger-events',
+            }),
+          },
+          currentDocument: { exists: false },
+        }] }),
+      });
+      if (commit.ok) indexedOrders++;
+      else {
+        const errorBody = commit.status === 400 ? await commit.json().catch(() => null) as any : null;
+        const conflict = commit.status === 409 || commit.status === 412 ||
+          errorBody?.error?.status === 'ALREADY_EXISTS' || errorBody?.error?.status === 'FAILED_PRECONDITION';
+        if (conflict) alreadyIndexed++;
+        else throw new ExecutionLedgerUnavailableError('Historical order index backfill commit failed.');
+      }
+    }
+    return { scannedEvents, indexedOrders, alreadyIndexed, skippedInvalid };
+  }
+
   async function listTrackedOrders(): Promise<TrackedExecutionOrder[]> {
     const orders: TrackedExecutionOrder[] = [];
     const seenTokens = new Set<string>();
@@ -390,5 +520,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun };
+  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun };
 }

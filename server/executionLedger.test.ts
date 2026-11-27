@@ -24,6 +24,18 @@ function createFirestoreMock() {
     }
     const marker = '/databases/(default)/documents';
     const path = url.slice(url.indexOf(marker) + marker.length);
+    if (init?.method === 'POST' && path === ':runQuery') {
+      const body = JSON.parse(String(init.body));
+      const query = body.structuredQuery;
+      const cursor = query.startAt?.values?.[0]?.referenceValue || '';
+      const limit = Number(query.limit || 1000);
+      const found = [...documents.values()]
+        .filter(doc => doc.name.includes('/alpacaExecutionLedger/') && doc.name.includes('/events/'))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .filter(doc => !cursor || doc.name > cursor)
+        .slice(0, limit);
+      return new Response(JSON.stringify(found.map(document => ({ document }))), { status: 200 });
+    }
     if (init?.method === 'POST' && path === ':commit') {
       const body = JSON.parse(String(init.body));
       for (const write of body.writes) {
@@ -178,6 +190,61 @@ describe('Persistent Firestore execution ledger', () => {
       errorCount: 0, errors: [],
     });
     assert.equal([...mock.documents.keys()].some(name => name.endsWith('/alpacaExecutionRuns/run-test-1')), true);
+  });
+
+  it('backfills missing order-index documents from the complete historical event collection', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    const clientOrderId = 'legacy-order-001';
+    const orderKey = createHash('sha256').update(clientOrderId).digest('hex');
+    const resourceRoot = 'projects/test-project/databases/(default)/documents';
+    const apiRoot = 'https://firestore.googleapis.com/v1/' + resourceRoot;
+    const addEvent = (id: string, sequence: number, eventType: string, payload: Record<string, unknown>) => {
+      const name = `${resourceRoot}/alpacaExecutionLedger/${orderKey}/events/${id}`;
+      const encode = (value: any): any => {
+        if (value === null) return { nullValue: null };
+        if (typeof value === 'string') return { stringValue: value };
+        if (typeof value === 'number') return { integerValue: String(value) };
+        if (typeof value === 'boolean') return { booleanValue: value };
+        if (Array.isArray(value)) return { arrayValue: { values: value.map(encode) } };
+        return { mapValue: { fields: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)])) } };
+      };
+      mock.documents.set(apiRoot + `/alpacaExecutionLedger/${orderKey}/events/${id}`, {
+        name,
+        updateTime: String(sequence),
+        fields: {
+          eventId: { stringValue: id },
+          sequence: { integerValue: String(sequence) },
+          eventType: { stringValue: eventType },
+          clientOrderId: { stringValue: clientOrderId },
+          brokerOrderId: { stringValue: 'legacy-broker-1' },
+          symbol: { stringValue: 'AAPL' },
+          occurredAt: { stringValue: `2026-11-27T12:0${sequence}:00.000Z` },
+          payload: encode(payload),
+        },
+      });
+    };
+    addEvent('event-001', 1, 'ORDER_SUBMITTED', { status: 'accepted', qty: 2 });
+    addEvent('event-002', 2, 'FILL_RECORDED', { activityId: 'fill-1', qty: 1, price: 200 });
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+    });
+    const result = await ledger.backfillTrackedOrderIndex();
+    assert.equal(result.scannedEvents, 2);
+    assert.equal(result.indexedOrders, 1);
+    assert.equal(result.alreadyIndexed, 0);
+    const tracked = await ledger.listTrackedOrders();
+    assert.equal(tracked.length, 1);
+    assert.equal(tracked[0].clientOrderId, clientOrderId);
+    assert.equal(tracked[0].brokerOrderId, 'legacy-broker-1');
+    assert.equal(tracked[0].status, 'accepted');
+    assert.equal(tracked[0].lastEventType, 'FILL_RECORDED');
+    const replay = await ledger.backfillTrackedOrderIndex();
+    assert.equal(replay.indexedOrders, 0);
+    assert.equal(replay.alreadyIndexed, 1);
   });
 
 });

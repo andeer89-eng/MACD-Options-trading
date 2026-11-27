@@ -196,3 +196,23 @@ This increment does not backfill historical order-index documents and does not c
 broker positions against ledger-derived positions. Position differences can be caused by
 manual trades, exercises/assignments, transfers, and corporate actions; those require a
 separate provenance-aware reconciliation design before any mismatch can be classified.
+
+## P1.8 — historical order-index backfill
+
+The authenticated endpoint `POST /api/alpaca/reconciliation/backfill-index` reconstructs missing
+`alpacaExecutionOrderIndex` documents from the Firestore collection-group history of
+`events` under `alpacaExecutionLedger`.
+
+- Reads the full event collection group in document-name cursor pages (1,000 per page).
+- Validates each event's `clientOrderId` against the SHA-256 order key in its document path.
+- Reconstructs the latest event type, broker order ID, symbol, and latest known broker status.
+- Creates only missing index documents using Firestore `exists=false` preconditions; it never
+  overwrites an index that a live append or another backfill has already created.
+- Repeated calls are idempotent. Default safety limit is 500,000 events; request body may set
+  `maxEvents` from 1 through 1,000,000. Exceeding the limit fails before writing index rows.
+- Response reports scanned events, newly indexed orders, already-indexed orders, and invalid
+  historical rows skipped.
+
+Run the backfill once after deploying the index schema and before relying on the worker to
+discover all pre-existing orders. The endpoint requires the same Firebase-authenticated
+Alpaca API access as the other reconciliation endpoints. No broker order mutation occurs.

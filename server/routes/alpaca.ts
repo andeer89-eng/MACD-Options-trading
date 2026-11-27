@@ -118,6 +118,24 @@ export function createAlpacaRouter(
     }
   });
 
+  router.post('/api/alpaca/reconciliation/backfill-index', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const requestedLimit = req.body?.maxEvents === undefined ? 500_000 : Number(req.body.maxEvents);
+      if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1_000_000) {
+        res.status(400).json({ error: 'maxEvents must be an integer between 1 and 1000000.', mode: 'PAPER' });
+        return;
+      }
+      const result = await executionLedger.backfillTrackedOrderIndex({ maxEvents: requestedLimit });
+      res.json({ mode: 'PAPER', ...result });
+    } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
   router.get('/api/alpaca/reconciliation/status', (_req: Request, res: Response) => {
     if (!reconciliationWorker) {
       res.status(503).json({ error: 'Automated reconciliation worker is not configured.', mode: 'PAPER' });
