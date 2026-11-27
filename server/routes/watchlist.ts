@@ -41,7 +41,7 @@ export function createWatchlistTriggerRouter(options: {
     const { ownerId, symbol, triggerId, evidence } = req.body || {};
     if (
       typeof ownerId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) ||
-      typeof symbol !== 'string' || !/^[A-Za-z0-9.=\\-]{1,20}$/.test(symbol) ||
+      typeof symbol !== 'string' || !/^[A-Za-z0-9.=_-]{1,20}$/.test(symbol) ||
       typeof triggerId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(triggerId) ||
       !evidence || typeof evidence !== 'object' ||
       typeof evidence.ruleId !== 'string' || evidence.ruleId.length < 1 || evidence.ruleId.length > 64 ||
