@@ -3,6 +3,7 @@ import express, { Express } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import {
   createMarketDataService,
   MarketDataServiceOptions,
@@ -23,6 +24,9 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   streamPulseIntervalMs?: number;
   alpacaFetchOverride?: FetchLike;
   alpacaEnvOverride?: Record<string, string | undefined>;
+  firebaseProjectIdOverride?: string;
+  alpacaAllowedUidsOverride?: string[];
+  firebaseAuthFetchOverride?: typeof fetch;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express }> {
@@ -43,7 +47,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(createHealthRouter(marketData));
   app.use(createPythonRouter());
   app.use(createStreamRouter(marketData, { pulseIntervalMs: options.streamPulseIntervalMs }));
-  app.use(createAlpacaRouter(alpaca));
+  const allowedAlpacaUids = options.alpacaAllowedUidsOverride ??
+    (process.env.ALPACA_ALLOWED_UIDS || '').split(',').map((uid) => uid.trim()).filter(Boolean);
+  app.use(createAlpacaRouter(alpaca, {
+    projectId: options.firebaseProjectIdOverride || process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+    allowedUids: allowedAlpacaUids,
+    fetchImpl: options.firebaseAuthFetchOverride,
+  }));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {
