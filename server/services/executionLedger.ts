@@ -47,6 +47,20 @@ function canonical(value: unknown): string {
     .map(k => JSON.stringify(k) + ':' + canonical(obj[k])).join(',') + '}';
 }
 
+export function verifyExecutionLedgerChain(events: ExecutionLedgerEvent[]): { valid: boolean; length: number; headHash: string; brokenAtSequence: number | null } {
+  let previous = GENESIS;
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index];
+    const { entryHash, ...base } = event;
+    const expected = createHash('sha256').update(canonical(base)).digest('hex');
+    if (event.sequence !== index + 1 || event.prevHash !== previous || entryHash !== expected) {
+      return { valid: false, length: events.length, headHash: events[events.length - 1]?.entryHash || GENESIS, brokenAtSequence: event.sequence };
+    }
+    previous = entryHash;
+  }
+  return { valid: true, length: events.length, headHash: previous, brokenAtSequence: null };
+}
+
 function base64url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
 }
@@ -145,7 +159,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     } catch {
       throw new ExecutionLedgerUnavailableError('Firestore request failed.');
     }
-    if (!response.ok && response.status !== 404 && response.status !== 409 && response.status !== 412) {
+    if (!response.ok && response.status !== 400 && response.status !== 404 && response.status !== 409 && response.status !== 412) {
       throw new ExecutionLedgerUnavailableError(`Firestore returned HTTP ${response.status}.`);
     }
     return response;
