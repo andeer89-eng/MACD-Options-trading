@@ -87,12 +87,13 @@ describe('TRULLAS Daily Watchlist Persistence (Item 7 Acceptance Tests)', () => 
 
   it('validates state transitions conforming to state machine rules', () => {
     assert.strictEqual(isValidStatusTransition('NEW', 'WATCHING'), true);
-    assert.strictEqual(isValidStatusTransition('NEW', 'TRIGGERED'), true);
+    assert.strictEqual(isValidStatusTransition('NEW', 'TRIGGERED'), false);
     assert.strictEqual(isValidStatusTransition('NEW', 'INVALIDATED'), true);
-    assert.strictEqual(isValidStatusTransition('WATCHING', 'TRIGGERED'), true);
+    assert.strictEqual(isValidStatusTransition('WATCHING', 'TRIGGERED'), false);
     assert.strictEqual(isValidStatusTransition('WATCHING', 'EXPIRED'), true);
     assert.strictEqual(isValidStatusTransition('TRIGGERED', 'EXPIRED'), true);
-    assert.strictEqual(isValidStatusTransition('EXPIRED', 'NEW'), true);
+    assert.strictEqual(isValidStatusTransition('EXPIRED', 'NEW'), false);
+    assert.strictEqual(isValidStatusTransition('INVALIDATED', 'NEW'), false);
 
     assert.strictEqual(isValidStatusTransition('TRIGGERED', 'WATCHING'), false);
     assert.strictEqual(isValidStatusTransition('EXPIRED', 'TRIGGERED'), false);
@@ -104,10 +105,11 @@ describe('TRULLAS Daily Watchlist Persistence (Item 7 Acceptance Tests)', () => 
     assert.strictEqual(res.item?.status, 'WATCHING');
 
     const res2 = transitionWatchlistStatus('LLY', 'TRIGGERED');
-    assert.strictEqual(res2.success, true);
-    assert.strictEqual(res2.item?.status, 'TRIGGERED');
+    assert.strictEqual(res2.success, false);
+    assert.match(res2.reason || '', /Illegal state transition/);
+    assert.strictEqual(loadDailyWatchlist().find((item) => item.symbol === 'LLY')?.status, 'WATCHING');
 
-    const resIllegal = transitionWatchlistStatus('LLY', 'WATCHING');
+    const resIllegal = transitionWatchlistStatus('LLY', 'NEW');
     assert.strictEqual(resIllegal.success, false);
   });
 
