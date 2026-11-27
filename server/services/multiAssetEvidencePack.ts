@@ -103,3 +103,21 @@ export function buildMultiAssetEvidencePack(input: MultiAssetEvidencePackInput):
   return {ok:true,pack:{schemaVersion:'1.0.0',packId:canonicalSha256,assetClass:input.assetClass,symbol,
     generatedAt:input.generatedAt,asOf:input.asOf,sources:input.sources,risk,evidence,canonicalSha256}};
 }
+export function verifyMultiAssetEvidencePack(pack: MultiAssetEvidencePack): boolean {
+  try {
+    if (!pack || pack.schemaVersion !== '1.0.0' || !digestOk(pack.canonicalSha256) || pack.packId !== pack.canonicalSha256) return false;
+    const body = canonicalJson({
+      schemaVersion: pack.schemaVersion,
+      assetClass: pack.assetClass,
+      symbol: pack.symbol,
+      generatedAt: pack.generatedAt,
+      asOf: pack.asOf,
+      sources: pack.sources,
+      risk: pack.risk,
+      evidence: pack.evidence,
+    });
+    return hash(body) === pack.canonicalSha256;
+  } catch {
+    return false;
+  }
+}
