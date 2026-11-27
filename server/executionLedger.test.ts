@@ -45,7 +45,7 @@ function createFirestoreMock() {
       const prefix = 'https://firestore.googleapis.com/v1/projects/test-project' + marker + collectionPath + '/';
       const found = [...documents.values()]
         .filter(doc => doc.name.startsWith(prefix))
-        .sort((a, b) => Number(a.fields.sequence?.integerValue || 0) - Number(b.fields.sequence?.integerValue || 0));
+        .sort((a, b) => Number((a.fields.sequence as any)?.integerValue || 0) - Number((b.fields.sequence as any)?.integerValue || 0));
       const parsedUrl = new URL(url);
       const pageSize = Number(parsedUrl.searchParams.get('pageSize') || 1000);
       const offset = Number(parsedUrl.searchParams.get('pageToken') || 0);
@@ -109,5 +109,42 @@ describe('Persistent Firestore execution ledger', () => {
     const tampered = events.map(event => ({ ...event }));
     tampered[0].payload.qty = 999;
     assert.equal(verifyExecutionLedgerChain(tampered).valid, false);
+  });
+
+  it('reads every Firestore page instead of reporting a truncated chain as complete', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    const clientOrderId = 'large-history-order';
+    const orderKey = createHash('sha256').update(clientOrderId).digest('hex');
+    const root = 'https://firestore.googleapis.com/v1/projects/test-project/databases/(default)/documents';
+    for (let sequence = 1; sequence <= 1001; sequence++) {
+      const eventId = String(sequence).padStart(4, '0');
+      const name = `${root}/alpacaExecutionLedger/${orderKey}/events/${eventId}`;
+      mock.documents.set(name, {
+        name,
+        updateTime: String(sequence),
+        fields: {
+          eventId: { stringValue: eventId },
+          sequence: { integerValue: String(sequence) },
+          eventType: { stringValue: 'ORDER_SUBMITTED' },
+          clientOrderId: { stringValue: clientOrderId },
+          symbol: { stringValue: 'AAPL' },
+          occurredAt: { stringValue: '2026-11-27T12:00:00.000Z' },
+          payload: { mapValue: { fields: {} } },
+          prevHash: { stringValue: '0'.repeat(64) },
+          entryHash: { stringValue: '0'.repeat(64) },
+        },
+      });
+    }
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+    });
+    const events = await ledger.readEvents(clientOrderId);
+    assert.equal(events.length, 1001);
+    assert.equal(events[0].sequence, 1);
+    assert.equal(events[1000].sequence, 1001);
   });
 });
