@@ -418,7 +418,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         alpacaRequest<any[]>('/v2/positions'),
         alpacaRequest<any[]>('/v2/orders?status=all&limit=100&direction=desc'),
         alpacaRequest<any[]>('/v2/account/activities/FILL?page_size=100').catch(() => []),
-        alpacaRequest<any>('/v2/account/portfolio/history?period=1M&timeframe=1D&intraday_reporting=extended_hours')
+        alpacaRequest<any>('/v2/account/portfolio/history?period=1A&timeframe=1D&intraday_reporting=extended_hours')
           .catch(() => null),
       ]);
 
@@ -526,8 +526,8 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         orders,
         fills,
         portfolioHistory,
-        portfolioHistoryComplete: portfolioHistory.length >= 20,
-        ...(portfolioHistory.length < 20 ? { portfolioHistoryError: 'Alpaca returned fewer than 20 daily equity points; weekly/monthly limits cannot be evaluated reliably.' } : {}),
+        portfolioHistoryComplete: portfolioHistory.length >= 30,
+        ...(portfolioHistory.length < 30 ? { portfolioHistoryError: 'Alpaca returned fewer than 30 daily equity points; weekly/monthly limits cannot be evaluated reliably.' } : {}),
       };
     } catch (err: any) {
       return {
