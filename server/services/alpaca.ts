@@ -1,3 +1,8 @@
+import {
+  evaluatePortfolioRisk,
+  evaluateShortPutOrderRisk,
+} from '../../src/utils/portfolioRiskEngine.ts';
+
 export const ALPACA_PAPER_ENDPOINT = 'https://paper-api.alpaca.markets';
 export const ALPACA_DATA_ENDPOINT = 'https://data.alpaca.markets';
 
@@ -608,6 +613,74 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
     }
+
+    // Server-side enforcement: browser/UI gates are advisory; every opening order
+    // must pass a fresh broker snapshot before it reaches Alpaca.
+    const [rawAccount, rawPositions, rawOpenOrders, rawHistory] = await Promise.all([
+      alpacaRequest<any>('/v2/account'),
+      alpacaRequest<any[]>('/v2/positions'),
+      alpacaRequest<any[]>('/v2/orders?status=open&limit=500&direction=desc'),
+      alpacaRequest<any>('/v2/account/portfolio/history?period=1A&timeframe=1D&intraday_reporting=extended_hours'),
+    ]);
+    const equity = toNum(rawAccount?.equity);
+    const lastEquity = toNum(rawAccount?.last_equity, equity);
+    const positions = (Array.isArray(rawPositions) ? rawPositions : []).map((position) => ({
+      symbol: String(position?.symbol || '').toUpperCase(),
+      asset_class: String(position?.asset_class || ''),
+      qty: toNum(position?.qty),
+      side: String(position?.side || ''),
+      market_value: toNum(position?.market_value),
+    }));
+    const openOrders = (Array.isArray(rawOpenOrders) ? rawOpenOrders : []).map((order) => ({
+      symbol: String(order?.symbol || '').toUpperCase(),
+      asset_class: String(order?.asset_class || ''),
+      side: order?.side === 'sell' ? 'sell' as const : 'buy' as const,
+      qty: toNum(order?.qty),
+      status: String(order?.status || ''),
+      limit_price: toNullableNum(order?.limit_price),
+    }));
+    const timestamps = Array.isArray(rawHistory?.timestamp) ? rawHistory.timestamp : [];
+    const equityValues = Array.isArray(rawHistory?.equity) ? rawHistory.equity : [];
+    const equityHistory = timestamps.map((timestamp: unknown, index: number) => ({
+      timestamp: Number(timestamp),
+      equity: toNum(equityValues[index], NaN),
+    })).filter((point: { timestamp: number; equity: number }) =>
+      Number.isFinite(point.timestamp) && Number.isFinite(point.equity) && point.equity > 0
+    );
+    const riskReport = evaluatePortfolioRisk({
+      account: {
+        equity,
+        day_pnl_pct: lastEquity > 0 ? ((equity - lastEquity) / lastEquity) * 100 : NaN,
+        status: String(rawAccount?.status || 'UNKNOWN'),
+        trading_blocked: Boolean(rawAccount?.trading_blocked),
+        account_blocked: Boolean(rawAccount?.account_blocked),
+        trade_suspended_by_user: Boolean(rawAccount?.trade_suspended_by_user),
+      },
+      positions,
+      openOrders,
+      equityHistory,
+      fetchedAt: new Date().toISOString(),
+    });
+    if (!riskReport.allowNewEntries) {
+      throw new AlpacaApiError(409, `Portfolio risk gate ${riskReport.status}: ${riskReport.reasons.join(' ')}`);
+    }
+
+    if (validated.isOption && validated.payload.side === 'sell' && /P\d{8}$/.test(validated.payload.symbol)) {
+      const optionMatch = validated.payload.symbol.match(/P(\d{8})$/);
+      const strike = optionMatch ? Number(optionMatch[1]) / 1000 : 0;
+      const premium = validated.payload.limit_price ?? 0;
+      const orderRisk = evaluateShortPutOrderRisk({
+        symbol: validated.payload.symbol,
+        contracts: validated.payload.qty,
+        premiumPerShare: premium,
+        equity,
+      });
+      if (!orderRisk.allowed) {
+        throw new AlpacaApiError(409, orderRisk.reason || `Short-put worst-case loss ${orderRisk.maxLossPct.toFixed(2)}% exceeds per-trade limit.`);
+      }
+      if (strike <= 0) throw new AlpacaApiError(400, 'Invalid short-put strike.');
+    }
+
     const order = await alpacaRequest<any>('/v2/orders', {
       method: 'POST',
       body: JSON.stringify(validated.payload),
