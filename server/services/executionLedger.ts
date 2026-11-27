@@ -390,7 +390,9 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
 
     for (let page = 0; page < 10_000; page++) {
       const structuredQuery = {
-        ...collectionGroupQuery.structuredQuery,
+        from: [{ collectionId: 'events', allDescendants: true }],
+        orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+        limit: 1000,
         ...(cursorName ? { startAt: { values: [{ referenceValue: cursorName }], before: false } } : {}),
       };
       const response = await request(':runQuery', {
