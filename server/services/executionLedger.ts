@@ -220,6 +220,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
             brokerOrderId: input.brokerOrderId || String(fromDocument(indexDoc).brokerOrderId || ''),
             symbol: input.symbol,
             lastEventType: input.eventType,
+            status: String(input.payload.status || fromDocument(indexDoc).status || ''),
             updatedAt: occurredAt,
           }),
         },
