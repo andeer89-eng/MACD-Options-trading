@@ -55,3 +55,20 @@ test('roles receive distinct instructions and only RISK can return risk disposit
  assert.equal(requests.find(x=>x.role==='RISK')?.outputContract.riskDispositionRequired,true);
  assert.equal(requests.find(x=>x.role==='BULL')?.outputContract.riskDispositionRequired,false);
 });
+
+
+test('each agent receives an isolated deeply frozen copy of the evidence pack',async()=>{
+ const received:MultiAssetEvidencePack[]=[];
+ const result=await runAIInvestmentCommittee({
+  evidencePack:pack(),now:()=>now+100,
+  agent:{assess:async request=>{
+   received.push(request.evidencePack);
+   assert.equal(Object.isFrozen(request.evidencePack),true);
+   assert.equal(Object.isFrozen(request.evidencePack.sources),true);
+   assert.equal(request.evidencePack.symbol,'AAPL');
+   return assessment(request);
+  }},
+ });
+ assert.equal(result.status,'COMPLETE');
+ assert.equal(new Set(received).size,4);
+});
