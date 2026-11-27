@@ -80,6 +80,18 @@ export interface AlpacaFillDTO {
   transaction_time: string;
 }
 
+export interface AlpacaOptionLifecycleActivityDTO {
+  id: string;
+  activity_type: string;
+  date: string;
+  symbol: string;
+  qty: number;
+  net_amount: number;
+  price: number | null;
+  status: string;
+  description: string;
+}
+
 export interface AlpacaOverviewDTO {
   configured: boolean;
   mode: 'PAPER';
@@ -96,6 +108,9 @@ export interface AlpacaOverviewDTO {
   fillHistoryComplete?: boolean;
   fillHistoryError?: string;
   orderHistoryComplete?: boolean;
+  optionLifecycleActivities?: AlpacaOptionLifecycleActivityDTO[];
+  optionLifecycleHistoryComplete?: boolean;
+  optionLifecycleHistoryError?: string;
   error?: string;
 }
 
