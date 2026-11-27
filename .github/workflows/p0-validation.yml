@@ -30,7 +30,7 @@ jobs:
         run: bun run test
 
       - name: Install Firestore rules test tooling
-        run: npm install --prefix /tmp/firestore-test-tools --no-save --no-package-lock --legacy-peer-deps @firebase/rules-unit-testing firebase-tools && mkdir -p node_modules/@firebase node_modules/.bin && ln -s /tmp/firestore-test-tools/node_modules/@firebase/rules-unit-testing node_modules/@firebase/rules-unit-testing && ln -s /tmp/firestore-test-tools/node_modules/firebase-tools node_modules/firebase-tools && ln -s /tmp/firestore-test-tools/node_modules/.bin/firebase node_modules/.bin/firebase
+        run: npm install --prefix /tmp/firestore-test-tools --no-save --no-package-lock --legacy-peer-deps @firebase/rules-unit-testing firebase-tools firebase@13.3.0 && mkdir -p node_modules/@firebase node_modules/.bin && ln -s /tmp/firestore-test-tools/node_modules/@firebase/rules-unit-testing node_modules/@firebase/rules-unit-testing && ln -s /tmp/firestore-test-tools/node_modules/firebase-tools node_modules/firebase-tools && ln -s /tmp/firestore-test-tools/node_modules/.bin/firebase node_modules/.bin/firebase
 
       - name: Set up Java for Firestore Emulator
         uses: actions/setup-java@v4
