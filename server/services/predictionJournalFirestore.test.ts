@@ -42,6 +42,19 @@ function fakeFirestore() {
       return new Response(JSON.stringify({ writeResults: [] }), { status: 200 });
     }
     if (init?.method !== 'POST') {
+      if (path.includes('?')) {
+        const [collectionPath, queryString] = path.split('?');
+        const params = new URLSearchParams(queryString);
+        const prefix = `https://firestore.googleapis.com/v1/projects/demo-project/databases/(default)/documents${collectionPath}/`;
+        const all = [...docs.entries()].filter(([name]) => name.startsWith(prefix))
+          .sort((a, b) => Number(a[1].fields.sequence.integerValue) - Number(b[1].fields.sequence.integerValue));
+        const offset = Number(params.get('pageToken') || 0);
+        const size = Number(params.get('pageSize') || 500);
+        const slice = all.slice(offset, offset + size);
+        const documents = slice.map(([name, item]) => ({ name, fields: item.fields, updateTime: item.updateTime }));
+        const nextPageToken = offset + size < all.length ? String(offset + size) : undefined;
+        return new Response(JSON.stringify({ documents, nextPageToken }), { status: 200 });
+      }
       const item = docs.get(url);
       if (!item) return new Response('NOT_FOUND', { status: 404 });
       return new Response(JSON.stringify({ fields: item.fields, updateTime: item.updateTime }), { status: 200 });
@@ -82,5 +95,29 @@ test('rejects invalid owner and malformed event before Firestore access', async 
     fetchImpl: async () => { requests++; return new Response('{}', { status: 500 }); } });
   await assert.rejects(() => journal.append('../other', { eventType: 'PREDICTION_RECORDED', prediction }),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
+  assert.equal(requests, 0);
+});
+
+
+test('replays paginated Firestore events and verifies the complete chain against the head', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const optionPrediction = { ...prediction, predictionId: 'pred-option-2', assetClass: 'OPTION' as const,
+    contractId: 'AAPL261218C00200000' };
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  const replay = await journal.readAll('owner_1', 1);
+  assert.equal(replay.events.length, 2);
+  assert.deepEqual(replay.events.map(event => event.sequence), [1, 2]);
+  assert.equal(replay.verification.valid, true);
+  assert.equal(replay.verification.headHash, replay.events[1].eventHash);
+});
+
+test('rejects malformed owner before attempting journal replay', async () => {
+  let requests = 0;
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: async () => { requests++; return new Response('{}', { status: 200 }); } });
+  await assert.rejects(() => journal.readAll('../other'), (error: unknown) =>
+    error instanceof FirestorePredictionJournalError && error.status === 400);
   assert.equal(requests, 0);
 });
