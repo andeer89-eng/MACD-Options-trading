@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from './executionLedger.ts';
 import type { AlpacaService } from './alpaca.ts';
 
@@ -9,6 +10,8 @@ export interface ReconciliationRunResult {
   skippedTerminal: number;
   failed: number;
   errors: Array<{ clientOrderId: string; error: string }>;
+  runId?: string;
+  leaseAcquired?: boolean;
 }
 
 const TERMINAL_STATUSES = new Set(['filled', 'canceled', 'cancelled', 'rejected', 'expired', 'replaced']);
@@ -18,12 +21,14 @@ export function createExecutionReconciliationWorker(options: {
   ledger: ExecutionLedger;
   intervalMs?: number;
   concurrency?: number;
+  leaseMs?: number;
 }) {
   const intervalMs = Math.max(30_000, options.intervalMs ?? 60_000);
   const concurrency = Math.max(1, Math.min(10, options.concurrency ?? 3));
   let timer: ReturnType<typeof setInterval> | undefined;
   let running = false;
-  let lastRun: (ReconciliationRunResult & { completedAt: string }) | null = null;
+  let lastRun: (ReconciliationRunResult & { startedAt: string; completedAt: string; status: string }) | null = null;
+  const leaseMs = Math.max(120_000, options.leaseMs ?? intervalMs * 4);
 
   async function reconcileOrder(clientOrderId: string): Promise<void> {
     const snapshot = await options.alpaca.getExecutionSnapshot(clientOrderId);
@@ -86,19 +91,37 @@ export function createExecutionReconciliationWorker(options: {
   }
 
   async function runOnce(): Promise<ReconciliationRunResult> {
-    if (running) {
-      return { scanned: 0, reconciled: 0, skippedTerminal: 0, failed: 0, errors: [] };
-    }
+    if (running) return { scanned: 0, reconciled: 0, skippedTerminal: 0, failed: 0, errors: [] };
     running = true;
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
     const result: ReconciliationRunResult = {
-      scanned: 0, reconciled: 0, skippedTerminal: 0, failed: 0, errors: [],
+      scanned: 0, reconciled: 0, skippedTerminal: 0, failed: 0, errors: [], runId,
     };
+    let acquired = false;
+    let leaseLost = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     try {
+      acquired = await options.ledger.acquireReconciliationLease(runId, leaseMs);
+      result.leaseAcquired = acquired;
+      if (!acquired) return result;
+      heartbeat = setInterval(() => {
+        void options.ledger.renewReconciliationLease(runId, leaseMs)
+          .then(renewed => { if (!renewed) leaseLost = true; })
+          .catch(() => { leaseLost = true; });
+      }, Math.max(10_000, Math.floor(leaseMs / 3)));
+      heartbeat.unref?.();
+
       const tracked = await options.ledger.listTrackedOrders();
       result.scanned = tracked.length;
       const pending = tracked.filter(order => !TERMINAL_STATUSES.has(String(order.status || '').toLowerCase()));
       result.skippedTerminal = tracked.length - pending.length;
       for (let offset = 0; offset < pending.length; offset += concurrency) {
+        if (leaseLost) {
+          result.failed++;
+          result.errors.push({ clientOrderId: '__worker__', error: 'Distributed reconciliation lease was lost; remaining orders were not processed.' });
+          break;
+        }
         const batch = pending.slice(offset, offset + concurrency);
         const outcomes = await Promise.all(batch.map(async order => {
           try {
@@ -120,9 +143,37 @@ export function createExecutionReconciliationWorker(options: {
           }
         }
       }
-      lastRun = { ...result, completedAt: new Date().toISOString() };
+      return result;
+    } catch (error) {
+      result.failed++;
+      result.errors.push({ clientOrderId: '__worker__', error: error instanceof Error ? error.message : 'Unknown worker failure.' });
       return result;
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      if (acquired) {
+        try {
+          await options.ledger.releaseReconciliationLease(runId);
+        } catch (error) {
+          result.failed++;
+          result.errors.push({ clientOrderId: '__worker__', error: error instanceof Error ? error.message : 'Unable to release distributed lease.' });
+        }
+      }
+      const completedAt = new Date().toISOString();
+      const status = !acquired ? 'skipped' : result.failed === 0 ? 'completed' :
+        result.reconciled > 0 ? 'partial' : 'failed';
+      lastRun = { ...result, startedAt, completedAt, status };
+      try {
+        await options.ledger.recordReconciliationRun({
+          runId, startedAt, completedAt, status,
+          scanned: result.scanned, reconciled: result.reconciled,
+          skippedTerminal: result.skippedTerminal, failed: result.failed,
+          errorCount: result.errors.length, errors: result.errors.slice(0, 100),
+        });
+      } catch (error) {
+        result.failed++;
+        result.errors.push({ clientOrderId: '__audit__', error: error instanceof Error ? error.message : 'Unable to persist reconciliation run audit.' });
+        lastRun = { ...result, startedAt, completedAt, status: 'failed' };
+      }
       running = false;
     }
   }

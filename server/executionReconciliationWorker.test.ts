@@ -15,6 +15,10 @@ describe('Automated execution reconciliation worker', () => {
         return { ...event, sequence: appended.length };
       },
       readEvents: async () => [],
+      acquireReconciliationLease: async () => true,
+      renewReconciliationLease: async () => true,
+      releaseReconciliationLease: async () => {},
+      recordReconciliationRun: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async (clientOrderId: string) => ({
@@ -55,6 +59,10 @@ describe('Automated execution reconciliation worker', () => {
       ],
       append: async (event: any) => { appended.push(event); return event; },
       readEvents: async () => [],
+      acquireReconciliationLease: async () => true,
+      renewReconciliationLease: async () => true,
+      releaseReconciliationLease: async () => {},
+      recordReconciliationRun: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async () => ({
@@ -69,4 +77,28 @@ describe('Automated execution reconciliation worker', () => {
     assert.equal(appended.length, 0);
     assert.match(result.errors[0].error, /incomplete/);
   });
+  it('does not poll Alpaca when another instance owns the distributed lease', async () => {
+    let brokerCalls = 0;
+    const runs: any[] = [];
+    const ledger = {
+      listTrackedOrders: async () => [],
+      append: async (event: any) => event,
+      readEvents: async () => [],
+      acquireReconciliationLease: async () => false,
+      renewReconciliationLease: async () => true,
+      releaseReconciliationLease: async () => {},
+      recordReconciliationRun: async (run: any) => { runs.push(run); },
+    };
+    const alpaca = {
+      getExecutionSnapshot: async () => { brokerCalls++; return null; },
+    };
+    const worker = createExecutionReconciliationWorker({ alpaca: alpaca as any, ledger: ledger as any });
+    const result = await worker.runOnce();
+    assert.equal(result.leaseAcquired, false);
+    assert.equal(result.scanned, 0);
+    assert.equal(brokerCalls, 0);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].status, 'skipped');
+  });
+
 });
