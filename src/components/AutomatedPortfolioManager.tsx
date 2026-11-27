@@ -430,7 +430,9 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
         ...(!portfolioRisk.allowNewEntries
           ? candidateSelection.ordersToPlace.map((candidate) => ({
               symbol: candidate.symbol,
+              sector: 'Portfolio Risk',
               setupType: 'PORTFOLIO_RISK',
+              signalPrice: candidate.signalPrice,
               reasons: [portfolioRisk.reasons.join(' ') || 'Portfolio risk gate blocked new entries.'],
             }))
           : []),
