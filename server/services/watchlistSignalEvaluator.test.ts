@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateWatchlistBreakout, WATCHLIST_SIGNAL_RULE_VERSION } from './watchlistSignalEvaluator.ts';
+import { evaluateWatchlistBreakout as evaluateWithEvidence, WATCHLIST_SIGNAL_RULE_VERSION } from './watchlistSignalEvaluator.ts';
+import { buildWatchlistSignalMarketData } from './watchlistMarketData.ts';
 import type { Candle, DivergenceSetup } from '../../src/utils/trullasStrategy.ts';
 
 const base = Date.UTC(2026, 10, 1);
@@ -31,6 +32,30 @@ const bar = (day: number, open: number, high: number, low: number, close: number
   dateStr: new Date(base + day * 86_400_000).toISOString().slice(0, 10),
   open, high, low, close, volume: 1000,
 });
+function evaluateWatchlistBreakout(setupValue: DivergenceSetup, candles: Candle[], evaluatedAt: number) {
+  const last = candles[candles.length - 1];
+  const padded = last.timestamp < evaluatedAt
+    ? [...candles, {
+        timestamp: evaluatedAt,
+        dateStr: new Date(evaluatedAt).toISOString().slice(0, 10),
+        open: last.close, high: last.close + 1, low: Math.max(0.01, last.close - 1),
+        close: last.close, volume: 1000,
+      }]
+    : candles;
+  const built = buildWatchlistSignalMarketData({
+    symbol: setupValue.symbol,
+    timeframe: setupValue.timeframe,
+    candles: padded,
+    retrievedAt: evaluatedAt,
+    feedMetadata: {
+      isLiveFeed: true, source: 'Yahoo Finance v8 Chart API',
+      exchange: 'NMS', exchangeTimezone: 'America/New_York', currency: 'USD',
+    },
+  });
+  if (!built.ok) throw new Error(built.reason);
+  return evaluateWithEvidence(setupValue, built.evidence, evaluatedAt, 60_000);
+}
+
 
 test('bullish trigger requires a closed-candle close crossing above trigger', () => {
   const result = evaluateWatchlistBreakout(setup(), [bar(0, 99, 101, 98, 100), bar(1, 100, 106, 99, 105.5)], base + 2 * 86_400_000);
