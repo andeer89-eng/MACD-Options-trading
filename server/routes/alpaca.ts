@@ -16,7 +16,7 @@ function handleAlpacaError(res: Response, err: unknown) {
 
 export function createAlpacaRouter(alpaca: AlpacaService, authOptions: FirebaseAuthOptions): Router {
   const router = Router();
-  router.use(createFirebaseAlpacaAuthMiddleware(authOptions));
+  router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
 
   router.get('/api/alpaca/status', async (req: Request, res: Response) => {
     try {
