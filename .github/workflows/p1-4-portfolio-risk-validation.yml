@@ -1,6 +1,7 @@
 name: P1.4 portfolio risk validation
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feat/p1-4-unified-portfolio-risk-control
