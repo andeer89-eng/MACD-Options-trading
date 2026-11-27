@@ -23,6 +23,7 @@ export function createExecutionReconciliationWorker(options: {
   const concurrency = Math.max(1, Math.min(10, options.concurrency ?? 3));
   let timer: ReturnType<typeof setInterval> | undefined;
   let running = false;
+  let lastRun: (ReconciliationRunResult & { completedAt: string }) | null = null;
 
   async function reconcileOrder(clientOrderId: string): Promise<void> {
     const snapshot = await options.alpaca.getExecutionSnapshot(clientOrderId);
@@ -119,6 +120,7 @@ export function createExecutionReconciliationWorker(options: {
           }
         }
       }
+      lastRun = { ...result, completedAt: new Date().toISOString() };
       return result;
     } finally {
       running = false;
@@ -139,5 +141,9 @@ export function createExecutionReconciliationWorker(options: {
     timer = undefined;
   }
 
-  return { start, stop, runOnce };
+  function getStatus() {
+    return { running, intervalMs, lastRun };
+  }
+
+  return { start, stop, runOnce, getStatus };
 }
