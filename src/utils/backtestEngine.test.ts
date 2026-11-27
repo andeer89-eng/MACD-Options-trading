@@ -215,13 +215,18 @@ describe('Trullàs Backtest Engine & LuxAlgo Journal-Core Integration', () => {
         close = 119.0;
         high = 119.4;
         low = 117.6;
-      } else if (i === 66 || i === 67) {
-        // Hit TP1 (~121.74) without reaching TP2 (~124.47)
+      } else if (i === 66) {
+        // Next-open entry is around 121.70; hit TP1 without touching the initial stop or TP2.
+        close = 121.8;
+        high = 124.0;
+        low = 121.0;
+      } else if (i === 67) {
+        // Reverse through the entry after TP1 so the remaining tranche exits at breakeven.
         close = 121.8;
         high = 122.4;
         low = 119.5;
       } else if (i >= 68) {
-        // Reverse back through entry (119.0) so runner stops at BE after 50% TP1 banked
+        // Continue reversing after the breakeven stop has been crossed.
         close = Math.max(108, 118.5 - (i - 68) * 1.2);
         high = close + 0.4;
         low = close - 1.2;
@@ -250,6 +255,11 @@ describe('Trullàs Backtest Engine & LuxAlgo Journal-Core Integration', () => {
 
     const partialThenBe = result.trades.find((t) => t.exitReason === 'BREAKEVEN');
     assert.ok(partialThenBe, 'Expected a trade that scaled 50% at TP1 and exited runner at breakeven');
+    assert.equal(
+      partialThenBe.entryPrice,
+      candles[partialThenBe.entryIndex].open,
+      'Partial-tranche setup must also use the next candle open'
+    );
     assert.ok(partialThenBe.grossPnl > 0, `Expected TP1 50% tranche profit > 0 even when runner hits BE, got ${partialThenBe.grossPnl}`);
     assert.equal(
       Number((partialThenBe.grossPnl - partialThenBe.feeAndSlippageDollars).toFixed(2)),
