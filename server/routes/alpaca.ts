@@ -165,6 +165,7 @@ export function createAlpacaRouter(
     const evidence: Array<Record<string, string | number | boolean>> = [];
     let scanned = 0;
     let pageToken = '';
+    const seenPageTokens = new Set<string>();
     let coverageComplete = true;
     try {
       while (scanned < maxOrders) {
@@ -203,6 +204,8 @@ export function createAlpacaRouter(
         }
         pageToken = page.nextPageToken;
         if (!pageToken) break;
+        if (seenPageTokens.has(pageToken)) throw new Error('Firestore returned a repeated order-index page token; audit stopped fail-closed.');
+        seenPageTokens.add(pageToken);
       }
       if (pageToken) coverageComplete = false;
       const completedAt = new Date().toISOString();
