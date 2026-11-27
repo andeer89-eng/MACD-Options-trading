@@ -44,7 +44,7 @@ export function createWatchlistRouter(
     }
 
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) return res.status(401).json({ error: 'Authentication required.' });
 
     let identity: { uid: string; emailVerified: boolean };
