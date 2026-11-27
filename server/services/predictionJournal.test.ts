@@ -149,7 +149,7 @@ test('P1.28 separates OPTION exit methods and never mixes STOCK records', async 
     });
     return { prediction, outcome };
   });
-  const stockPrediction = journal.record(stockInput('unrelated-stock'));
+  const oldCreatedAt = clock - 2 * 86_400_000;\n  const stockPrediction = journal.record({ ...stockInput('unrelated-stock'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000 });
   const stockOutcomeLabel = journal.label('unrelated-stock', {
     ...stockOutcome(), realizedAt: clock - 1, observedAt: clock,
   });
@@ -165,7 +165,7 @@ test('P1.28 separates OPTION exit methods and never mixes STOCK records', async 
 test('P1.28 handles absent benchmark observations and validates minimum sample size', async () => {
   const { calculateCohortCalibration } = await import('./predictionJournal.ts');
   const journal = new InMemoryPredictionJournal(() => clock);
-  const prediction = journal.record(stockInput('no-benchmark'));
+  const oldCreatedAt = clock - 2 * 86_400_000;\n  const prediction = journal.record({ ...stockInput('no-benchmark'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000 });
   const outcome = journal.label('no-benchmark', {
     ...stockOutcome(), benchmarkReturnPct: undefined, realizedAt: clock - 1, observedAt: clock,
   });
