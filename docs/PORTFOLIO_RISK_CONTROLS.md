@@ -271,3 +271,18 @@ on-demand; this stage does not add a new background position polling schedule or
 email/SMS/push delivery. If Firestore itself is unavailable, alert persistence may also
 fail; the API reports the underlying operation as unavailable and does not claim the alert
 was saved. No alert triggers a broker order or position mutation.
+
+## P1.11 — execution operations dashboard
+
+The Ops & Alerts workspace now includes an Execution Operations view. It obtains a Firebase
+ID token from the signed-in user and calls the authenticated Alpaca routes:
+
+- `GET /api/alpaca/overview` — account, current broker positions, recent orders and fills.
+- `GET /api/alpaca/reconciliation/alerts` — active and optionally resolved operational alerts.
+- `GET /api/alpaca/reconciliation/worker-status` — current process worker state and its in-memory last run.
+- `GET /api/alpaca/reconciliation/positions` — explicit user-triggered position audit; this endpoint also persists the reconciliation run and updates alert lifecycle in Firestore.
+
+Dashboard refresh is manual; there is no aggressive polling. The position audit is not invoked on page load or normal refresh. It performs no broker order or position mutation. Worker status is process-local and may have no last-run value after a server restart; durable run history remains in Firestore, but this dashboard stage does not yet expose a run-history endpoint.
+
+The view is intended for Alpaca Paper operations. It does not add live trading, order controls,
+external alert delivery, or deployment configuration.
