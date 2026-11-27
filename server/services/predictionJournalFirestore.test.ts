@@ -57,7 +57,18 @@ function fakeFirestore() {
     }
     return new Response('Unexpected request', { status: 500 });
   };
-  return { fetchImpl, counts: () => ({ commitCalls, documents: docs.size }) };
+  return {
+    fetchImpl,
+    counts: () => ({ commitCalls, documents: docs.size }),
+    tamperFirstEvent: () => {
+      const entry = [...docs.entries()].find(([name]) => name.includes('/predictionJournalEvents/'));
+      if (!entry) throw new Error('No event to tamper.');
+      const eventJson = entry[1].fields.eventJson.stringValue;
+      const event = JSON.parse(eventJson);
+      event.eventHash = 'f'.repeat(64);
+      entry[1].fields.eventJson = { stringValue: JSON.stringify(event) };
+    },
+  };
 }
 
 test('persists STOCK and OPTION event types in an atomic append-only hash chain', async () => {
@@ -99,6 +110,17 @@ test('enforces prediction identity uniqueness and verifies the complete persiste
   const verification = await journal.verify('owner_1');
   assert.equal(verification.valid, true);
   assert.equal(verification.headMatches, true);
+});
+
+test('detects a tampered persisted event during full-history verification', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.tamperFirstEvent();
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, false);
+  assert.equal(verification.headMatches, false);
+  assert.equal(verification.brokenAtSequence, 1);
 });
 
 test('persists and idempotently replays outcome labels with their own uniqueness key', async () => {
