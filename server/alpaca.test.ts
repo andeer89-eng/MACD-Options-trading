@@ -216,6 +216,8 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let baseUrl = '';
     const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: any }> = [];
     let includePendingNvdaClose = false;
+    const submittedOrders = new Map<string, any>();
+    let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
       const { app } = await createApp({
@@ -297,6 +299,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
               ]),
               { status: 200, headers: { 'Content-Type': 'application/json' } }
             );
+          }
+
+          if (url.includes('/v2/orders:by_client_order_id') && method === 'GET') {
+            const clientOrderId = new URL(url).searchParams.get('client_order_id') || '';
+            const found = submittedOrders.get(clientOrderId);
+            return found
+              ? new Response(JSON.stringify(found), { status: 200, headers: { 'Content-Type': 'application/json' } })
+              : new Response(JSON.stringify({ message: 'order not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
           }
 
           if (url.includes('/v2/orders') && method === 'GET' && new URL(url).searchParams.get('status') === 'open') {
@@ -445,17 +455,26 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           }
 
           if (url.endsWith('/v2/orders') && method === 'POST') {
-            return new Response(
-              JSON.stringify({
-                id: 'ord-created-99',
-                symbol: body.symbol,
-                side: body.side,
-                qty: body.qty,
-                type: body.type,
-                status: 'accepted',
-              }),
-              { status: 200, headers: { 'Content-Type': 'application/json' } }
-            );
+            const order = {
+              id: `ord-created-${body.client_order_id}`,
+              client_order_id: body.client_order_id,
+              symbol: body.symbol,
+              side: body.side,
+              qty: body.qty,
+              type: body.type,
+              time_in_force: body.time_in_force || 'day',
+              limit_price: body.limit_price ?? null,
+              stop_price: body.stop_price ?? null,
+              status: 'accepted',
+            };
+            submittedOrders.set(String(body.client_order_id), order);
+            if (simulateAcceptedPostTimeoutFor === body.client_order_id) {
+              simulateAcceptedPostTimeoutFor = null;
+              throw new TypeError('simulated socket timeout after broker accepted order');
+            }
+            return new Response(JSON.stringify(order), {
+              status: 200, headers: { 'Content-Type': 'application/json' },
+            });
           }
 
           if (url.includes('/v2/orders/') && method === 'DELETE') {
@@ -545,11 +564,12 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           qty: 3,
           type: 'market',
           time_in_force: 'day',
+          client_order_id: 'test-aapl-buy-003',
         }),
       });
       assert.equal(eqRes.status, 200);
       const eqBody = (await eqRes.json()) as any;
-      assert.equal(eqBody.order.id, 'ord-created-99');
+      assert.equal(eqBody.order.id, 'ord-created-test-aapl-buy-003');
 
       const optRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
@@ -561,13 +581,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           type: 'limit',
           limit_price: 2.45,
           time_in_force: 'day',
+          client_order_id: 'test-spy-short-put-001',
         }),
       });
       assert.equal(optRes.status, 409, 'Large short put must be blocked by the per-trade worst-case loss limit');
       const smallPutRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'XYZ261218P00005000', side: 'sell', qty: 1, type: 'limit', limit_price: 0.10, time_in_force: 'day' }),
+        body: JSON.stringify({ symbol: 'XYZ261218P00005000', side: 'sell', qty: 1, type: 'limit', limit_price: 0.10, time_in_force: 'day', client_order_id: 'test-xyz-short-put-001' }),
       });
       assert.equal(smallPutRes.status, 200, 'Small short put should pass when portfolio limits are clear');
       assert.ok(calls.some((call) =>
@@ -577,7 +598,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const excessiveEquityBuy = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day' }),
+        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day', client_order_id: 'test-msft-large-buy-001' }),
       });
       assert.equal(excessiveEquityBuy.status, 409, 'Projected equity order notional must count against gross exposure');
 
@@ -585,10 +606,49 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const overClose = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day' }),
+        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day', client_order_id: 'test-nvda-over-close-001' }),
       });
       assert.equal(overClose.status, 409, 'A new close must not exceed the held position after pending closes');
       includePendingNvdaClose = false;
+    });
+
+    it('recovers an accepted order after a timeout and never POSTs the same client_order_id twice', async () => {
+      const clientOrderId = 'retry-safe-order-001';
+      simulateAcceptedPostTimeoutFor = clientOrderId;
+      const payload = {
+        symbol: 'AAPL', side: 'buy', qty: 1, type: 'market',
+        time_in_force: 'day', client_order_id: clientOrderId,
+      };
+      const postCountBefore = calls.filter((call) => call.url.endsWith('/v2/orders') && call.method === 'POST').length;
+      const first = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(first.status, 200, 'accepted order should be recovered after simulated response timeout');
+      const firstBody = await first.json() as any;
+      assert.equal(firstBody.order.client_order_id, clientOrderId);
+      assert.equal(firstBody.idempotentReplay, true);
+
+      const second = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(second.status, 200);
+      const secondBody = await second.json() as any;
+      assert.equal(secondBody.order.id, firstBody.order.id);
+      assert.equal(secondBody.idempotentReplay, true);
+
+      const mismatchedReuse = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, qty: 2 }),
+      });
+      assert.equal(mismatchedReuse.status, 409, 'same key cannot be reused for a different order payload');
+
+      const postCountAfter = calls.filter((call) => call.url.endsWith('/v2/orders') && call.method === 'POST').length;
+      assert.equal(postCountAfter - postCountBefore, 1, 'same idempotency key must create at most one broker POST');
     });
 
     it('GET /api/alpaca/options/contracts & DELETE /api/alpaca/positions/:symbol work cleanly', async () => {

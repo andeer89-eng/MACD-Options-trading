@@ -50,3 +50,26 @@ These are deterministic pre-trade guardrails, not a guarantee against gaps, slip
 The server includes the proposed equity order's estimated notional in the gross-exposure calculation. Limit and stop prices are used when supplied; market orders use the current held-position mark or a fresh Alpaca IEX latest trade. If a reliable price cannot be obtained for a market order or existing working equity order, the request fails closed. Existing working equity orders are also included using their remaining quantity.
 
 Risk-reducing exits are allowed only to the extent that the requested close plus already-working close-side quantities do not exceed the current broker position. An attempted over-close is rejected with HTTP 409 rather than being treated as a fresh entry.
+
+## P1.6a — Alpaca broker-native order idempotency
+
+Every order submission through `POST /api/alpaca/orders` must include a stable
+`client_order_id` (maximum 48 characters, as required by Alpaca). The caller
+must reuse the same ID for every retry of the same order intent and use a new
+ID for a genuinely new order.
+
+Before running the portfolio risk snapshot, the server queries Alpaca by
+`client_order_id`. If the broker already knows the order, the server returns
+that order without submitting another POST. If the initial POST has an
+ambiguous transport failure or duplicate-ID response, the server queries the
+same broker identifier and returns the accepted order when found. Reusing an
+identifier with a different symbol, side, quantity, order type, time-in-force,
+limit price, or stop price is rejected with HTTP 409.
+
+Uniqueness is delegated to Alpaca's account-level `client_order_id`
+constraint rather than an in-memory server cache. This protects retries across
+server restarts and concurrent application instances, provided the caller
+retains the same ID. It is not a substitute for a durable local execution
+ledger: broker lookup availability and persistence of local risk/audit
+decisions remain separate P1.6 follow-up work. All order submission remains
+Paper-only.

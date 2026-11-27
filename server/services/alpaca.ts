@@ -371,6 +371,16 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     return parsed as T;
   }
 
+  async function getOrderByClientOrderId(clientOrderId: string): Promise<any | null> {
+    const qs = new URLSearchParams({ client_order_id: clientOrderId });
+    try {
+      return await alpacaRequest<any>(`/v2/orders:by_client_order_id?${qs.toString()}`);
+    } catch (error) {
+      if (error instanceof AlpacaApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
   async function getStatus(verify = false) {
     const cfg = getConfig();
     if (!cfg.configured) {
@@ -709,6 +719,31 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
     }
+    const cfg = getConfig();
+    if (!cfg.configured) throw new AlpacaApiError(503, cfg.message);
+
+    const clientOrderId = validated.payload.client_order_id;
+    if (!clientOrderId) {
+      throw new AlpacaApiError(400, 'client_order_id is required. Generate one stable ID per order intent and reuse it for every retry.');
+    }
+
+    // Resolve prior submissions before running risk checks or attempting another POST.
+    const previouslySubmitted = await getOrderByClientOrderId(clientOrderId);
+    if (previouslySubmitted) {
+      const sameIntent =
+        String(previouslySubmitted?.symbol || '').toUpperCase() === validated.payload.symbol &&
+        String(previouslySubmitted?.side || '') === validated.payload.side &&
+        toNum(previouslySubmitted?.qty, NaN) === validated.payload.qty &&
+        String(previouslySubmitted?.type || '') === validated.payload.type &&
+        String(previouslySubmitted?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
+        toNullableNum(previouslySubmitted?.limit_price) === (validated.payload.limit_price ?? null) &&
+        toNullableNum(previouslySubmitted?.stop_price) === (validated.payload.stop_price ?? null);
+      if (!sameIntent) {
+        throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
+      }
+      return { order: previouslySubmitted, mode: 'PAPER' as const, isOption: validated.isOption, idempotentReplay: true };
+    }
+
     // The browser risk gate is advisory. Rebuild a fresh broker snapshot for every opening order.
     const isShortPutSell = validated.isOption && validated.payload.side === 'sell' && /P\d{8}$/.test(validated.payload.symbol);
     const [rawAccount, rawPositions, openOrderHistory, rawHistory] = await Promise.all([
@@ -814,14 +849,42 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       if (!orderRisk.allowed) throw new AlpacaApiError(409, orderRisk.reason || 'Short-put per-trade loss limit exceeded.');
     }
 
-    const order = await alpacaRequest<any>('/v2/orders', {
-      method: 'POST',
-      body: JSON.stringify(validated.payload),
-    });
+    let order: any;
+    try {
+      order = await alpacaRequest<any>('/v2/orders', {
+        method: 'POST',
+        body: JSON.stringify(validated.payload),
+      });
+    } catch (submissionError) {
+      // A timeout or duplicate-ID response may arrive after broker acceptance.
+      // Resolve using the same broker-enforced identifier; never mint a new one.
+      try {
+        const recovered = await getOrderByClientOrderId(clientOrderId);
+        if (recovered) {
+          const sameIntent =
+            String(recovered?.symbol || '').toUpperCase() === validated.payload.symbol &&
+            String(recovered?.side || '') === validated.payload.side &&
+            toNum(recovered?.qty, NaN) === validated.payload.qty &&
+            String(recovered?.type || '') === validated.payload.type &&
+            String(recovered?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
+            toNullableNum(recovered?.limit_price) === (validated.payload.limit_price ?? null) &&
+            toNullableNum(recovered?.stop_price) === (validated.payload.stop_price ?? null);
+          if (!sameIntent) {
+            throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
+          }
+          return { order: recovered, mode: 'PAPER' as const, isOption: validated.isOption, idempotentReplay: true };
+        }
+      } catch (lookupError) {
+        if (lookupError instanceof AlpacaApiError && lookupError.status === 409) throw lookupError;
+        // Preserve the original failure. Caller must retry with the same client_order_id.
+      }
+      throw submissionError;
+    }
     return {
       order,
       mode: 'PAPER' as const,
       isOption: validated.isOption,
+      idempotentReplay: false,
     };
   }
 
