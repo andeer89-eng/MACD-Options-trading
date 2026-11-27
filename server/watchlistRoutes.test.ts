@@ -37,7 +37,7 @@ describe('Server-authoritative watchlist trigger route', () => {
         if (token === 'valid-unverified') return { uid: 'owner-1', emailVerified: false };
         if (token === 'valid-verified') return { uid: 'owner-1', emailVerified: true };
         throw new Error('invalid token');
-      } as any,
+      },
       markTriggered: async () => {
         writes++;
         return { status: 'TRIGGERED', symbol: 'AAPL', updatedAt: new Date(0).toISOString() };
