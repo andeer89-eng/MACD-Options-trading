@@ -385,7 +385,6 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       const doc = response.ok ? await response.json() as any : null;
       const current = fromDocument(doc);
       const nowIso = new Date(now()).toISOString();
-      const active = current.status === 'ACTIVE';
       const data = {
         alertId: input.alertId,
         type: input.type,
