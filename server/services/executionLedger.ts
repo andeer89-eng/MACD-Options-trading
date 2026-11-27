@@ -387,14 +387,6 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     let cursorName = '';
     let scannedEvents = 0;
     let skippedInvalid = 0;
-    const collectionGroupQuery = {
-      structuredQuery: {
-        from: [{ collectionId: 'events', allDescendants: true }],
-        orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
-        limit: 1000,
-        ...(cursorName ? { startAt: { values: [{ referenceValue: cursorName }], before: false } } : {}),
-      },
-    };
 
     for (let page = 0; page < 10_000; page++) {
       const structuredQuery = {
