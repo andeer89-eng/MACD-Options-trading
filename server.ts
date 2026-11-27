@@ -15,6 +15,7 @@ import { createHealthRouter } from './server/routes/health.ts';
 import { createPythonRouter } from './server/routes/python.ts';
 import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
+import { createExecutionLedger } from './server/services/executionLedger.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -27,6 +28,7 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   firebaseProjectIdOverride?: string;
   alpacaAllowedUidsOverride?: string[];
   firebaseAuthFetchOverride?: typeof fetch;
+  executionLedgerRequiredOverride?: boolean;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express }> {
@@ -49,11 +51,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.use(createStreamRouter(marketData, { pulseIntervalMs: options.streamPulseIntervalMs }));
   const allowedAlpacaUids = options.alpacaAllowedUidsOverride ??
     (process.env.ALPACA_ALLOWED_UIDS || '').split(',').map((uid) => uid.trim()).filter(Boolean);
+  const firebaseProjectId = options.firebaseProjectIdOverride || process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId;
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const executionLedger = serviceAccountJson
+    ? createExecutionLedger({ projectId: firebaseProjectId, serviceAccountJson })
+    : undefined;
+  const executionLedgerRequired = options.executionLedgerRequiredOverride ??
+    (process.env.EXECUTION_LEDGER_REQUIRED === 'true' || (isProduction && process.env.EXECUTION_LEDGER_REQUIRED !== 'false'));
+
   app.use(createAlpacaRouter(alpaca, {
-    projectId: options.firebaseProjectIdOverride || process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId,
+    projectId: firebaseProjectId,
     allowedUids: allowedAlpacaUids,
     fetchImpl: options.firebaseAuthFetchOverride,
-  }));
+  }, executionLedger, executionLedgerRequired));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {

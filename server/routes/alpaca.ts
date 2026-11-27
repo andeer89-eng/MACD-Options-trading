@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
 import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
+import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
+type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
   if (err instanceof AlpacaApiError) {
@@ -14,7 +16,12 @@ function handleAlpacaError(res: Response, err: unknown) {
   return res.status(502).json({ error: message, mode: 'PAPER' });
 }
 
-export function createAlpacaRouter(alpaca: AlpacaService, authOptions: FirebaseAuthOptions): Router {
+export function createAlpacaRouter(
+  alpaca: AlpacaService,
+  authOptions: FirebaseAuthOptions,
+  executionLedger?: ExecutionLedger,
+  ledgerRequired = false
+): Router {
   const router = Router();
   router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
 
@@ -70,10 +77,56 @@ export function createAlpacaRouter(alpaca: AlpacaService, authOptions: FirebaseA
 
   router.post('/api/alpaca/orders', async (req: Request, res: Response) => {
     try {
+      if (ledgerRequired && !executionLedger) {
+        res.status(503).json({ error: 'Persistent execution ledger is required but not configured.', mode: 'PAPER' });
+        return;
+      }
       const result = await alpaca.submitOrder(req.body || {});
+      if (executionLedger) {
+        try {
+          const order = result.order;
+          await executionLedger.append({
+            eventType: 'ORDER_SUBMITTED',
+            clientOrderId: String(order.client_order_id || req.body?.client_order_id || ''),
+            brokerOrderId: String(order.id),
+            symbol: String(order.symbol || req.body?.symbol || '').toUpperCase(),
+            occurredAt: String(order.submitted_at || new Date().toISOString()),
+            payload: {
+              status: String(order.status || 'accepted'),
+              side: String(order.side || req.body?.side || ''),
+              qty: Number(order.qty ?? req.body?.qty ?? 0),
+              type: String(order.type || req.body?.type || ''),
+            },
+          });
+        } catch {
+          // The broker may already have accepted the order. Return 503 so the
+          // caller retries with the same client_order_id and broker idempotency
+          // recovers the order while the ledger write is retried.
+          res.status(503).json({
+            error: 'Order state is known to Alpaca but persistent audit recording failed. Retry with the same client_order_id.',
+            mode: 'PAPER',
+            brokerOrderId: result.order.id,
+            clientOrderId: result.order.client_order_id || req.body?.client_order_id,
+          });
+          return;
+        }
+      }
       res.json(result);
     } catch (err) {
       handleAlpacaError(res, err);
+    }
+  });
+
+  router.get('/api/alpaca/orders/:clientOrderId/ledger', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const events = await executionLedger.readEvents(req.params.clientOrderId);
+      res.json({ mode: 'PAPER', clientOrderId: req.params.clientOrderId, events, verification: verifyExecutionLedgerChain(events) });
+    } catch {
+      res.status(503).json({ error: 'Persistent execution ledger is temporarily unavailable.', mode: 'PAPER' });
     }
   });
 
