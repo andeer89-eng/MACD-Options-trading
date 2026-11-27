@@ -30,7 +30,13 @@ jobs:
         run: bun run test
 
       - name: Install Firestore rules test tooling
-        run: npm install --no-save --package-lock=false @firebase/rules-unit-testing firebase-tools
+        run: npm install --no-save --package-lock=false --legacy-peer-deps @firebase/rules-unit-testing firebase-tools
+
+      - name: Set up Java for Firestore Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
 
       - name: Test Firestore rules in emulator
         run: npx firebase emulators:exec --only firestore --project demo-macd-options-rules "bunx tsx --test server/firestoreRules.test.ts"
