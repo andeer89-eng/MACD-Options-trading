@@ -243,3 +243,31 @@ Invalid quantities, malformed fills, incomplete ledger reads, or a broken hash c
 closed rather than producing a classified result. The endpoint performs only GET requests
 against Alpaca and Firestore writes for the audit record; it never submits, replaces, or
 cancels an order and never closes or changes a position.
+
+## P1.10 — operational reconciliation alerts
+
+The authenticated operational endpoints are:
+
+- `GET /api/alpaca/reconciliation/alerts?status=ACTIVE&limit=100` — list persisted alerts; status may be `ACTIVE` or `RESOLVED`, and limit is 1–200.
+- `GET /api/alpaca/reconciliation/worker-status` — expose the in-process worker state and last run.
+
+Alerts are stored in the append/update operational collection `alpacaExecutionAlerts`
+with a deterministic alert ID, severity, type, source, first/last seen timestamps,
+occurrence count, evidence, status, and resolution metadata. Repeated observations update
+the same active alert rather than creating a new document each time.
+
+Position reconciliation raises:
+- `INFO` for a broker position without application fill provenance.
+- `WARNING` for a broker-vs-ledger quantity variance.
+- `CRITICAL` when position reconciliation cannot complete or a ledger hash chain fails.
+
+A matching position resolves its corresponding position alert. A symbol absent from a later
+broker/ledger comparison resolves its stale position alert. Successful worker order
+reconciliation resolves its order-level failure alert; worker infrastructure failures
+raise a separate critical alert.
+
+Alert listing and worker status are read-only. The position snapshot endpoint remains
+on-demand; this stage does not add a new background position polling schedule or outbound
+email/SMS/push delivery. If Firestore itself is unavailable, alert persistence may also
+fail; the API reports the underlying operation as unavailable and does not claim the alert
+was saved. No alert triggers a broker order or position mutation.
