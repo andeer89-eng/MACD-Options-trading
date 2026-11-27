@@ -217,7 +217,8 @@ export function createAlpacaRouter(
       const exceptions = counts.INVALID + counts.UNVERIFIABLE + counts.MISSING_LEDGER + counts.INDEX_MISMATCH;
       const report = {
         auditId, runType: 'ACCOUNT_INTEGRITY_AUDIT', startedAt, completedAt,
-        status: !coverageComplete ? 'partial' : exceptions === 0 ? 'completed' : 'partial',
+        status: coverageComplete ? 'completed' : 'partial',
+        integrityStatus: exceptions === 0 ? 'CLEAN' : 'FINDINGS',
         coverageComplete, coverageScope: 'INDEXED_ORDERS_ONLY',
         maxOrders, scanned, counts, exceptionCount: exceptions,
         evidence, evidenceTruncated: exceptions > evidence.length, readOnly: true,
