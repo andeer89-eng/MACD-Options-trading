@@ -29,6 +29,12 @@ jobs:
       - name: Run unit and server integration tests
         run: bun run test
 
+      - name: Install Firestore rules test tooling
+        run: npm install --no-save --package-lock=false @firebase/rules-unit-testing firebase-tools
+
+      - name: Test Firestore rules in emulator
+        run: npx firebase emulators:exec --only firestore --project demo-macd-options-rules "bunx tsx --test server/firestoreRules.test.ts"
+
       - name: TypeScript validation
         run: bun run lint
 
