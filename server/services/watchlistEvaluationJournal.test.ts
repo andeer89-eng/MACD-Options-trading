@@ -49,7 +49,7 @@ function createFakeFetch() {
       if (savedRecordJson) return new Response(JSON.stringify({ error: 'already exists' }), { status: 409 });
       const body = JSON.parse(String(init?.body));
       savedRecordJson = body.fields.recordJson.stringValue;
-      JSON.parse(savedRecordJson);
+      JSON.parse(savedRecordJson!);
       return new Response(JSON.stringify({ name: 'created' }), { status: 200 });
     }
     if (url.includes('/watchlistEvaluationEvents/')) {
