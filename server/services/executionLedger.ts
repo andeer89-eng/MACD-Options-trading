@@ -369,6 +369,29 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (!response.ok) throw new ExecutionLedgerUnavailableError('Reconciliation run audit record could not be persisted.');
   }
 
+  async function listReconciliationRuns(options: { limit?: number } = {}): Promise<Record<string, any>[]> {
+    const limit = Math.max(1, Math.min(100, Math.floor(options.limit || 50)));
+    const runs: Record<string, any>[] = [];
+    const seenTokens = new Set<string>();
+    let pageToken = '';
+    for (let page = 0; page < 100; page++) {
+      const query = new URLSearchParams({ pageSize: String(Math.min(100, limit - runs.length)), orderBy: 'startedAt desc' });
+      if (pageToken) query.set('pageToken', pageToken);
+      const response = await request('/alpacaExecutionRuns?' + query.toString());
+      if (response.status === 404 && page === 0) return [];
+      if (!response.ok) throw new ExecutionLedgerUnavailableError('Reconciliation run history could not be listed.');
+      const body = await response.json() as { documents?: any[]; nextPageToken?: string };
+      runs.push(...(body.documents || []).map(doc => fromDocument(doc)));
+      if (runs.length >= limit) return runs.slice(0, limit);
+      const next = body.nextPageToken || '';
+      if (!next) return runs;
+      if (seenTokens.has(next)) throw new ExecutionLedgerUnavailableError('Firestore returned a repeated reconciliation-run page token.');
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    throw new ExecutionLedgerUnavailableError('Reconciliation run history exceeded the safe pagination limit.');
+  }
+
   async function upsertOperationalAlert(input: {
     alertId: string;
     type: string;
@@ -602,5 +625,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
