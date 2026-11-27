@@ -353,6 +353,9 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     failed: number;
     errorCount: number;
     errors: Array<{ clientOrderId: string; error: string }>;
+    runType?: string;
+    summary?: Record<string, number>;
+    rows?: Array<Record<string, string | number>>;
   }): Promise<void> {
     if (!run.runId || run.runId.length > 128) throw new Error('Invalid reconciliation run ID.');
     const path = '/alpacaExecutionRuns/' + encodeURIComponent(run.runId);
