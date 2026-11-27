@@ -57,6 +57,11 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function replayComparableJson(value: Record<string, unknown>): string {
+  const { evaluatedAt: _evaluatedAt, ...stableEvidence } = value;
+  return canonicalJson(stableEvidence);
+}
+
 export function createWatchlistEvaluationId(input: WatchlistEvaluationJournalInput): string {
   const identity = [
     input.ownerId,
@@ -189,7 +194,17 @@ export function createWatchlistEvaluationJournal(options: {
       throw new WatchlistEvaluationJournalError('Existing evaluation journal record could not be verified.', 503);
     }
     const existing = await existingResponse.json();
-    if (decodeString(existing, 'recordJson') !== recordJson) {
+    const existingRecordJson = decodeString(existing, 'recordJson');
+    let existingRecord: Record<string, unknown> | undefined;
+    try {
+      existingRecord = existingRecordJson ? JSON.parse(existingRecordJson) : undefined;
+    } catch {
+      existingRecord = undefined;
+    }
+    if (
+      !existingRecord ||
+      replayComparableJson(existingRecord) !== replayComparableJson(normalized as unknown as Record<string, unknown>)
+    ) {
       throw new WatchlistEvaluationJournalError('Evaluation identity already exists with different evidence.', 409);
     }
     return { evaluationId, replayed: true };
