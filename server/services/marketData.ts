@@ -250,8 +250,11 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
 
   async function fetchWatchlistSignalMarketData(symbol: string, timeframe: string, range: string, minCandles: number = 20) {
     const normalizedSymbol = symbol.trim().toUpperCase();
-    const retrievedAt = Date.now();
+    if (options.fetchYahooDataOverride) {
+      return { ok: false as const, reason: 'OVERRIDE_FEED_PROVENANCE_UNAVAILABLE' };
+    }
     const candles = await fetchYahooData(normalizedSymbol, timeframe, range, minCandles);
+    const retrievedAt = Date.now();
     const feedMetadata = lastFeedMetaMap.get(normalizedSymbol);
     return buildWatchlistSignalMarketData({
       symbol: normalizedSymbol,
