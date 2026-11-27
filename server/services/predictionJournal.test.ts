@@ -18,7 +18,7 @@ function stockOutcome(): StockOutcome {
     totalReturnPct: 4.2, benchmarkReturnPct: 2.1, labelSource: 'fixture-close-prices' };
 }
 function optionOutcome(): OptionOutcome {
-  return { assetClass: 'OPTION', realizedAt: clock + 1000, observedAt: clock + 1100, outcome: 'NEGATIVE',
+  return { assetClass: 'OPTION', realizedAt: clock - 100, observedAt: clock - 50, outcome: 'NEGATIVE',
     contractReturnPct: -35, underlyingReturnPct: 2, exitMethod: 'MARK_TO_MARKET',
     entryPremium: 5, exitValue: 3.25, labelSource: 'fixture-option-marks' };
 }
