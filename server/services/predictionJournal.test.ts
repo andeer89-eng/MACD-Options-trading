@@ -101,6 +101,6 @@ test('multiclass calibration scores the realized NEUTRAL and NEGATIVE classes', 
   assert.equal(report.sampleSize, 2);
   assert.equal(report.accuracy, 1);
   assert.ok(Math.abs(report.multiclassBrierScore - 0.1) < 1e-9);
-  assert.ok(Math.abs(report.logLoss - -Math.log(0.75)) < 1e-9);
+  assert.ok(Math.abs(report.logLoss - ((-Math.log(0.8) - Math.log(0.7)) / 2)) < 1e-9);
   assert.equal(report.brierScore, 0.01);
 });
