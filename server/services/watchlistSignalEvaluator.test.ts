@@ -45,6 +45,7 @@ function evaluateWatchlistBreakout(setupValue: DivergenceSetup, candles: Candle[
   const built = buildWatchlistSignalMarketData({
     symbol: setupValue.symbol,
     timeframe: setupValue.timeframe,
+    range: '3mo',
     candles: padded,
     retrievedAt: evaluatedAt,
     feedMetadata: {
