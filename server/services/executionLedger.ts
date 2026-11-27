@@ -26,6 +26,7 @@ export interface TrackedExecutionOrder {
   brokerOrderId?: string;
   symbol: string;
   lastEventType: ExecutionEventType;
+  status?: string;
   updatedAt: string;
 }
 
