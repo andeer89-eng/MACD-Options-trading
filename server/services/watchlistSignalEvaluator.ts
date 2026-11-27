@@ -1,4 +1,5 @@
-import type { Candle, DivergenceSetup } from '../../src/utils/trullasStrategy.ts';
+import type { DivergenceSetup } from '../../src/utils/trullasStrategy.ts';
+import { validateWatchlistSignalMarketData, type WatchlistSignalMarketData } from './watchlistMarketData.ts';
 
 export const WATCHLIST_SIGNAL_RULE_VERSION = 'trullas-close-cross-v1';
 
@@ -55,7 +56,7 @@ export function evaluateWatchlistBreakout(
     return invalid('INVALID_EVALUATION_TIMESTAMP');
   }
 
-  const bullish = setup.type === 'BULLISH_TRIPLE' || setup.type === 'BULLISH_DOUBLE';
+  const provenanceError = validateWatchlistSignalMarketData(marketData, setup, evaluatedAt, maxMarketDataAgeMs);\n  if (provenanceError) return invalid(provenanceError);\n\n  const closedCandles = marketData.candles;\n  const bullish = setup.type === 'BULLISH_TRIPLE' || setup.type === 'BULLISH_DOUBLE';
   const bearish = setup.type === 'BEARISH_TRIPLE' || setup.type === 'BEARISH_DOUBLE';
   if (!bullish && !bearish) return invalid('UNSUPPORTED_SETUP_DIRECTION');
 
