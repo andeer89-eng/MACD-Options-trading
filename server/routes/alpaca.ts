@@ -154,6 +154,19 @@ export function createAlpacaRouter(
       const order = snapshot.order;
       const brokerOrderId = String(order.id);
       const symbol = String(order.symbol || '').toUpperCase();
+      const brokerFilledQty = Number(order.filled_qty || 0);
+      const activityFilledQty = snapshot.fills.reduce((sum, fill) => sum + Number(fill?.qty || 0), 0);
+      if (!Number.isFinite(brokerFilledQty) || brokerFilledQty < 0 ||
+          Math.abs(activityFilledQty - brokerFilledQty) > 0.000001) {
+        res.status(503).json({
+          error: 'Broker order filled_qty does not match the complete fill-activity quantity; reconciliation was not committed.',
+          mode: 'PAPER',
+          brokerOrderId,
+          brokerFilledQty,
+          activityFilledQty,
+        });
+        return;
+      }
       let fillsRecorded = 0;
       for (const fill of snapshot.fills) {
         const activityId = String(fill?.id || '');
