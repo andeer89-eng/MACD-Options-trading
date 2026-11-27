@@ -43,3 +43,10 @@ Unit tests cover daily/weekly/monthly loss thresholds, missing history fail-clos
 ## Operational boundary
 
 These are deterministic pre-trade guardrails, not a guarantee against gaps, slippage, broker outages, corporate actions, or assignment risk. Alpaca can still reject an order after the pre-trade check if buying power or account permissions change between snapshot and submission.
+
+
+## Projected equity order exposure and close-order aggregation
+
+The server includes the proposed equity order's estimated notional in the gross-exposure calculation. Limit and stop prices are used when supplied; market orders use the current held-position mark or a fresh Alpaca IEX latest trade. If a reliable price cannot be obtained for a market order or existing working equity order, the request fails closed. Existing working equity orders are also included using their remaining quantity.
+
+Risk-reducing exits are allowed only to the extent that the requested close plus already-working close-side quantities do not exceed the current broker position. An attempted over-close is rejected with HTTP 409 rather than being treated as a fresh entry.

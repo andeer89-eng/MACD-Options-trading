@@ -311,6 +311,27 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
   const fetchFn: FetchLike = options.fetchImpl || fetch;
   const getConfig = () => resolveAlpacaConfig(options.env ?? process.env);
 
+  async function fetchLatestEquityPrice(symbol: string): Promise<number> {
+    const cfg = getConfig();
+    if (!cfg.configured || !cfg.keyId || !cfg.secretKey) {
+      throw new AlpacaApiError(503, 'Alpaca Paper credentials are unavailable for a market-price risk check.');
+    }
+    const url = `${cfg.dataEndpoint}/v2/stocks/${encodeURIComponent(symbol)}/trades/latest?feed=iex`;
+    const response = await fetchFn(url, {
+      headers: {
+        'APCA-API-KEY-ID': cfg.keyId,
+        'APCA-API-SECRET-KEY': cfg.secretKey,
+        'Content-Type': 'application/json',
+      },
+    });
+    const body = await response.json().catch(() => null) as any;
+    const price = toNum(body?.trade?.p, 0);
+    if (!response.ok || price <= 0) {
+      throw new AlpacaApiError(503, `Unable to obtain a current market price for ${symbol}; new equity entries are disabled.`);
+    }
+    return price;
+  }
+
   async function alpacaRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
     const cfg = getConfig();
     if (!cfg.configured || !cfg.keyId || !cfg.secretKey) {
@@ -702,27 +723,64 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     const positions = (Array.isArray(rawPositions) ? rawPositions : []).map((p) => ({
       symbol: String(p?.symbol || '').toUpperCase(), asset_class: String(p?.asset_class || ''),
       qty: toNum(p?.qty), side: String(p?.side || ''), market_value: toNum(p?.market_value),
+      current_price: toNum(p?.current_price, 0),
     }));
-    // Preserve risk-reducing exits even while the portfolio entry gate is halted.
+    const rawWorkingOrders = Array.isArray(rawOpenOrders) ? rawOpenOrders : [];
+    // Count outstanding close-side quantities before allowing an additional exit.
     const heldPosition = positions.find((p) => p.symbol === validated.payload.symbol);
     const heldQty = Math.abs(Number(heldPosition?.qty) || 0);
     const positionSide = String(heldPosition?.side || (Number(heldPosition?.qty) < 0 ? 'short' : 'long'));
-    const isRiskReducing = Boolean(
+    const closeSide = positionSide === 'long' ? 'sell' : 'buy';
+    const requestsClose = Boolean(
       heldPosition && heldQty > 0 &&
       ((positionSide === 'long' && validated.payload.side === 'sell') ||
-       (positionSide === 'short' && validated.payload.side === 'buy')) &&
-      validated.payload.qty <= heldQty
+       (positionSide === 'short' && validated.payload.side === 'buy'))
     );
+    const pendingCloseQty = rawWorkingOrders
+      .filter((o) => String(o?.symbol || '').toUpperCase() === validated.payload.symbol && o?.side === closeSide)
+      .reduce((sum, o) => sum + Math.max(0, toNum(o?.qty) - toNum(o?.filled_qty)), 0);
+    if (requestsClose && validated.payload.qty > Math.max(0, heldQty - pendingCloseQty)) {
+      throw new AlpacaApiError(409, `Close quantity exceeds the remaining ${validated.payload.symbol} position after accounting for ${pendingCloseQty} shares/contracts already working to close.`);
+    }
+    const isRiskReducing = requestsClose && validated.payload.qty <= Math.max(0, heldQty - pendingCloseQty);
     const isOpeningShortPutSell = isShortPutSell && !isRiskReducing;
-    const openOrders = (Array.isArray(rawOpenOrders) ? rawOpenOrders : []).map((o) => ({
-      symbol: String(o?.symbol || '').toUpperCase(), asset_class: String(o?.asset_class || ''),
-      side: o?.side === 'sell' ? 'sell' as const : 'buy' as const,
-      qty: toNum(o?.qty), status: String(o?.status || ''), limit_price: toNullableNum(o?.limit_price),
+    // Every working equity order contributes remaining notional to gross exposure.
+    // If no order price is known, use the held position mark or a fresh IEX trade;
+    // inability to price a working order fails closed rather than understating exposure.
+    const openOrders = await Promise.all(rawWorkingOrders.map(async (o) => {
+      const symbol = String(o?.symbol || '').toUpperCase();
+      const assetClass = String(o?.asset_class || '');
+      const side = o?.side === 'sell' ? 'sell' as const : 'buy' as const;
+      const remainingQty = Math.max(0, toNum(o?.qty) - toNum(o?.filled_qty));
+      const limitPrice = toNullableNum(o?.limit_price);
+      const stopPrice = toNullableNum(o?.stop_price);
+      const isEquity = assetClass === 'us_equity' || /^[A-Z][A-Z0-9.\\-]{0,9}$/.test(symbol);
+      let estimatedExposureUsd: number | undefined;
+      if (isEquity && remainingQty > 0) {
+        const heldMark = positions.find((p) => p.symbol === symbol)?.current_price || 0;
+        const referencePrice = limitPrice ?? stopPrice ?? (heldMark > 0 ? heldMark : await fetchLatestEquityPrice(symbol));
+        estimatedExposureUsd = referencePrice * remainingQty;
+      }
+      return {
+        symbol, asset_class: assetClass, side, qty: remainingQty,
+        status: String(o?.status || ''), limit_price: limitPrice,
+        ...(estimatedExposureUsd !== undefined ? { estimated_exposure_usd: estimatedExposureUsd } : {}),
+      };
     }));
     if (isOpeningShortPutSell) openOrders.push({
       symbol: validated.payload.symbol, asset_class: 'us_option', side: 'sell' as const,
       qty: validated.payload.qty, status: 'new', limit_price: validated.payload.limit_price ?? null,
     });
+    if (!validated.isOption && !isRiskReducing) {
+      const positionMark = positions.find((p) => p.symbol === validated.payload.symbol)?.current_price || 0;
+      const orderReferencePrice = validated.payload.limit_price ?? validated.payload.stop_price ??
+        (positionMark > 0 ? positionMark : await fetchLatestEquityPrice(validated.payload.symbol));
+      openOrders.push({
+        symbol: validated.payload.symbol, asset_class: 'us_equity', side: validated.payload.side,
+        qty: validated.payload.qty, status: 'new', limit_price: validated.payload.limit_price ?? null,
+        estimated_exposure_usd: orderReferencePrice * validated.payload.qty,
+      });
+    }
     const timestamps = Array.isArray(rawHistory?.timestamp) ? rawHistory.timestamp : [];
     const historyValues = Array.isArray(rawHistory?.equity) ? rawHistory.equity : [];
     const equityHistory = timestamps.map((timestamp: unknown, index: number) => ({

@@ -215,6 +215,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let server: http.Server;
     let baseUrl = '';
     const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: any }> = [];
+    let includePendingNvdaClose = false;
 
     before(async () => {
       const { app } = await createApp({
@@ -316,10 +317,12 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
                 headers: { 'Content-Type': 'application/json' },
               });
             }
-            return new Response(JSON.stringify(Array.from({ length: 500 }, (_, i) => ({
+            const firstPage = Array.from({ length: 500 }, (_, i) => ({
               ...oldestOpenOrder,
               id: `ord-open-${String(i).padStart(3, '0')}`,
-            }))), {
+            }));
+            if (includePendingNvdaClose) firstPage[0] = { ...oldestOpenOrder, id: 'ord-nvda-pending-close', symbol: 'NVDA', side: 'sell', qty: '8', limit_price: '135.00' };
+            return new Response(JSON.stringify(firstPage), {
               status: 200,
               headers: { 'Content-Type': 'application/json' },
             });
@@ -512,9 +515,6 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.account.account_blocked, false);
       assert.equal(data.fillHistoryComplete, true);
       assert.ok(calls.some((call) => call.url.includes('before_order_id=ord-eq-open-1')));
-      assert.ok(calls.some((call) =>
-        call.url.includes('/v2/orders?status=open') && call.url.includes('before_order_id=ord-open-499')
-      ), 'Risk gate must paginate the complete working-order snapshot beyond 500 orders');
       assert.ok(calls.some((call) => call.url.includes('page_token=fill-page-099')));
 
       const accountCall = calls.find((c) => c.url.startsWith('https://paper-api.alpaca.markets/v2/account'));
@@ -565,6 +565,25 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         body: JSON.stringify({ symbol: 'XYZ261218P00005000', side: 'sell', qty: 1, type: 'limit', limit_price: 0.10, time_in_force: 'day' }),
       });
       assert.equal(smallPutRes.status, 200, 'Small short put should pass when portfolio limits are clear');
+      assert.ok(calls.some((call) =>
+        call.url.includes('/v2/orders?status=open') && call.url.includes('before_order_id=ord-open-499')
+      ), 'Risk gate must paginate the complete working-order snapshot beyond 500 orders');
+
+      const excessiveEquityBuy = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day' }),
+      });
+      assert.equal(excessiveEquityBuy.status, 409, 'Projected equity order notional must count against gross exposure');
+
+      includePendingNvdaClose = true;
+      const overClose = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day' }),
+      });
+      assert.equal(overClose.status, 409, 'A new close must not exceed the held position after pending closes');
+      includePendingNvdaClose = false;
     });
 
     it('GET /api/alpaca/options/contracts & DELETE /api/alpaca/positions/:symbol work cleanly', async () => {

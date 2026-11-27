@@ -87,6 +87,19 @@ describe('portfolioRiskEngine', () => {
     assert.ok(report.reasons.some((reason) => reason.includes('Cash-secured put collateral')));
   });
 
+  it('includes estimated pending equity order notional in gross exposure', () => {
+    const report = evaluatePortfolioRisk(baseParams({
+      openOrders: [{
+        symbol: 'AAPL', asset_class: 'us_equity', side: 'buy',
+        qty: 1, status: 'accepted', estimated_exposure_usd: 160_000,
+      }],
+    }));
+    assert.equal(report.grossExposureUsd, 160_000);
+    assert.equal(report.grossExposurePct, 160);
+    assert.equal(report.allowNewEntries, false);
+    assert.ok(report.reasons.some((reason) => reason.includes('Gross exposure')));
+  });
+
   it('limits worst-case risk of each new short put to 1% of equity', () => {
     const rejected = evaluateShortPutOrderRisk({
       symbol: 'SPY261218P00560000',
