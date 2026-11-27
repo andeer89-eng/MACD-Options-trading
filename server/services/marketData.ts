@@ -26,6 +26,7 @@ import {
 import { HeatmapItem } from '../../src/utils/heatmapEngine.ts';
 import { UniverseStageItem } from '../../src/utils/trendSpiderUniverse.ts';
 import { fetchPublicBreadthSnapshot } from '../../src/utils/publicBreadthFeed.ts';
+import { buildWatchlistSignalMarketData } from './watchlistMarketData.ts';
 
 export const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -245,6 +246,20 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
       });
       return [];
     }
+  }
+
+  async function fetchWatchlistSignalMarketData(symbol: string, timeframe: string, range: string, minCandles: number = 20) {
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    const retrievedAt = Date.now();
+    const candles = await fetchYahooData(normalizedSymbol, timeframe, range, minCandles);
+    const feedMetadata = lastFeedMetaMap.get(normalizedSymbol);
+    return buildWatchlistSignalMarketData({
+      symbol: normalizedSymbol,
+      timeframe,
+      candles,
+      retrievedAt,
+      feedMetadata,
+    });
   }
 
   async function fetchSingleSparkChunk(
