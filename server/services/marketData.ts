@@ -980,6 +980,7 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
       };
     },
     fetchYahooData,
+    fetchWatchlistSignalMarketData,
     fetchYahooSparkBatch,
     fetchYahooMeta,
     fetchCboeRawChain,
