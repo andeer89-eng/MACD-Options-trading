@@ -31,6 +31,7 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   firebaseAuthFetchOverride?: typeof fetch;
   executionLedgerRequiredOverride?: boolean;
   reconciliationIntervalMs?: number;
+  reconciliationLeaseMs?: number;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
@@ -61,6 +62,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const executionLedgerRequired = options.executionLedgerRequiredOverride ??
     (process.env.EXECUTION_LEDGER_REQUIRED === 'true' || (isProduction && process.env.EXECUTION_LEDGER_REQUIRED !== 'false'));
   const configuredInterval = Number(process.env.EXECUTION_RECONCILIATION_INTERVAL_MS);
+  const configuredLease = Number(process.env.EXECUTION_RECONCILIATION_LEASE_MS);
   const reconciliationWorker = executionLedger
     ? createExecutionReconciliationWorker({
         alpaca,
@@ -68,6 +70,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         intervalMs: options.reconciliationIntervalMs ??
           (Number.isFinite(configuredInterval) && configuredInterval >= 30_000 ? configuredInterval : 60_000),
         concurrency: 3,
+        leaseMs: options.reconciliationLeaseMs ??
+          (Number.isFinite(configuredLease) && configuredLease >= 120_000 ? configuredLease : undefined),
       })
     : undefined;
 
