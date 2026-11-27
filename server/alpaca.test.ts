@@ -140,6 +140,35 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     assert.equal(calls.length, 2);
   });
 
+  it('retrieves a read-only current positions snapshot from Alpaca Paper', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const service = createAlpacaService({
+      env: {
+        APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
+        APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
+        APCA_API_BASE_URL: 'https://paper-api.alpaca.markets',
+      },
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        calls.push({ url, method: init?.method || 'GET' });
+        if (url.endsWith('/v2/positions')) {
+          return new Response(JSON.stringify([
+            { symbol: 'AAPL', qty: '3', side: 'long', asset_class: 'us_equity' },
+          ]), { status: 200 });
+        }
+        throw new Error(`Unexpected Alpaca request: ${url}`);
+      },
+    });
+    const snapshot = await service.getPositionSnapshot();
+    assert.equal(snapshot.positions.length, 1);
+    assert.equal(snapshot.positions[0].symbol, 'AAPL');
+    assert.ok(snapshot.fetchedAt);
+    assert.deepEqual(calls, [{
+      url: 'https://paper-api.alpaca.markets/v2/positions',
+      method: 'GET',
+    }]);
+  });
+
   it('fails closed when the Alpaca owner UID allowlist is empty', async () => {
     const { app } = await createApp({
       attachFrontend: false,
