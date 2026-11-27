@@ -215,6 +215,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let server: http.Server;
     let baseUrl = '';
     const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: any }> = [];
+    let includePendingNvdaClose = false;
 
     before(async () => {
       const { app } = await createApp({
@@ -235,6 +236,11 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           const body = init?.body ? JSON.parse(String(init.body)) : undefined;
           calls.push({ url, method, headers, body });
 
+          if (url.startsWith('https://data.alpaca.markets/v2/stocks/')) {
+            return new Response(JSON.stringify({ trade: { p: 100, t: new Date().toISOString() } }), {
+              status: 200, headers: { 'Content-Type': 'application/json' },
+            });
+          }
           if (url.endsWith('/v2/account')) {
             return new Response(
               JSON.stringify({
@@ -291,6 +297,40 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
               ]),
               { status: 200, headers: { 'Content-Type': 'application/json' } }
             );
+          }
+
+          if (url.includes('/v2/orders') && method === 'GET' && new URL(url).searchParams.get('status') === 'open') {
+            const requestUrl = new URL(url);
+            const oldestOpenOrder = {
+              id: 'ord-open-oldest-501',
+              symbol: 'AAPL',
+              asset_class: 'us_equity',
+              side: 'buy',
+              qty: '1',
+              filled_qty: '0',
+              filled_avg_price: null,
+              limit_price: '1.00',
+              type: 'limit',
+              time_in_force: 'day',
+              status: 'accepted',
+              submitted_at: '2026-11-27T14:30:00Z',
+              filled_at: null,
+            };
+            if (requestUrl.searchParams.has('before_order_id')) {
+              return new Response(JSON.stringify([oldestOpenOrder]), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              });
+            }
+            const firstPage = Array.from({ length: 500 }, (_, i) => ({
+              ...oldestOpenOrder,
+              id: `ord-open-${String(i).padStart(3, '0')}`,
+            }));
+            if (includePendingNvdaClose) firstPage[0] = { ...oldestOpenOrder, id: 'ord-nvda-pending-close', symbol: 'NVDA', side: 'sell', qty: '8', limit_price: '135.00' };
+            return new Response(JSON.stringify(firstPage), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
           }
 
           if (url.includes('/v2/orders') && method === 'GET') {
@@ -530,6 +570,25 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         body: JSON.stringify({ symbol: 'XYZ261218P00005000', side: 'sell', qty: 1, type: 'limit', limit_price: 0.10, time_in_force: 'day' }),
       });
       assert.equal(smallPutRes.status, 200, 'Small short put should pass when portfolio limits are clear');
+      assert.ok(calls.some((call) =>
+        call.url.includes('/v2/orders?status=open') && call.url.includes('before_order_id=ord-open-499')
+      ), 'Risk gate must paginate the complete working-order snapshot beyond 500 orders');
+
+      const excessiveEquityBuy = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day' }),
+      });
+      assert.equal(excessiveEquityBuy.status, 409, 'Projected equity order notional must count against gross exposure');
+
+      includePendingNvdaClose = true;
+      const overClose = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day' }),
+      });
+      assert.equal(overClose.status, 409, 'A new close must not exceed the held position after pending closes');
+      includePendingNvdaClose = false;
     });
 
     it('GET /api/alpaca/options/contracts & DELETE /api/alpaca/positions/:symbol work cleanly', async () => {

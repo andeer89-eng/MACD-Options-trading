@@ -19,6 +19,10 @@ The rolling periods use Alpaca's 1-year daily portfolio-history response and the
 
 The risk gate blocks new entries. Existing risk-reducing close/cancel operations remain available; the options cycle continues to evaluate take-profit and expiry exits before it considers new short puts.
 
+## Working-order snapshot integrity
+
+The server retrieves working orders with the same cursor-based pagination discipline as historical orders. If the broker snapshot reaches the pagination cap, repeats a cursor, or otherwise cannot be proven complete, the order request fails closed with HTTP 503; it does not evaluate risk against a silently truncated first page.
+
 ## Concurrency
 
 A shared in-tab lock prevents the equity and options automation managers from running overlapping cycles in the same browser tab. The server-side risk check is independently executed on every POST /api/alpaca/orders request, so a second tab or direct API caller cannot rely on the UI lock.
@@ -39,3 +43,10 @@ Unit tests cover daily/weekly/monthly loss thresholds, missing history fail-clos
 ## Operational boundary
 
 These are deterministic pre-trade guardrails, not a guarantee against gaps, slippage, broker outages, corporate actions, or assignment risk. Alpaca can still reject an order after the pre-trade check if buying power or account permissions change between snapshot and submission.
+
+
+## Projected equity order exposure and close-order aggregation
+
+The server includes the proposed equity order's estimated notional in the gross-exposure calculation. Limit and stop prices are used when supplied; market orders use the current held-position mark or a fresh Alpaca IEX latest trade. If a reliable price cannot be obtained for a market order or existing working equity order, the request fails closed. Existing working equity orders are also included using their remaining quantity.
+
+Risk-reducing exits are allowed only to the extent that the requested close plus already-working close-side quantities do not exceed the current broker position. An attempted over-close is rejected with HTTP 409 rather than being treated as a fresh entry.

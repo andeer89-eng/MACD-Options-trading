@@ -28,6 +28,7 @@ export interface PortfolioRiskOrder {
   qty: number;
   status: string;
   limit_price?: number | null;
+  estimated_exposure_usd?: number;
 }
 
 export interface PortfolioRiskLimits {
@@ -141,13 +142,19 @@ export function evaluatePortfolioRisk(params: {
     .filter((o) => ['new', 'accepted', 'pending_new', 'partially_filled', 'held', 'pending_replace'].includes(String(o.status).toLowerCase()));
   const positionExposure = positions.reduce((sum, p) => sum + Math.abs(Number(p.market_value) || 0), 0);
   const pendingExposure = openOrders.reduce((sum, o) => {
-    const isOption = o.asset_class === 'us_option' || /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(String(o.symbol || '').toUpperCase());
-    if (!isOption) return sum;
-    const m = String(o.symbol || '').toUpperCase().match(/^[A-Z]{1,6}(\d{6})P(\d{8})$/);
+    const symbol = String(o.symbol || '').toUpperCase();
+    const isOption = o.asset_class === 'us_option' || /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(symbol);
+    if (!isOption) return sum + Math.max(0, Number(o.estimated_exposure_usd) || 0);
+    const m = symbol.match(/^[A-Z]{1,6}(\d{6})P(\d{8})$/);
     if (o.side !== 'sell' || !m) return sum;
     return sum + (Number(m[2]) / 1000) * 100 * Math.max(0, Number(o.qty) || 0);
   }, 0);
-  const shortPutCollateralUsd = positions.reduce((sum, p) => sum + parseShortPutCollateral(p), 0) + pendingExposure;
+  const shortPutCollateralUsd = positions.reduce((sum, p) => sum + parseShortPutCollateral(p), 0) +
+    openOrders.reduce((sum, o) => {
+      const m = String(o.symbol || '').toUpperCase().match(/^[A-Z]{1,6}\d{6}P(\d{8})$/);
+      if (o.side !== 'sell' || !m) return sum;
+      return sum + (Number(m[1]) / 1000) * 100 * Math.max(0, Number(o.qty) || 0);
+    }, 0);
   const grossExposureUsd = positionExposure + pendingExposure;
   const grossExposurePct = equity > 0 ? (grossExposureUsd / equity) * 100 : 0;
   const shortPutCollateralPct = equity > 0 ? (shortPutCollateralUsd / equity) * 100 : 0;
