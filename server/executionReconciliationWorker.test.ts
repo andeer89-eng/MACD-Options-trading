@@ -52,7 +52,9 @@ describe('Automated execution reconciliation worker', () => {
     assert.equal(result.failed, 0);
     assert.deepEqual(appended.map(event => event.eventType), ['FILL_RECORDED', 'FILL_RECORDED', 'RECONCILIATION']);
     assert.equal(worker.getStatus().lastRun?.reconciled, 1);
-    assert.equal(resolvedAlerts.length, 1);
+    assert.equal(resolvedAlerts.length, 2);
+    assert.ok(resolvedAlerts.some(args => String(args[0]).startsWith('worker-order-')));
+    assert.ok(resolvedAlerts.some(args => args[0] === 'worker-infrastructure'));
   });
 
   it('fails closed and raises a deduplicated order alert when fill history is incomplete', async () => {
@@ -68,6 +70,8 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async () => {},
+      upsertOperationalAlert: async (alert: any) => { raisedAlerts.push(alert); },
+      resolveOperationalAlert: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async () => ({
@@ -96,7 +100,7 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async (run: any) => { runs.push(run); },
-      upsertOperationalAlert: async (alert: any) => { raisedAlerts.push(alert); },
+      upsertOperationalAlert: async () => {},
       resolveOperationalAlert: async () => {},
     };
     const alpaca = {
