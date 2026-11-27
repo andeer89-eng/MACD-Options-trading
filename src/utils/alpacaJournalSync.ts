@@ -751,8 +751,10 @@ export function alpacaOrdersToOptionsHistory(
         : ((lot.exitPrice ?? lot.entryPrice) - lot.entryPrice) * lot.qty * 100;
       const denom = Math.max(0.01, lot.entryPrice * lot.qty * 100);
       const pnlPct = Number(((pnl / denom) * 100).toFixed(1));
+      // FILL activities describe executions, not OPEXP/OPASN settlement events.
+      // Do not infer worthless expiration from a high realized return percentage.
       const outcomeReason: OptionsTradeRecord['outcomeReason'] =
-        Math.abs(pnl) < 1 ? 'Break Even' : pnlPct >= 95 ? 'Expired Worthless' : 'Early Take-Profit';
+        Math.abs(pnl) < 1 ? 'Break Even' : pnl > 0 ? 'Early Take-Profit' : 'Realized Loss';
 
       return {
         id: lot.id,
