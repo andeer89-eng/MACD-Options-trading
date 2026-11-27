@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
 import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
@@ -157,12 +158,43 @@ export function createAlpacaRouter(
         })),
         orders: ledgerOrders,
       });
+      const completedAt = new Date().toISOString();
+      const nonMatched = reconciliation.summary.unattributedOrExternalActivity +
+        reconciliation.summary.unexplainedVariance;
+      const runId = 'positions-' + randomUUID();
+      await executionLedger.recordReconciliationRun({
+        runId,
+        runType: 'POSITION_SNAPSHOT',
+        startedAt: snapshot.fetchedAt,
+        completedAt,
+        status: nonMatched === 0 ? 'completed' : 'partial',
+        scanned: snapshot.positions.length,
+        reconciled: reconciliation.summary.ledgerNetEqualsBroker,
+        skippedTerminal: 0,
+        failed: nonMatched,
+        errorCount: nonMatched,
+        errors: reconciliation.rows
+          .filter(row => row.classification !== 'LEDGER_NET_EQUALS_BROKER')
+          .slice(0, 100)
+          .map(row => ({ clientOrderId: row.symbol, error: row.classification })),
+        summary: reconciliation.summary,
+        rows: reconciliation.rows.slice(0, 500).map(row => ({
+          symbol: row.symbol,
+          assetClass: row.assetClass,
+          brokerQty: row.brokerQty,
+          ledgerNetFillQty: row.ledgerNetFillQty,
+          unexplainedQty: row.unexplainedQty,
+          appFillCount: row.appFillCount,
+          classification: row.classification,
+        })),
+      });
       res.json({
         mode: 'PAPER',
         fetchedAt: snapshot.fetchedAt,
         brokerPositionCount: snapshot.positions.length,
         ledgerOrderCount: ledgerOrders.length,
         reconciliation,
+        runId,
         readOnly: true,
       });
     } catch (error) {
