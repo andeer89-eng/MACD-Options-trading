@@ -37,3 +37,10 @@ This PR provides the atomic persistence primitive only. It does not yet:
 - enable any paper/live execution, broker action, or automated trading.
 
 Before production adoption, add a repository adapter that performs prediction-ID and outcome-ID uniqueness checks in the same atomic commit, paginated event replay and full-chain verification, operational metrics, and a controlled migration/rollout plan. No production writes are enabled by this change.
+
+
+## Paginated replay and integrity verification (P1.24)
+
+The server adapter also exposes `readAll(ownerId, pageSize)`. It reads the event collection in sequence order using bounded Firestore REST pagination, then compares every event's sequence, previous hash, and SHA-256 digest with the stored journal head. A missing, extra, reordered, or tampered event causes `verification.valid` to be false; malformed records or unavailable Firestore reads fail closed.
+
+The page size is clamped to 1–1,000 documents and replay is capped at 1,000 pages to avoid unbounded memory use. The API returns the replayed events and an integrity result; callers must not treat events as trusted if verification is false. This is a server-side primitive only and does not yet hydrate or replace the in-memory application journal.
