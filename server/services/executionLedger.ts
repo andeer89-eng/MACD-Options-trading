@@ -21,6 +21,14 @@ export interface ExecutionLedgerEvent {
   entryHash: string;
 }
 
+export interface TrackedExecutionOrder {
+  clientOrderId: string;
+  brokerOrderId?: string;
+  symbol: string;
+  lastEventType: ExecutionEventType;
+  updatedAt: string;
+}
+
 export interface ExecutionLedgerOptions {
   projectId: string;
   serviceAccountJson: string;
@@ -171,6 +179,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     const basePath = `alpacaExecutionLedger/${orderKey}`;
     const headPath = basePath + '/metadata/head';
     const eventPath = basePath + '/events';
+    const indexPath = `alpacaExecutionOrderIndex/${orderKey}`;
     const occurredAt = input.occurredAt || new Date(now()).toISOString();
     const eventId = createHash('sha256').update(canonical({
       eventType: input.eventType, clientOrderId: input.clientOrderId,
@@ -183,6 +192,8 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       const headResponse = await request('/' + headPath);
       const headDoc = headResponse.ok ? await headResponse.json() as any : null;
       const head = fromDocument(headDoc);
+      const indexResponse = await request('/' + indexPath);
+      const indexDoc = indexResponse.ok ? await indexResponse.json() as any : null;
       const sequence = (Number(head.sequence) || 0) + 1;
       const prevHash = typeof head.entryHash === 'string' ? head.entryHash : GENESIS;
       const base = { ...input, occurredAt, sequence, prevHash };
@@ -201,6 +212,18 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
           fields: fields({ sequence, entryHash, updatedAt: occurredAt }),
         },
         currentDocument: headDoc?.updateTime ? { updateTime: headDoc.updateTime } : { exists: false },
+      }, {
+        update: {
+          name: `${databaseRoot}/${indexPath}`,
+          fields: fields({
+            clientOrderId: input.clientOrderId,
+            brokerOrderId: input.brokerOrderId || String(fromDocument(indexDoc).brokerOrderId || ''),
+            symbol: input.symbol,
+            lastEventType: input.eventType,
+            updatedAt: occurredAt,
+          }),
+        },
+        currentDocument: indexDoc?.updateTime ? { updateTime: indexDoc.updateTime } : { exists: false },
       }];
       const commit = await request(':commit', { method: 'POST', body: JSON.stringify({ writes }) });
       if (commit.ok) return event;
@@ -248,5 +271,29 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Execution ledger history exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents };
+  async function listTrackedOrders(): Promise<TrackedExecutionOrder[]> {
+    const orders: TrackedExecutionOrder[] = [];
+    const seenTokens = new Set<string>();
+    let pageToken = '';
+    for (let page = 0; page < 10_000; page++) {
+      const query = new URLSearchParams({ pageSize: '1000' });
+      if (pageToken) query.set('pageToken', pageToken);
+      const response = await request(`/alpacaExecutionOrderIndex?${query.toString()}`);
+      if (response.status === 404 && page === 0) return [];
+      if (!response.ok) throw new ExecutionLedgerUnavailableError('Tracked execution orders could not be listed.');
+      const body = await response.json() as { documents?: any[]; nextPageToken?: string };
+      for (const doc of body.documents || []) {
+        const item = fromDocument(doc);
+        if (item.clientOrderId && item.symbol) orders.push(item as TrackedExecutionOrder);
+      }
+      const next = body.nextPageToken || '';
+      if (!next) return orders;
+      if (seenTokens.has(next)) throw new ExecutionLedgerUnavailableError('Firestore returned a repeated order-index page token.');
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
+  }
+
+  return { append, readEvents, listTrackedOrders };
 }
