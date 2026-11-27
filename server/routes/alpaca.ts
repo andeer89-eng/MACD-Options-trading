@@ -20,7 +20,8 @@ export function createAlpacaRouter(
   alpaca: AlpacaService,
   authOptions: FirebaseAuthOptions,
   executionLedger?: ExecutionLedger,
-  ledgerRequired = false
+  ledgerRequired = false,
+  reconciliationWorker?: { getStatus: () => unknown }
 ): Router {
   const router = Router();
   router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
@@ -115,6 +116,14 @@ export function createAlpacaRouter(
     } catch (err) {
       handleAlpacaError(res, err);
     }
+  });
+
+  router.get('/api/alpaca/reconciliation/status', (_req: Request, res: Response) => {
+    if (!reconciliationWorker) {
+      res.status(503).json({ error: 'Automated reconciliation worker is not configured.', mode: 'PAPER' });
+      return;
+    }
+    res.json({ mode: 'PAPER', ...reconciliationWorker.getStatus() as object });
   });
 
   router.get('/api/alpaca/orders/:clientOrderId/ledger', async (req: Request, res: Response) => {

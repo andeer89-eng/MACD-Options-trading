@@ -97,6 +97,11 @@ describe('Persistent Firestore execution ledger', () => {
       occurredAt: '2026-11-27T12:01:00.000Z',
       payload: { activityId: 'fill-001', qty: 1, price: 245.5 },
     });
+    const tracked = await ledger.listTrackedOrders();
+    assert.equal(tracked.length, 1);
+    assert.equal(tracked[0].clientOrderId, 'test-order-001');
+    assert.equal(tracked[0].brokerOrderId, 'broker-001');
+    assert.equal(tracked[0].symbol, 'AAPL');
     const events = await ledger.readEvents('test-order-001');
     assert.equal(events.length, 2);
     assert.deepEqual(verifyExecutionLedgerChain(events), {

@@ -142,3 +142,36 @@ broker-state snapshots idempotent. New fills or a changed broker status create n
 The endpoint is on-demand; it does not run a background scheduler. Automated periodic
 reconciliation, handling of broker corporate actions/adjustments, and live Paper-account
 validation remain follow-up work. Do not claim that the ledger is continuously synchronized.
+
+## P1.6d — automated broker reconciliation worker
+
+When a server-side Firestore service account is configured, the direct server process
+starts a periodic Paper-order reconciliation worker. The default interval is 60 seconds;
+`EXECUTION_RECONCILIATION_INTERVAL_MS` may override it (minimum 30 seconds).
+
+Every new ledger append atomically updates a separate `alpacaExecutionOrderIndex`
+document alongside the event and hash-chain head. The worker paginates this index,
+skips orders already in terminal states, and reconciles remaining orders with bounded
+concurrency (3 by default). Each run:
+
+- resolves the broker order by its stable `client_order_id`;
+- verifies broker order identity and complete fill-activity pagination;
+- requires aggregate activity quantity to equal broker `filled_qty`;
+- appends deterministic fill events and the latest broker-state snapshot;
+- reads back and verifies the order's full hash chain.
+
+The worker is non-overlapping within one process. Repeated runs are idempotent because
+event IDs are deterministic. Its latest run summary is available at the authenticated
+`GET /api/alpaca/reconciliation/status` endpoint.
+
+Operational boundaries:
+- This worker only reconciles orders; it never submits, replaces, or cancels orders.
+- It starts only in the direct server lifecycle, not when tests call `createApp`.
+- It requires Firestore service-account configuration and working Alpaca Paper credentials.
+- The order index is populated by ledger appends after this version is deployed. Existing
+  pre-index ledger histories require a one-time backfill before they can be discovered by
+  the worker; this increment does not silently assume historical orders were indexed.
+- Multiple server replicas may run the worker concurrently. Deterministic event IDs and
+  Firestore optimistic concurrency protect writes, but this release does not implement a
+  distributed lease; configure one active worker replica until that is added.
+- No production Firestore or live Paper-account validation is implied by CI.
