@@ -150,3 +150,97 @@ export function calculateCalibration(records: Array<{ prediction: PredictionSnap
       bucket: b.bucket, count: b.count, meanPredictedPositive: b.predicted / b.count, observedPositiveRate: b.positive / b.count,
     })) };
 }
+
+
+export type CalibrationCohort<T> = {
+  key: T;
+  report: CalibrationReport;
+  belowMinimumSample: boolean;
+};
+export type StockBenchmarkCalibration = {
+  assetClass: 'STOCK';
+  sampleSize: number;
+  coverage: number;
+  meanExcessReturnPct: number | null;
+  positiveExcessRate: number | null;
+  belowMinimumSample: boolean;
+};
+export type CohortCalibrationReport =
+  | {
+      assetClass: 'STOCK';
+      overall: CalibrationReport;
+      horizonCohorts: Array<CalibrationCohort<string>>;
+      benchmark: StockBenchmarkCalibration;
+      minimumSampleSize: number;
+    }
+  | {
+      assetClass: 'OPTION';
+      overall: CalibrationReport;
+      horizonCohorts: Array<CalibrationCohort<string>>;
+      exitMethodCohorts: Array<CalibrationCohort<OptionOutcome['exitMethod']>>;
+      minimumSampleSize: number;
+    };
+
+const HORIZON_BANDS = [
+  { key: '0-1d', maxDays: 1 },
+  { key: '1-7d', maxDays: 7 },
+  { key: '7-30d', maxDays: 30 },
+  { key: '30-90d', maxDays: 90 },
+  { key: '90d+', maxDays: Number.POSITIVE_INFINITY },
+] as const;
+function horizonBand(prediction: PredictionSnapshot): string {
+  const days = (prediction.targetAt - prediction.createdAt) / 86_400_000;
+  return HORIZON_BANDS.find(band => days <= band.maxDays)!.key;
+}
+
+/**
+ * Evaluates calibration within disjoint research cohorts. The minimum sample
+ * threshold is an operational warning only, not a statistical guarantee.
+ * STOCK and OPTION records are filtered independently and never pooled.
+ */
+export function calculateCohortCalibration(
+  records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
+  assetClass: PredictionAssetClass,
+  minimumSampleSize = 30,
+): CohortCalibrationReport {
+  if (!Number.isInteger(minimumSampleSize) || minimumSampleSize < 1) {
+    throw new RangeError('minimumSampleSize must be a positive integer');
+  }
+  const rows = records.filter(row =>
+    row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
+  const overall = calculateCalibration(rows, assetClass);
+  const cohort = <T,>(key: T, members: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>): CalibrationCohort<T> => {
+    const report = calculateCalibration(members, assetClass);
+    return { key, report, belowMinimumSample: report.sampleSize < minimumSampleSize };
+  };
+  const horizonCohorts = HORIZON_BANDS.map(band => cohort(
+    band.key,
+    rows.filter(row => horizonBand(row.prediction) === band.key),
+  ));
+  if (assetClass === 'STOCK') {
+    const stockRows = rows.filter((row): row is { prediction: PredictionSnapshot; outcome: StockOutcome } =>
+      row.outcome.assetClass === 'STOCK' && row.prediction.assetClass === 'STOCK');
+    const benchmarkRows = stockRows.filter(row => row.outcome.benchmarkReturnPct !== undefined);
+    const excessReturns = benchmarkRows.map(row => row.outcome.totalReturnPct - row.outcome.benchmarkReturnPct!);
+    const n = excessReturns.length;
+    return {
+      assetClass, overall, horizonCohorts,
+      benchmark: {
+        assetClass: 'STOCK', sampleSize: n,
+        coverage: stockRows.length ? n / stockRows.length : 0,
+        meanExcessReturnPct: n ? excessReturns.reduce((sum, value) => sum + value, 0) / n : null,
+        positiveExcessRate: n ? excessReturns.filter(value => value > 0).length / n : null,
+        belowMinimumSample: n < minimumSampleSize,
+      },
+      minimumSampleSize,
+    };
+  }
+  const optionRows = rows.filter((row): row is { prediction: PredictionSnapshot; outcome: OptionOutcome } =>
+    row.outcome.assetClass === 'OPTION' && row.prediction.assetClass === 'OPTION');
+  const exitMethods: OptionOutcome['exitMethod'][] = ['CLOSED', 'MARK_TO_MARKET', 'EXPIRED'];
+  return {
+    assetClass, overall, horizonCohorts,
+    exitMethodCohorts: exitMethods.map(method => cohort(method, optionRows.filter(row => row.outcome.exitMethod === method))),
+    minimumSampleSize,
+  };
+}
