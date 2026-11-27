@@ -80,6 +80,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.use(createWatchlistTriggerRouter({
     projectId: firebaseProjectId,
+    databaseId: firebaseConfig.firestoreDatabaseId,
     serviceAccountJson,
     workerToken: options.watchlistTriggerWorkerTokenOverride ?? process.env.WATCHLIST_TRIGGER_WORKER_TOKEN,
   }));
