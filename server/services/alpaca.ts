@@ -699,12 +699,23 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       symbol: String(p?.symbol || '').toUpperCase(), asset_class: String(p?.asset_class || ''),
       qty: toNum(p?.qty), side: String(p?.side || ''), market_value: toNum(p?.market_value),
     }));
+    // Preserve risk-reducing exits even while the portfolio entry gate is halted.
+    const heldPosition = positions.find((p) => p.symbol === validated.payload.symbol);
+    const heldQty = Math.abs(Number(heldPosition?.qty) || 0);
+    const positionSide = String(heldPosition?.side || (Number(heldPosition?.qty) < 0 ? 'short' : 'long'));
+    const isRiskReducing = Boolean(
+      heldPosition && heldQty > 0 &&
+      ((positionSide === 'long' && validated.payload.side === 'sell') ||
+       (positionSide === 'short' && validated.payload.side === 'buy')) &&
+      validated.payload.qty <= heldQty
+    );
+    const isOpeningShortPutSell = isShortPutSell && !isRiskReducing;
     const openOrders = (Array.isArray(rawOpenOrders) ? rawOpenOrders : []).map((o) => ({
       symbol: String(o?.symbol || '').toUpperCase(), asset_class: String(o?.asset_class || ''),
       side: o?.side === 'sell' ? 'sell' as const : 'buy' as const,
       qty: toNum(o?.qty), status: String(o?.status || ''), limit_price: toNullableNum(o?.limit_price),
     }));
-    if (isShortPutSell) openOrders.push({
+    if (isOpeningShortPutSell) openOrders.push({
       symbol: validated.payload.symbol, asset_class: 'us_option', side: 'sell' as const,
       qty: validated.payload.qty, status: 'new', limit_price: validated.payload.limit_price ?? null,
     });
@@ -715,20 +726,22 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     })).filter((point: AlpacaPortfolioEquityPoint) =>
       Number.isFinite(point.timestamp) && Number.isFinite(point.equity) && point.equity > 0
     );
-    const riskReport = evaluatePortfolioRisk({
-      account: {
-        equity, day_pnl_pct: lastEquity > 0 ? ((equity - lastEquity) / lastEquity) * 100 : NaN,
-        status: String(rawAccount?.status || 'UNKNOWN'),
-        trading_blocked: Boolean(rawAccount?.trading_blocked),
-        account_blocked: Boolean(rawAccount?.account_blocked),
-        trade_suspended_by_user: Boolean(rawAccount?.trade_suspended_by_user),
-      },
-      positions, openOrders, equityHistory, fetchedAt: new Date().toISOString(),
-    });
-    if (!riskReport.allowNewEntries) {
-      throw new AlpacaApiError(409, `Portfolio risk gate ${riskReport.status}: ${riskReport.reasons.join(' ')}`);
+    if (!isRiskReducing) {
+      const riskReport = evaluatePortfolioRisk({
+        account: {
+          equity, day_pnl_pct: lastEquity > 0 ? ((equity - lastEquity) / lastEquity) * 100 : NaN,
+          status: String(rawAccount?.status || 'UNKNOWN'),
+          trading_blocked: Boolean(rawAccount?.trading_blocked),
+          account_blocked: Boolean(rawAccount?.account_blocked),
+          trade_suspended_by_user: Boolean(rawAccount?.trade_suspended_by_user),
+        },
+        positions, openOrders, equityHistory, fetchedAt: new Date().toISOString(),
+      });
+      if (!riskReport.allowNewEntries) {
+        throw new AlpacaApiError(409, `Portfolio risk gate ${riskReport.status}: ${riskReport.reasons.join(' ')}`);
+      }
     }
-    if (isShortPutSell) {
+    if (isOpeningShortPutSell) {
       const orderRisk = evaluateShortPutOrderRisk({
         symbol: validated.payload.symbol, contracts: validated.payload.qty,
         premiumPerShare: validated.payload.limit_price ?? 0, equity,
