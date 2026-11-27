@@ -369,6 +369,86 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (!response.ok) throw new ExecutionLedgerUnavailableError('Reconciliation run audit record could not be persisted.');
   }
 
+  async function upsertOperationalAlert(input: {
+    alertId: string;
+    type: string;
+    severity: 'INFO' | 'WARNING' | 'CRITICAL';
+    title: string;
+    message: string;
+    source: string;
+    evidence?: Record<string, string | number | boolean | null>;
+  }): Promise<void> {
+    if (!input.alertId || input.alertId.length > 128) throw new Error('Invalid alert ID.');
+    const path = '/alpacaExecutionAlerts/' + encodeURIComponent(input.alertId);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await request(path);
+      const doc = response.ok ? await response.json() as any : null;
+      const current = fromDocument(doc);
+      const nowIso = new Date(now()).toISOString();
+      const active = current.status === 'ACTIVE';
+      const data = {
+        alertId: input.alertId,
+        type: input.type,
+        severity: input.severity,
+        title: input.title,
+        message: input.message,
+        source: input.source,
+        status: 'ACTIVE',
+        firstSeenAt: current.firstSeenAt || nowIso,
+        lastSeenAt: nowIso,
+        occurrenceCount: (Number(current.occurrenceCount) || 0) + 1,
+        evidence: input.evidence || {},
+        createdAt: current.createdAt || nowIso,
+        updatedAt: nowIso,
+        resolvedAt: null,
+      };
+      const commit = await request(':commit', {
+        method: 'POST',
+        body: JSON.stringify({ writes: [{
+          update: { name: databaseRoot + path, fields: fields(data) },
+          currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+        }] }),
+      });
+      if (commit.ok) return;
+      if (commit.status !== 400 && commit.status !== 409 && commit.status !== 412) {
+        throw new ExecutionLedgerUnavailableError('Operational alert could not be persisted.');
+      }
+    }
+    throw new ExecutionLedgerUnavailableError('Operational alert update contention exceeded retry limit.');
+  }
+
+  async function resolveOperationalAlert(alertId: string, resolution: string): Promise<void> {
+    const path = '/alpacaExecutionAlerts/' + encodeURIComponent(alertId);
+    const response = await request(path);
+    if (!response.ok) return;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    if (current.status !== 'ACTIVE') return;
+    const nowIso = new Date(now()).toISOString();
+    const data = { ...current, status: 'RESOLVED', resolvedAt: nowIso, updatedAt: nowIso, resolution };
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(data) },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    if (!commit.ok && commit.status !== 400 && commit.status !== 409 && commit.status !== 412) {
+      throw new ExecutionLedgerUnavailableError('Operational alert resolution could not be persisted.');
+    }
+  }
+
+  async function listOperationalAlerts(options: { status?: string; limit?: number } = {}): Promise<Record<string, any>[]> {
+    const limit = Math.max(1, Math.min(200, Math.floor(options.limit || 100)));
+    const query = new URLSearchParams({ pageSize: String(limit), orderBy: 'updatedAt desc' });
+    const response = await request('/alpacaExecutionAlerts?' + query.toString());
+    if (response.status === 404) return [];
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Operational alerts could not be listed.');
+    const body = await response.json() as { documents?: any[] };
+    return (body.documents || []).map(doc => fromDocument(doc))
+      .filter(alert => !options.status || alert.status === options.status);
+  }
+
   async function backfillTrackedOrderIndex(options: { maxEvents?: number } = {}): Promise<{
     scannedEvents: number;
     indexedOrders: number;
@@ -523,5 +603,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun };
+  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
