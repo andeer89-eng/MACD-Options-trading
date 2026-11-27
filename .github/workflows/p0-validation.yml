@@ -29,6 +29,18 @@ jobs:
       - name: Run unit and server integration tests
         run: bun run test
 
+      - name: Install Firestore rules test tooling
+        run: npm install --prefix /tmp/firestore-test-tools --no-save --no-package-lock --legacy-peer-deps @firebase/rules-unit-testing firebase-tools firebase@13.3.0 && mkdir -p node_modules/@firebase node_modules/.bin && ln -s /tmp/firestore-test-tools/node_modules/@firebase/rules-unit-testing node_modules/@firebase/rules-unit-testing && rm -rf node_modules/firebase && ln -s /tmp/firestore-test-tools/node_modules/firebase node_modules/firebase && ln -s /tmp/firestore-test-tools/node_modules/firebase-tools node_modules/firebase-tools && ln -s /tmp/firestore-test-tools/node_modules/.bin/firebase node_modules/.bin/firebase
+
+      - name: Set up Java for Firestore Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Test Firestore rules in emulator
+        run: npx firebase emulators:exec --only firestore --project demo-macd-options-rules "bunx tsx --test tests/firestoreRules.emulator.mjs"
+
       - name: TypeScript validation
         run: bun run lint
 

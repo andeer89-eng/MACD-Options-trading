@@ -22,3 +22,11 @@
 
 ## 3. Test Runner (firestore.rules.test.ts)
 *(To be implemented in next step using firebase testing tools)*
+
+
+## P1.15 — Terminal watchlist state integrity
+
+- `EXPIRED` and `INVALIDATED` are terminal states.
+- An authenticated owner may update non-status metadata on a terminal item, but cannot change its status or reactivate it.
+- A live item may transition into a terminal state; the rules do not claim to validate market-trigger conditions. Server-attested transition design remains separate work.
+- Behavioral tests run against the Firestore Emulator with `@firebase/rules-unit-testing`; static source inspection alone is not accepted as validation.

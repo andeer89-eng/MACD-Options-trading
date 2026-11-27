@@ -11,6 +11,9 @@ service cloud.firestore {
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
+    function isTerminalWatchlistStatus(status) {
+      return status in ['EXPIRED', 'INVALIDATED'];
+    }
 
     // --- Validation Blueprints ---
     function isValidUserBotState(data, userId) {
@@ -116,9 +119,12 @@ service cloud.firestore {
                          isValidWatchlistItem(incoming(), userId) &&
                          incoming().ownerId == existing().ownerId &&
                          incoming().createdAt == existing().createdAt &&
+                         // Terminal watchlist states are irreversible: clients may not reactivate them.
+                         (!isTerminalWatchlistStatus(existing().status) || incoming().status == existing().status) &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isPinned', 'totalScore', 'currentPrice', 'atr', 'setup', 'updatedAt']) &&
                          incoming().updatedAt == request.time;
-        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                          !isTerminalWatchlistStatus(existing().status);
       }
     }
   }
