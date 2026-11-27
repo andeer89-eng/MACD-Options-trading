@@ -8,7 +8,8 @@ export type CommitteeResult = { schemaVersion: '1.0.0'; packId: string; assetCla
 export type CommitteeAgent = (role: CommitteeRole, pack: MultiAssetEvidencePack, context: { allowedSourceRefs: string[]; assetClass: 'STOCK' | 'OPTION'; generatedAt: number }) => Promise<unknown>;
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
-const validStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string' && x.trim().length > 0);\nfunction deepFreeze<T>(value: T): T { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.freeze(value); for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child); } return value; }
+const validStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string' && x.trim().length > 0);
+function deepFreeze<T>(value: T): T { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.freeze(value); for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child); } return value; }
 function validateAssessment(value: unknown, role: CommitteeRole, pack: MultiAssetEvidencePack, allowed: Set<string>, generatedAt: number): AgentAssessment | null {
  if (!isRecord(value) || value.role !== role || value.assetClass !== pack.assetClass || value.packSha256 !== pack.canonicalSha256 || value.generatedAt !== generatedAt || !isRecord(value.finding)) return null;
  const f = value.finding;
