@@ -60,7 +60,7 @@ export function evaluateWatchlistBreakout(
   if (!bullish && !bearish) return invalid('UNSUPPORTED_SETUP_DIRECTION');
 
   const confirmationTimestamp = setup.confirmationTimestamp;
-  if (!Number.isFinite(confirmationTimestamp) || confirmationTimestamp <= 0) {
+  if (typeof confirmationTimestamp !== 'number' || !Number.isFinite(confirmationTimestamp) || confirmationTimestamp <= 0) {
     return invalid('PIVOT_CONFIRMATION_TIMESTAMP_MISSING');
   }
 
