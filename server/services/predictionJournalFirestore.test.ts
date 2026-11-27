@@ -160,3 +160,51 @@ test('rejects invalid owner and malformed event before Firestore access', async 
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
   assert.equal(requests, 0);
 });
+
+
+test('semantic outcome labeling requires an existing prediction and matching asset class', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  const stockOutcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
+    totalReturnPct: 12, labelSource: 'test-fixture' };
+  await assert.rejects(() => journal.labelOutcome('owner_1', 'missing-prediction', stockOutcome),
+    (error: unknown) => error instanceof Error && error.message.includes('PREDICTION_NOT_FOUND'));
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const optionOutcome = { assetClass: 'OPTION' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
+    contractReturnPct: 20, underlyingReturnPct: 5, exitMethod: 'CLOSED' as const, entryPremium: 2, exitValue: 2.4,
+    labelSource: 'test-fixture' };
+  await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, optionOutcome),
+    (error: unknown) => error instanceof Error && error.message.includes('OUTCOME_ASSET_CLASS_MISMATCH'));
+  assert.equal((await journal.readEvents('owner_1')).length, 1);
+});
+
+test('semantic outcome labeling enforces target time and immutable relabeling', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl, now: () => 10_000 });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const early = { assetClass: 'STOCK' as const, realizedAt: 1500, observedAt: 1600, outcome: 'POSITIVE' as const,
+    totalReturnPct: 12, labelSource: 'test-fixture' };
+  await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, early),
+    (error: unknown) => error instanceof Error && error.message.includes('OUTCOME_BEFORE_TARGET'));
+  const valid = { ...early, realizedAt: 3000, observedAt: 3100 };
+  const first = await journal.labelOutcome('owner_1', prediction.predictionId, valid);
+  const replay = await journal.labelOutcome('owner_1', prediction.predictionId, valid);
+  assert.equal(first.event.eventHash, replay.event.eventHash);
+  assert.equal(replay.replayed, true);
+  await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, { ...valid, outcome: 'NEGATIVE' }),
+    (error: unknown) => error instanceof Error && error.message.includes('OUTCOME_ALREADY_LABELED'));
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, true);
+  assert.equal(verification.length, 2);
+});
+
+test('blocks semantic outcome labeling when persisted journal integrity fails', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.tamperFirstEvent();
+  const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
+    totalReturnPct: 12, labelSource: 'test-fixture' };
+  await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, outcome),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
+});

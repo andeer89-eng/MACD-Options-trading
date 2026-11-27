@@ -37,3 +37,12 @@ This PR provides the atomic persistence primitive only. It does not yet:
 - enable any paper/live execution, broker action, or automated trading.
 
 Before production adoption, add a repository adapter that performs prediction-ID and outcome-ID uniqueness checks in the same atomic commit, paginated event replay and full-chain verification, operational metrics, and a controlled migration/rollout plan. No production writes are enabled by this change.
+
+
+## P1.25 — Semantic outcome labeling
+
+The server adapter exposes `labelOutcome(ownerId, predictionId, outcome)` as the validated outcome-write path. Before appending, it reads the owner's history, verifies the complete hash chain and persisted head, then rehydrates the domain journal and delegates prediction existence, STOCK/OPTION agreement, target-horizon, outcome-shape, and immutable-label checks to the same domain validation used by the in-memory journal.
+
+If history verification fails, labeling is blocked with a conflict response. If the prediction is absent, the asset class differs, the target horizon has not elapsed, or a different label already exists, no Firestore append is attempted. Repeating the exact same valid label is idempotent. The lower-level `append` remains a persistence primitive; application code that labels outcomes must use `labelOutcome` rather than constructing raw outcome events.
+
+This remains server-only and is not wired to an automatic labeling worker, route, scheduler, broker, or trading bot. A production caller must authenticate and authorize `ownerId` before invoking the adapter.
