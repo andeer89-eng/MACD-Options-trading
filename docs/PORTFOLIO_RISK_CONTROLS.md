@@ -325,3 +325,12 @@ Classifications are mutually exclusive: `VALID`, `INVALID`, `UNVERIFIABLE`, `MIS
 Coverage is explicitly limited to orders present in `alpacaExecutionOrderIndex`. A run that reaches its configured order cap while more index pages remain is marked partial (`coverageComplete=false`). It is not evidence that unindexed broker orders or orders outside the local index do not exist. Firestore read or report-persistence failures return HTTP 503; an unpersisted partial result is not presented as a durable audit.
 
 The audit does not call Alpaca, modify orders or positions, append ledger events, or run automatically on dashboard load. It only reads Firestore and writes a separate immutable audit report.
+
+
+## P1.14 — Broker ↔ order-index coverage audit
+
+The authenticated `POST /api/alpaca/reconciliation/coverage-audit` compares a bounded Alpaca Paper order-history snapshot with the Firestore `alpacaExecutionOrderIndex`. The default scan limit is 5,000 and the API accepts 1–10,000 orders. The broker adapter uses its existing cursor pagination and explicitly reports whether the history reached a natural end; the Firestore index is independently paginated with repeated-token detection.
+
+The report identifies broker orders missing from the local index, index entries absent from the broker snapshot, symbol mismatches, and broker orders without a usable `client_order_id`. Reports are append-only in `alpacaExecutionCoverageAudits` and can be listed through `GET /api/alpaca/reconciliation/coverage-audits`. Evidence is capped at 250 rows per mismatch category; aggregate counts cover the scanned snapshots. The dashboard exposes an explicit run action and the latest reports.
+
+A report is complete only when both source snapshots are complete. This is a current broker-order-history comparison, not proof of lifetime historical completeness: Alpaca's endpoint retention/availability, broker pagination cap, local index cap, and orders without client IDs constrain what can be matched. Index-only entries may be legitimate if broker history omits older/archived orders; they are evidence for investigation, not automatic corruption. The audit performs no broker mutations and does not backfill or alter the index.

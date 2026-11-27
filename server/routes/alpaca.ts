@@ -233,6 +233,133 @@ export function createAlpacaRouter(
     }
   });
 
+  router.post('/api/alpaca/reconciliation/coverage-audit', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    const maxOrders = req.body?.maxOrders === undefined ? 5000 : Number(req.body.maxOrders);
+    if (!Number.isSafeInteger(maxOrders) || maxOrders < 1 || maxOrders > 10000) {
+      res.status(400).json({ error: 'maxOrders must be an integer from 1 to 10000.', mode: 'PAPER' });
+      return;
+    }
+    const auditId = 'coverage-' + randomUUID();
+    const startedAt = new Date().toISOString();
+    try {
+      const broker = await alpaca.getOrderHistorySnapshot();
+      let indexScanned = 0;
+      let pageToken = '';
+      const seenTokens = new Set<string>();
+      const indexIds = new Map<string, { symbol: string; indexKey: string }>();
+      let indexComplete = true;
+      while (indexScanned < maxOrders) {
+        const page = await executionLedger.listTrackedOrdersPage({
+          limit: Math.min(500, maxOrders - indexScanned),
+          pageToken: pageToken || undefined,
+        });
+        for (const order of page.orders) {
+          indexScanned++;
+          if (order.clientOrderId) indexIds.set(order.clientOrderId, { symbol: String(order.symbol || '').toUpperCase(), indexKey: order.indexKey });
+        }
+        pageToken = page.nextPageToken;
+        if (!pageToken) break;
+        if (seenTokens.has(pageToken)) throw new Error('Firestore returned a repeated order-index page token; coverage audit stopped fail-closed.');
+        seenTokens.add(pageToken);
+      }
+      if (pageToken) indexComplete = false;
+
+      const brokerIds = new Map<string, { symbol: string; brokerOrderId: string }>();
+      let brokerMissingClientOrderId = 0;
+      for (const order of broker.orders) {
+        const clientOrderId = String(order?.client_order_id || '');
+        if (!clientOrderId) { brokerMissingClientOrderId++; continue; }
+        brokerIds.set(clientOrderId, {
+          symbol: String(order?.symbol || '').toUpperCase(),
+          brokerOrderId: String(order?.id || ''),
+        });
+      }
+
+      const brokerMissingFromIndex: Array<Record<string, string>> = [];
+      const indexMissingFromBroker: Array<Record<string, string>> = [];
+      const symbolMismatches: Array<Record<string, string>> = [];
+      for (const [clientOrderId, order] of brokerIds) {
+        const indexed = indexIds.get(clientOrderId);
+        if (!indexed) {
+          if (brokerMissingFromIndex.length < 250) brokerMissingFromIndex.push({
+            clientOrderId, brokerOrderId: order.brokerOrderId, symbol: order.symbol,
+          });
+        } else if (indexed.symbol !== order.symbol && symbolMismatches.length < 250) {
+          symbolMismatches.push({ clientOrderId, brokerSymbol: order.symbol, indexSymbol: indexed.symbol });
+        }
+      }
+      for (const [clientOrderId, order] of indexIds) {
+        if (!brokerIds.has(clientOrderId) && indexMissingFromBroker.length < 250) {
+          indexMissingFromBroker.push({ clientOrderId, symbol: order.symbol });
+        }
+      }
+
+      const brokerMissingCount = [...brokerIds.keys()].filter(id => !indexIds.has(id)).length;
+      const indexMissingCount = [...indexIds.keys()].filter(id => !brokerIds.has(id)).length;
+      const mismatchCount = [...brokerIds.keys()].filter(id => {
+        const indexed = indexIds.get(id);
+        return indexed && indexed.symbol !== brokerIds.get(id)!.symbol;
+      }).length;
+      const coverageComplete = broker.complete && indexComplete;
+      const completedAt = new Date().toISOString();
+      const findings = brokerMissingCount + indexMissingCount + mismatchCount + brokerMissingClientOrderId;
+      const report = {
+        auditId, runType: 'BROKER_INDEX_COVERAGE_AUDIT', startedAt, completedAt,
+        status: coverageComplete ? 'completed' : 'partial',
+        coverageComplete,
+        coverageScope: 'ALPACA_PAPER_ORDER_HISTORY_VS_FIRESTORE_ORDER_INDEX',
+        brokerHistoryComplete: broker.complete,
+        indexComplete,
+        brokerOrderCount: broker.orders.length,
+        brokerOrdersWithClientOrderId: brokerIds.size,
+        brokerMissingClientOrderId,
+        indexOrderCount: indexScanned,
+        matchedOrderCount: [...brokerIds.keys()].filter(id => indexIds.has(id)).length,
+        brokerMissingFromIndexCount: brokerMissingCount,
+        indexMissingFromBrokerCount: indexMissingCount,
+        symbolMismatchCount: mismatchCount,
+        findingsCount: findings,
+        evidence: { brokerMissingFromIndex, indexMissingFromBroker, symbolMismatches },
+        evidenceLimitPerCategory: 250,
+        evidenceTruncated: brokerMissingCount > brokerMissingFromIndex.length ||
+          indexMissingCount > indexMissingFromBroker.length || mismatchCount > symbolMismatches.length,
+        readOnly: true,
+      };
+      await executionLedger.recordCoverageAudit(report);
+      res.json({ mode: 'PAPER', ...report });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Broker/index coverage audit could not be completed.',
+        mode: 'PAPER', auditId, partialResultNotPersisted: true,
+      });
+    }
+  });
+
+  router.get('/api/alpaca/reconciliation/coverage-audits', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      res.status(400).json({ error: 'limit must be an integer from 1 to 100.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const audits = await executionLedger.listCoverageAudits({ limit });
+      res.json({ mode: 'PAPER', count: audits.length, audits, readOnly: true });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Broker/index coverage audit history is unavailable.',
+        mode: 'PAPER',
+      });
+    }
+  });
+
   router.get('/api/alpaca/reconciliation/integrity-audits', async (req: Request, res: Response) => {
     if (!executionLedger) {
       res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });

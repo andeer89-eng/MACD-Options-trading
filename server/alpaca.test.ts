@@ -761,3 +761,50 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     });
   });
 });
+
+
+describe('Alpaca broker order history snapshot', () => {
+  it('returns bounded order rows and marks a naturally exhausted page complete', async () => {
+    const service = createAlpacaService({
+      env: {
+        APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
+        APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
+        APCA_API_BASE_URL: 'https://paper-api.alpaca.markets',
+      },
+      fetchImpl: async (input) => {
+        assert.match(String(input), /\/v2\/orders\?status=all&limit=500&direction=desc/);
+        return new Response(JSON.stringify([{
+          id: 'broker-order-1', client_order_id: 'client-order-1', symbol: 'AAPL',
+        }]), { status: 200 });
+      },
+    });
+    const snapshot = await service.getOrderHistorySnapshot();
+    assert.equal(snapshot.complete, true);
+    assert.equal(snapshot.orders.length, 1);
+    assert.equal(snapshot.orders[0].client_order_id, 'client-order-1');
+    assert.equal(typeof snapshot.fetchedAt, 'string');
+  });
+
+  it('fails closed on a broker history page at the pagination cap', async () => {
+    let calls = 0;
+    const service = createAlpacaService({
+      env: {
+        APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
+        APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
+        APCA_API_BASE_URL: 'https://paper-api.alpaca.markets',
+      },
+      fetchImpl: async () => {
+        calls++;
+        return new Response(JSON.stringify(Array.from({ length: 500 }, (_, i) => ({
+          id: 'broker-order-' + calls + '-' + i,
+          client_order_id: 'client-order-' + calls + '-' + i,
+          symbol: 'AAPL',
+        }))), { status: 200 });
+      },
+    });
+    const snapshot = await service.getOrderHistorySnapshot();
+    assert.equal(calls, 20);
+    assert.equal(snapshot.orders.length, 10000);
+    assert.equal(snapshot.complete, false);
+  });
+});

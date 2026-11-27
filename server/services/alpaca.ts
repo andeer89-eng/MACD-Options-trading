@@ -487,6 +487,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     return { items, complete: false };
   }
 
+  async function getOrderHistorySnapshot(): Promise<{ orders: any[]; complete: boolean; fetchedAt: string }> {
+    const history = await fetchAllOrders('all');
+    return { orders: history.items, complete: history.complete, fetchedAt: new Date().toISOString() };
+  }
+
   async function getPositionSnapshot(): Promise<{
     positions: any[];
     fetchedAt: string;
@@ -966,6 +971,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     getOverview,
     getExecutionSnapshot,
     getPositionSnapshot,
+    getOrderHistorySnapshot,
     getOptionContracts,
     submitOrder,
     closePosition,
