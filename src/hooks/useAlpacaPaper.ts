@@ -67,7 +67,9 @@ export function syncAlpacaOverviewToLocalJournal(
     overview.orders,
     overview.positions,
     existing,
-    marketHealth
+    marketHealth,
+    overview.fills || [],
+    overview.fillHistoryComplete ?? Boolean(overview.fills?.length)
   );
 
   // Automatically feed newly closed Alpaca lots into Active Learning Memory
