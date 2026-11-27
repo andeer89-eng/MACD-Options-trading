@@ -175,13 +175,15 @@ export function createWatchlistTriggerService(options: {
     };
     const fields = (data: Record<string, unknown>) =>
       Object.fromEntries(Object.entries(data).map(([key, value]) => [key, encode(value)]));
+    const itemFields = fields({ status: 'TRIGGERED' });
+    itemFields.updatedAt = { timestampValue: triggeredAt };
     const commit = await firestore(':commit', {
       method: 'POST',
       body: JSON.stringify({ writes: [
         {
           update: {
             name: root + itemPath,
-            fields: fields({ status: 'TRIGGERED', updatedAt: { __timestamp: triggeredAt } }),
+            fields: itemFields,
           },
           updateMask: { fieldPaths: ['status', 'updatedAt'] },
           currentDocument: { updateTime: item.updateTime },
@@ -193,12 +195,7 @@ export function createWatchlistTriggerService(options: {
           },
           currentDocument: { exists: false },
         },
-      ].map((write: any) => {
-        if (write.update?.fields?.updatedAt?.mapValue) {
-          write.update.fields.updatedAt = { timestampValue: triggeredAt };
-        }
-        return write;
-      }) }),
+      ] }),
     });
     if (commit.ok) return { status: 'TRIGGERED', replayed: false };
     if (commit.status === 409 || commit.status === 412 || commit.status === 400) {
