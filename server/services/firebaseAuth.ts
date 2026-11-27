@@ -13,6 +13,7 @@ type FirebaseClaims = {
   exp?: unknown;
   iat?: unknown;
   auth_time?: unknown;
+  email_verified?: unknown;
 };
 
 export type FirebaseAuthOptions = {
@@ -106,7 +107,7 @@ export function createFirebaseIdTokenVerifier(options: {
     return cachedCerts;
   }
 
-  return async function verifyFirebaseIdToken(token: string): Promise<{ uid: string }> {
+  return async function verifyFirebaseIdToken(token: string): Promise<{ uid: string; emailVerified: boolean }> {
     if (!token || token.length > MAX_TOKEN_LENGTH) {
       throw new Error('Invalid Firebase ID token.');
     }
@@ -169,7 +170,7 @@ export function createFirebaseIdTokenVerifier(options: {
       throw new Error('Firebase ID token claims are invalid or expired.');
     }
 
-    return { uid: claims.sub };
+    return { uid: claims.sub, emailVerified: claims.email_verified === true };
   };
 }
 
@@ -208,6 +209,38 @@ export function createFirebaseAlpacaAuthMiddleware(options: FirebaseAuthOptions)
         res.status(403).json({ error: 'This account is not authorized to access Alpaca.' });
         return;
       }
+      next();
+    } catch (error) {
+      if (error instanceof FirebaseAuthUnavailableError) {
+        res.status(503).json({ error: 'Authentication service temporarily unavailable.' });
+        return;
+      }
+      res.status(401).json({ error: 'Invalid or expired authentication token.' });
+    }
+  };
+}
+
+
+export function createFirebaseVerifiedUserMiddleware(options: {
+  projectId: string;
+  fetchImpl?: typeof fetch;
+}) {
+  const verifyFirebaseIdToken = createFirebaseIdTokenVerifier(options);
+  return async function requireVerifiedFirebaseUser(req: Request, res: ExpressResponse, next: NextFunction): Promise<void> {
+    res.setHeader('Cache-Control', 'no-store');
+    const authorization = req.header('authorization') || '';
+    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    if (!match) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+    try {
+      const identity = await verifyFirebaseIdToken(match[1]);
+      if (!identity.emailVerified) {
+        res.status(403).json({ error: 'A verified Firebase account is required.' });
+        return;
+      }
+      (req as Request & { firebaseUid?: string }).firebaseUid = identity.uid;
       next();
     } catch (error) {
       if (error instanceof FirebaseAuthUnavailableError) {
