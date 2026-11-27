@@ -19,10 +19,6 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async () => {},
-      acquireReconciliationLease: async () => true,
-      renewReconciliationLease: async () => true,
-      releaseReconciliationLease: async () => {},
-      recordReconciliationRun: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async (clientOrderId: string) => ({
