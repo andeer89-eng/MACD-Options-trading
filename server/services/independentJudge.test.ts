@@ -6,13 +6,16 @@ import { runIndependentJudge, type IndependentJudge } from './independentJudge.t
 
 const now = Date.UTC(2026, 10, 27, 18);
 const digest = 'a'.repeat(64);
-function stockPack() {
+function stockPack(includeFundamentals = false) {
   const result = buildMultiAssetEvidencePack({
     assetClass: 'STOCK', symbol: 'AAPL', generatedAt: now, asOf: now - 1000,
     sources: [{ kind: 'market', provider: 'fixture', retrievedAt: now - 1000, sha256: digest }],
     risk: { evaluatedAt: now - 500, allowNewEntries: true, status: 'OK', reasons: [], policyVersion: 'risk-v1' },
     stock: { symbol: 'AAPL', market: { provider: 'fixture', retrievedAt: now - 1000, timeframe: '1d',
-      candles: [{ close: 200 }], payloadSha256: digest } },
+      candles: [{ close: 200 }], payloadSha256: digest },
+      ...(includeFundamentals ? { fundamentals: { asOfDate: '2026-11-27', facts: [{ metric: 'revenue', value: 100,
+        unit: 'USD', periodEnd: '2026-09-30', filingDate: '2026-10-30', accession: '0000320193-26-000001',
+        sourceUri: 'https://www.sec.gov/Archives/edgar/data/320193/000032019326000001/filing.htm' }] } } : {}) },
   });
   if (!result.ok) throw new Error(result.reason);
   return result.pack;
@@ -75,6 +78,22 @@ test('independent judge reviews OPTION contract, quote, IV, Greeks and assignmen
   assert.equal(result.assetClass, 'OPTION');
   assert.equal(result.assessment?.optionReview?.occSymbol, 'AAPL261218C00250000');
   assert.equal(result.executionEligible, false);
+});
+test('conflicting Bull/Bear stances cannot be hidden by the independent judge', async () => {
+  const pack = stockPack(); const committee = committeeFor(pack);
+  const judge: IndependentJudge = async (p, c, context) => validJudge(p, c, context, { conflictDetected: false });
+  const result = await runIndependentJudge(pack, committee, judge, { now: () => now + 20 });
+  assert.equal(result.disposition, 'REJECT');
+  assert.ok(result.reasons.includes('INVALID_OR_MISSING_INDEPENDENT_JUDGE_OUTPUT'));
+});
+test('fundamentals must be explicitly reviewed when present in STOCK evidence', async () => {
+  const pack = stockPack(true); const committee = committeeFor(pack);
+  const judge: IndependentJudge = async (p, c, context) => validJudge(p, c, context, {
+    stockReview: { thesisInvalidationReviewed: true, fundamentalsReviewed: false },
+  });
+  const result = await runIndependentJudge(pack, committee, judge, { now: () => now + 20 });
+  assert.equal(result.disposition, 'REDUCE');
+  assert.ok(result.reasons.includes('INDEPENDENT_REVIEW_REQUIRES_REDUCED_RISK'));
 });
 test('wide option spread forces REDUCE even if judge says APPROVE', async () => {
   const pack = optionPack({ bid: 3, ask: 7 }); const committee = committeeFor(pack);
