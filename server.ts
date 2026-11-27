@@ -16,6 +16,7 @@ import { createPythonRouter } from './server/routes/python.ts';
 import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
 import { createWatchlistTriggerRouter } from './server/routes/watchlist.ts';
+import { createWatchlistEvaluationRouter } from './server/routes/watchlistEvaluation.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 
@@ -34,6 +35,8 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   reconciliationIntervalMs?: number;
   reconciliationLeaseMs?: number;
   watchlistTriggerWorkerTokenOverride?: string;
+  watchlistEvaluationWorkerTokenOverride?: string;
+  watchlistEvaluationMaxMarketDataAgeMsOverride?: number;
   firebaseServiceAccountJsonOverride?: string;
 }
 
@@ -83,6 +86,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     databaseId: firebaseConfig.firestoreDatabaseId,
     serviceAccountJson,
     workerToken: options.watchlistTriggerWorkerTokenOverride ?? process.env.WATCHLIST_TRIGGER_WORKER_TOKEN,
+  }));
+
+  app.use(createWatchlistEvaluationRouter({
+    marketData,
+    projectId: firebaseProjectId,
+    databaseId: firebaseConfig.firestoreDatabaseId,
+    serviceAccountJson,
+    workerToken: options.watchlistEvaluationWorkerTokenOverride ?? process.env.WATCHLIST_EVALUATION_WORKER_TOKEN,
+    maxMarketDataAgeMs: options.watchlistEvaluationMaxMarketDataAgeMsOverride,
   }));
 
   app.use(createAlpacaRouter(alpaca, {
