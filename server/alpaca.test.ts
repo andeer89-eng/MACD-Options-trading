@@ -162,6 +162,17 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
             );
           }
 
+          if (url.includes('/v2/account/portfolio/history')) {
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            return new Response(
+              JSON.stringify({
+                timestamp: Array.from({ length: 40 }, (_, index) => nowSeconds - (39 - index) * 86400),
+                equity: Array.from({ length: 40 }, () => '28120.75'),
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+
           if (url.endsWith('/v2/positions')) {
             return new Response(
               JSON.stringify([
@@ -308,6 +319,10 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.equityPositions[0].symbol, 'NVDA');
       assert.equal(data.optionPositions.length, 1);
       assert.equal(data.optionPositions[0].symbol, 'SPY261218P00560000');
+      assert.equal(data.portfolioHistoryComplete, true);
+      assert.equal(data.portfolioHistory.length, 40);
+      assert.equal(data.account.trading_blocked, false);
+      assert.equal(data.account.account_blocked, false);
 
       const accountCall = calls.find((c) => c.url.startsWith('https://paper-api.alpaca.markets/v2/account'));
       assert.ok(accountCall);
