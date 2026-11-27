@@ -1,5 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
+import {
+  createFirebaseAlpacaAuthMiddleware,
+  FirebaseAuthOptions,
+} from '../services/firebaseAuth.ts';
 
 function handleAlpacaError(res: Response, err: unknown) {
   if (err instanceof AlpacaApiError) {
@@ -12,8 +16,9 @@ function handleAlpacaError(res: Response, err: unknown) {
   return res.status(502).json({ error: message, mode: 'PAPER' });
 }
 
-export function createAlpacaRouter(alpaca: AlpacaService): Router {
+export function createAlpacaRouter(alpaca: AlpacaService, authOptions: FirebaseAuthOptions): Router {
   const router = Router();
+  router.use(createFirebaseAlpacaAuthMiddleware(authOptions));
 
   router.get('/api/alpaca/status', async (req: Request, res: Response) => {
     try {
