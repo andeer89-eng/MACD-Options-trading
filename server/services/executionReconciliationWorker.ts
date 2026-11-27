@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from './executionLedger.ts';
 import type { AlpacaService } from './alpaca.ts';
 
@@ -140,6 +140,21 @@ export function createExecutionReconciliationWorker(options: {
           else {
             result.failed++;
             result.errors.push({ clientOrderId: outcome.clientOrderId, error: outcome.error });
+            await options.ledger.upsertOperationalAlert({
+              alertId: 'worker-order-' + createHash('sha256').update(outcome.clientOrderId).digest('hex').slice(0, 48),
+              type: 'ORDER_RECONCILIATION_FAILURE',
+              severity: 'WARNING',
+              title: 'Order reconciliation failed',
+              message: outcome.error,
+              source: 'EXECUTION_RECONCILIATION_WORKER',
+              evidence: { clientOrderId: outcome.clientOrderId, runId },
+            }).catch(() => undefined);
+          }
+          if (outcome.ok) {
+            await options.ledger.resolveOperationalAlert(
+              'worker-order-' + createHash('sha256').update(outcome.clientOrderId).digest('hex').slice(0, 48),
+              'Order reconciliation completed successfully.'
+            ).catch(() => undefined);
           }
         }
       }
@@ -162,6 +177,21 @@ export function createExecutionReconciliationWorker(options: {
       const status = !acquired ? 'skipped' : result.failed === 0 ? 'completed' :
         result.reconciled > 0 ? 'partial' : 'failed';
       lastRun = { ...result, startedAt, completedAt, status };
+      if (result.errors.some(error => error.clientOrderId === '__worker__' || error.clientOrderId === '__audit__')) {
+        await options.ledger.upsertOperationalAlert({
+          alertId: 'worker-infrastructure',
+          type: 'RECONCILIATION_WORKER_FAILURE',
+          severity: 'CRITICAL',
+          title: 'Reconciliation worker infrastructure failure',
+          message: result.errors.filter(error => error.clientOrderId === '__worker__' || error.clientOrderId === '__audit__')
+            .map(error => error.error).join('; ').slice(0, 1000),
+          source: 'EXECUTION_RECONCILIATION_WORKER',
+          evidence: { runId, failed: result.failed },
+        }).catch(() => undefined);
+      } else if (acquired) {
+        await options.ledger.resolveOperationalAlert('worker-infrastructure', 'A subsequent reconciliation worker run completed without infrastructure errors.')
+          .catch(() => undefined);
+      }
       try {
         await options.ledger.recordReconciliationRun({
           runId, startedAt, completedAt, status,
