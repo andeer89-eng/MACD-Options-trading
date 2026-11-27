@@ -432,8 +432,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
               symbol: candidate.symbol,
               sector: 'Portfolio Risk',
               setupType: 'PORTFOLIO_RISK',
-              signalPrice: candidate.entryMarketContext?.signalPrice,
-              reasons: [portfolioRisk.reasons.join(' ') || 'Portfolio risk gate blocked new entries.'],
+                            reasons: [portfolioRisk.reasons.join(' ') || 'Portfolio risk gate blocked new entries.'],
             }))
           : []),
       ];
