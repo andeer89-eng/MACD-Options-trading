@@ -393,9 +393,11 @@ export function mapAlpacaOrdersToJournalEntries(
   orders: AlpacaOrderDTO[],
   positions: AlpacaPositionDTO[],
   existingEntries: JournalEntry[],
-  marketHealth?: MarketHealthReport | null
+  marketHealth?: MarketHealthReport | null,
+  fills: AlpacaFillDTO[] = [],
+  fillHistoryComplete = true
 ): JournalSyncResult {
-  const lots = pairAlpacaOrdersFifo(orders);
+  const lots = pairAlpacaOrdersFifo(orders, fills, fillHistoryComplete);
   const existingById = new Map<string, JournalEntry>();
   const existingByOpenOrderTag = new Map<string, JournalEntry>();
 
@@ -728,11 +730,17 @@ export function alpacaPositionsToOptionsPositions(
   });
 }
 
-export function alpacaOrdersToOptionsHistory(orders: AlpacaOrderDTO[]): OptionsTradeRecord[] {
+export function alpacaOrdersToOptionsHistory(
+  orders: AlpacaOrderDTO[],
+  fills: AlpacaFillDTO[] = [],
+  fillHistoryComplete = true
+): OptionsTradeRecord[] {
   const optionOrders = orders.filter(
     (o) => o.asset_class === 'us_option' || parseOccOptionSymbol(o.symbol).isOption
   );
-  const lots = pairAlpacaOrdersFifo(optionOrders).filter((l) => l.closed && l.exitPrice !== undefined);
+  const optionFills = fills.filter((fill) => parseOccOptionSymbol(fill.symbol).isOption);
+  const lots = pairAlpacaOrdersFifo(optionOrders, optionFills, fillHistoryComplete)
+    .filter((l) => l.closed && l.exitPrice !== undefined);
 
   return lots
     .map((lot) => {
