@@ -83,4 +83,28 @@ describe('Firestore watchlist security rules', () => {
       updatedAt: serverTimestamp(),
     }));
   });
+  it('rejects oversized symbols and unapproved fields on create', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
+    const oversized = doc(db, 'users', OWNER_UID, 'watchlistItems', 'oversized-symbol');
+    await assertFails(setDoc(oversized, {
+      ownerId: OWNER_UID,
+      symbol: 'A'.repeat(21),
+      status: 'NEW',
+      totalScore: 10,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+
+    const injected = doc(db, 'users', OWNER_UID, 'watchlistItems', 'ghost-field');
+    await assertFails(setDoc(injected, {
+      ownerId: OWNER_UID,
+      symbol: 'AAPL',
+      status: 'NEW',
+      totalScore: 10,
+      isAdmin: true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
 });
