@@ -1,9 +1,52 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { generateKeyPairSync, sign as signJwt } from 'node:crypto';
 import { createApp } from '../server.ts';
 import type { Candle } from '../src/utils/trullasStrategy.ts';
 import { isValidAlpacaPaperUrl, resolveAlpacaConfig } from './services/alpaca.ts';
+
+const TEST_FIREBASE_PROJECT_ID = 'macd-options-test';
+const TEST_FIREBASE_UID = 'alpaca-owner-uid';
+const firebaseKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const firebasePublicKeyPem = firebaseKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+function createFirebaseTestToken(uid = TEST_FIREBASE_UID): string {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsignedToken = [
+    encode({ alg: 'RS256', kid: 'test-kid', typ: 'JWT' }),
+    encode({
+      aud: TEST_FIREBASE_PROJECT_ID,
+      iss: `https://securetoken.google.com/${TEST_FIREBASE_PROJECT_ID}`,
+      sub: uid,
+      user_id: uid,
+      iat: nowSeconds,
+      exp: nowSeconds + 3600,
+      auth_time: nowSeconds,
+    }),
+  ].join('.');
+  const signature = signJwt('RSA-SHA256', Buffer.from(unsignedToken), firebaseKeys.privateKey);
+  return `${unsignedToken}.${signature.toString('base64url')}`;
+}
+
+const firebaseAuthFetchOverride: typeof fetch = async (input) => {
+  if (!String(input).includes('securetoken@system.gserviceaccount.com')) {
+    throw new Error('Unexpected request in Firebase certificate mock.');
+  }
+  return new Response(JSON.stringify({ 'test-kid': firebasePublicKeyPem }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+};
+
+function firebaseAuthHeaders(uid = TEST_FIREBASE_UID): Record<string, string> {
+  return { Authorization: `Bearer ${createFirebaseTestToken(uid)}` };
+}
 
 function buildRealishCandles(count = 60): Candle[] {
   const start = Date.UTC(2026, 0, 2, 14, 30, 0);
@@ -61,6 +104,9 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         attachFrontend: false,
         fetchYahooDataOverride: async (symbol) => (symbol === 'EMPTY' ? [] : buildRealishCandles(60)),
         alpacaEnvOverride: {},
+        firebaseProjectIdOverride: TEST_FIREBASE_PROJECT_ID,
+        alpacaAllowedUidsOverride: [TEST_FIREBASE_UID],
+        firebaseAuthFetchOverride,
       });
       server = http.createServer(app);
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -76,15 +122,29 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       });
     });
 
-    it('GET /api/alpaca/status & /api/alpaca/overview return 200 configured=false with PAPER mode', async () => {
-      const statusRes = await fetch(`${baseUrl}/api/alpaca/status`);
+    it('rejects anonymous Alpaca requests and allows the configured Firebase owner', async () => {
+      const anonymousStatus = await fetch(`${baseUrl}/api/alpaca/status`);
+      assert.equal(anonymousStatus.status, 401);
+
+      const anonymousOrder = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 1 }),
+      });
+      assert.equal(anonymousOrder.status, 401);
+
+      const statusRes = await fetch(`${baseUrl}/api/alpaca/status`, {
+        headers: firebaseAuthHeaders(),
+      });
       assert.equal(statusRes.status, 200);
       const statusJson = (await statusRes.json()) as any;
       assert.equal(statusJson.configured, false);
       assert.equal(statusJson.mode, 'PAPER');
       assert.equal(statusJson.paperEndpoint, 'https://paper-api.alpaca.markets');
 
-      const ovRes = await fetch(`${baseUrl}/api/alpaca/overview`);
+      const ovRes = await fetch(`${baseUrl}/api/alpaca/overview`, {
+        headers: firebaseAuthHeaders(),
+      });
       assert.equal(ovRes.status, 200);
       const ovJson = (await ovRes.json()) as any;
       assert.equal(ovJson.configured, false);
@@ -96,7 +156,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     it('POST /api/alpaca/orders returns 503 when unconfigured (no fake fill)', async () => {
       const res = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 2, type: 'market', time_in_force: 'day' }),
       });
       assert.equal(res.status, 503);
@@ -131,6 +191,9 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const { app } = await createApp({
         attachFrontend: false,
         fetchYahooDataOverride: async () => buildRealishCandles(60),
+        firebaseProjectIdOverride: TEST_FIREBASE_PROJECT_ID,
+        alpacaAllowedUidsOverride: [TEST_FIREBASE_UID],
+        firebaseAuthFetchOverride,
         alpacaEnvOverride: {
           APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
           APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
@@ -296,8 +359,17 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       });
     });
 
+    it('rejects signed-in Firebase users outside the Alpaca UID allowlist', async () => {
+      const res = await fetch(`${baseUrl}/api/alpaca/overview`, {
+        headers: firebaseAuthHeaders('unapproved-user'),
+      });
+      assert.equal(res.status, 403);
+    });
+
     it('GET /api/alpaca/overview splits equity vs option positions and passes Paper auth headers', async () => {
-      const res = await fetch(`${baseUrl}/api/alpaca/overview`);
+      const res = await fetch(`${baseUrl}/api/alpaca/overview`, {
+        headers: firebaseAuthHeaders(),
+      });
       assert.equal(res.status, 200);
       const data = (await res.json()) as any;
       assert.equal(data.configured, true);
@@ -318,14 +390,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     it('POST /api/alpaca/orders submits equity and OCC option orders and rejects invalid/futures symbols', async () => {
       const futuresRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol: 'ES=F', side: 'sell', qty: 1, type: 'market', time_in_force: 'day' }),
       });
       assert.equal(futuresRes.status, 400);
 
       const eqRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           symbol: 'AAPL',
           side: 'buy',
@@ -340,7 +412,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
       const optRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           symbol: 'SPY261218P00560000',
           side: 'sell',
@@ -354,7 +426,9 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     });
 
     it('GET /api/alpaca/options/contracts & DELETE /api/alpaca/positions/:symbol work cleanly', async () => {
-      const contractsRes = await fetch(`${baseUrl}/api/alpaca/options/contracts?underlying=SPY&type=put`);
+      const contractsRes = await fetch(`${baseUrl}/api/alpaca/options/contracts?underlying=SPY&type=put`, {
+        headers: firebaseAuthHeaders(),
+      });
       assert.equal(contractsRes.status, 200);
       const contractsBody = (await contractsRes.json()) as any;
       assert.equal(contractsBody.contracts.length, 1);
@@ -362,6 +436,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
       const closeRes = await fetch(`${baseUrl}/api/alpaca/positions/NVDA?percentage=50`, {
         method: 'DELETE',
+        headers: firebaseAuthHeaders(),
       });
       assert.equal(closeRes.status, 200);
       const closeBody = (await closeRes.json()) as any;
@@ -369,6 +444,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
       const fullCloseRes = await fetch(`${baseUrl}/api/alpaca/positions/NVDA`, {
         method: 'DELETE',
+        headers: firebaseAuthHeaders(),
       });
       assert.equal(fullCloseRes.status, 200);
       const fullCloseCall = calls.find(
