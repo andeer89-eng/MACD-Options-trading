@@ -252,6 +252,54 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
             );
           }
 
+          if (url.includes('/v2/account/activities?activity_types=')) {
+            const requestUrl = new URL(url);
+            assert.equal(requestUrl.searchParams.get('activity_types'), 'OPASN,OPEXC,OPEXP,OPTRD');
+            return new Response(JSON.stringify([
+              {
+                id: 'activity-assignment-1',
+                activity_type: 'OPASN',
+                date: '2026-11-20',
+                net_amount: '0',
+                description: 'Option Assignment',
+                symbol: 'SPY261120P00560000',
+                qty: '1',
+                status: 'executed',
+              },
+              {
+                id: 'activity-underlying-trade-1',
+                activity_type: 'OPTRD',
+                date: '2026-11-20',
+                net_amount: '-56000',
+                description: 'Option Trade',
+                symbol: 'SPY',
+                qty: '100',
+                price: '560',
+                status: 'executed',
+              },
+              {
+                id: 'activity-expiry-1',
+                activity_type: 'OPEXP',
+                date: '2026-11-21',
+                net_amount: '0',
+                description: 'Option Expiry',
+                symbol: 'SPY261121P00550000',
+                qty: '-1',
+                status: 'executed',
+              },
+              {
+                id: 'activity-exercise-1',
+                activity_type: 'OPEXC',
+                date: '2026-11-21',
+                net_amount: '0',
+                description: 'Option Exercise',
+                symbol: 'AAPL261121C00200000',
+                qty: '-1',
+                status: 'executed',
+              },
+            ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+
           if (url.includes('/v2/account/activities/FILL')) {
             const requestUrl = new URL(url);
             const pageToken = requestUrl.searchParams.get('page_token');
@@ -360,6 +408,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.fills.length, 101, 'Expected fill activity history to be paginated beyond the first 100 activities');
       assert.equal(data.orderHistoryComplete, true);
       assert.equal(data.fillHistoryComplete, true);
+      assert.equal(data.optionLifecycleHistoryComplete, true);
+      assert.deepEqual(
+        data.optionLifecycleActivities.map((activity: any) => activity.activity_type),
+        ['OPASN', 'OPTRD', 'OPEXP', 'OPEXC']
+      );
+      assert.equal(data.optionLifecycleActivities[0].symbol, 'SPY261120P00560000');
+      assert.equal(data.optionLifecycleActivities[1].qty, 100);
+      assert.ok(calls.some((call) => call.url.includes('activity_types=OPASN%2COPEXC%2COPEXP%2COPTRD') || call.url.includes('activity_types=OPASN,OPEXC,OPEXP,OPTRD')));
       assert.ok(calls.some((call) => call.url.includes('before_order_id=ord-eq-open-1')));
       assert.ok(calls.some((call) => call.url.includes('page_token=fill-page-099')));
 
