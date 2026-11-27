@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import type { PredictionEvent } from './predictionJournal.ts';
+import { verifyPredictionJournal, type PredictionEvent } from './predictionJournal.ts';
 
 type FetchLike = typeof fetch;
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
@@ -47,9 +47,11 @@ export function createFirestorePredictionJournal(options: {
   }
 
   const databaseId = options.databaseId || '(default)';
-  const root = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(options.projectId)}/databases/${encodeURIComponent(databaseId)}/documents`;
+  const resourceRoot = `projects/${options.projectId}/databases/${databaseId}/documents`;
+  const root = `https://firestore.googleapis.com/v1/${resourceRoot}`;
   const collection = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalEvents`;
   const headPath = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalMeta/head`;
+  const indexCollection = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalIndex`;
   let cachedToken = '';
   let tokenExpiresAt = 0;
 
@@ -99,8 +101,14 @@ export function createFirestorePredictionJournal(options: {
     const bodyJson = canonical(body);
     const idempotencyId = hash(bodyJson);
     const eventsPath = collection(ownerId);
-    const eventName = `${root}/${eventsPath}/${idempotencyId}`;
-    const metaName = `${root}/${headPath(ownerId)}`;
+    const eventName = `${resourceRoot}/${eventsPath}/${idempotencyId}`;
+    const metaName = `${resourceRoot}/${headPath(ownerId)}`;
+    const identity = body.eventType === 'PREDICTION_RECORDED'
+      ? { kind: 'prediction', id: body.prediction.predictionId, identitySha256: hash(canonical(body.prediction)) }
+      : { kind: 'outcome', id: body.predictionId, identitySha256: hash(canonical(body.outcome)) };
+    const identityId = hash(`${identity.kind}:${identity.id}`);
+    const identityPath = `${indexCollection(ownerId)}/${identityId}`;
+    const identityName = `${resourceRoot}/${identityPath}`;
 
     // Deterministic event IDs make retries safe even if the commit succeeded but its response was lost.
     const existingResponse = await request(`/${eventsPath}/${idempotencyId}`);
@@ -112,6 +120,17 @@ export function createFirestorePredictionJournal(options: {
       return { event, replayed: true };
     }
     if (existingResponse.status !== 404) throw new FirestorePredictionJournalError('Journal idempotency lookup failed.', 503);
+
+    const identityResponse = await request(`/${identityPath}`);
+    if (identityResponse.ok) {
+      const identityDoc = await identityResponse.json() as { fields?: Record<string, { stringValue?: string }> };
+      const savedIdentity = identityDoc.fields?.identitySha256?.stringValue;
+      if (savedIdentity !== identity.identitySha256) {
+        throw new FirestorePredictionJournalError(`Prediction journal ${identity.kind} identity collision.`, 409);
+      }
+      throw new FirestorePredictionJournalError('Journal identity exists without its immutable event; integrity review required.', 500);
+    }
+    if (identityResponse.status !== 404) throw new FirestorePredictionJournalError('Journal identity lookup failed.', 503);
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const metaResponse = await request(`/${headPath(ownerId)}`);
@@ -141,8 +160,16 @@ export function createFirestorePredictionJournal(options: {
         eventHash: stringValue(eventHash),
       };
       const metaFields = { ownerId: stringValue(ownerId), sequence: integerValue(sequence + 1), headHash: stringValue(eventHash) };
+      const identityFields = {
+        ownerId: stringValue(ownerId),
+        identityKind: stringValue(identity.kind),
+        identityId: stringValue(identity.id),
+        identitySha256: stringValue(identity.identitySha256),
+        eventId: stringValue(idempotencyId),
+      };
       const writes = [
         { update: { name: eventName, fields: eventFields }, currentDocument: { exists: false } },
+        { update: { name: identityName, fields: identityFields }, currentDocument: { exists: false } },
         { update: { name: metaName, fields: metaFields }, currentDocument: updateTime ? { updateTime } : { exists: false } },
       ];
       const commit = await request(':commit', { method: 'POST', body: JSON.stringify({ writes }) });
@@ -156,6 +183,13 @@ export function createFirestorePredictionJournal(options: {
           const stored = saved.fields?.eventJson?.stringValue;
           if (stored) return { event: JSON.parse(stored) as PredictionEvent, replayed: true };
         }
+        const savedIdentityResponse = await request(`/${identityPath}`);
+        if (savedIdentityResponse.ok) {
+          const savedIdentity = await savedIdentityResponse.json() as { fields?: Record<string, { stringValue?: string }> };
+          if (savedIdentity.fields?.identitySha256?.stringValue !== identity.identitySha256) {
+            throw new FirestorePredictionJournalError(`Prediction journal ${identity.kind} identity collision.`, 409);
+          }
+        }
         continue;
       }
       throw new FirestorePredictionJournalError('Prediction journal atomic append failed.', 503);
@@ -163,5 +197,59 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal remained contended after retry limit.', 409);
   }
 
-  return { append };
+  async function readEvents(ownerId: string): Promise<PredictionEvent[]> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) {
+      throw new FirestorePredictionJournalError('Invalid prediction journal owner.', 400);
+    }
+    const path = `/${collection(ownerId)}`;
+    const events: PredictionEvent[] = [];
+    const seenTokens = new Set<string>();
+    let pageToken = '';
+    for (let page = 0; page < 10_000; page++) {
+      const query = new URLSearchParams({ pageSize: '1000', orderBy: 'sequence' });
+      if (pageToken) query.set('pageToken', pageToken);
+      const response = await request(`${path}?${query.toString()}`);
+      if (response.status === 404 && page === 0) return [];
+      if (!response.ok) throw new FirestorePredictionJournalError('Prediction journal history could not be read.', 503);
+      const body = await response.json() as { documents?: Array<{ fields?: Record<string, { stringValue?: string }> }>; nextPageToken?: string };
+      for (const document of body.documents || []) {
+        const stored = document.fields?.eventJson?.stringValue;
+        if (!stored) throw new FirestorePredictionJournalError('Prediction journal contains a malformed event document.', 500);
+        try {
+          events.push(JSON.parse(stored) as PredictionEvent);
+        } catch {
+          throw new FirestorePredictionJournalError('Prediction journal contains invalid event JSON.', 500);
+        }
+      }
+      const next = body.nextPageToken || '';
+      if (!next) return events.sort((a, b) => a.sequence - b.sequence);
+      if (seenTokens.has(next)) throw new FirestorePredictionJournalError('Firestore returned a repeated journal page token.', 500);
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    throw new FirestorePredictionJournalError('Prediction journal exceeded the safe pagination limit.', 500);
+  }
+
+  async function verify(ownerId: string): Promise<ReturnType<typeof verifyPredictionJournal> & { headMatches: boolean }> {
+    const events = await readEvents(ownerId);
+    const chain = verifyPredictionJournal(events);
+    const headResponse = await request(`/${headPath(ownerId)}`);
+    if (events.length === 0 && headResponse.status === 404) return { ...chain, headMatches: true };
+    if (headResponse.status === 404) {
+      return { ...chain, valid: false, brokenAtSequence: Math.max(1, events.length), headMatches: false };
+    }
+    if (!headResponse.ok) throw new FirestorePredictionJournalError('Prediction journal head could not be read.', 503);
+    const head = await headResponse.json() as { fields?: Record<string, { integerValue?: string; stringValue?: string }> };
+    const sequence = Number(head.fields?.sequence?.integerValue ?? -1);
+    const headHash = head.fields?.headHash?.stringValue;
+    const headMatches = sequence === events.length && headHash === chain.headHash;
+    return {
+      ...chain,
+      valid: chain.valid && headMatches,
+      brokenAtSequence: chain.valid && !headMatches ? Math.max(1, events.length) : chain.brokenAtSequence,
+      headMatches,
+    };
+  }
+
+  return { append, readEvents, verify };
 }

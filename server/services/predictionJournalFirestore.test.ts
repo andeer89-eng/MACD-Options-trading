@@ -23,7 +23,8 @@ function fakeFirestore() {
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url === 'https://oauth.test/token') return new Response(JSON.stringify({ access_token: 'test-token', expires_in: 3600 }), { status: 200 });
-    const path = url.split('/documents')[1];
+    const parsed = new URL(url);
+    const path = parsed.pathname.split('/documents')[1];
     if (init?.method === 'POST' && path === ':commit') {
       commitCalls++;
       const payload = JSON.parse(String(init.body));
@@ -42,13 +43,36 @@ function fakeFirestore() {
       return new Response(JSON.stringify({ writeResults: [] }), { status: 200 });
     }
     if (init?.method !== 'POST') {
-      const item = docs.get(url);
+      if (parsed.searchParams.has('pageSize')) {
+        const collectionPath = path;
+        const prefix = `projects/demo-project/databases/(default)/documents${collectionPath}/`;
+        const documents = [...docs.entries()]
+          .filter(([name]) => name.startsWith(prefix) && !name.slice(prefix.length).includes('/'))
+          .map(([name, item]) => ({ name, fields: item.fields, updateTime: item.updateTime }));
+        return new Response(JSON.stringify({ documents }), { status: 200 });
+      }
+      const item = docs.get(`projects/demo-project/databases/(default)/documents${path}`);
       if (!item) return new Response('NOT_FOUND', { status: 404 });
       return new Response(JSON.stringify({ fields: item.fields, updateTime: item.updateTime }), { status: 200 });
     }
     return new Response('Unexpected request', { status: 500 });
   };
-  return { fetchImpl, counts: () => ({ commitCalls, documents: docs.size }) };
+  return {
+    fetchImpl,
+    counts: () => ({ commitCalls, documents: docs.size }),
+    tamperFirstEvent: () => {
+      const entry = [...docs.entries()].find(([name]) => name.includes('/predictionJournalEvents/'));
+      if (!entry) throw new Error('No event to tamper.');
+      const eventJson = entry[1].fields.eventJson.stringValue;
+      const event = JSON.parse(eventJson);
+      event.eventHash = 'f'.repeat(64);
+      entry[1].fields.eventJson = { stringValue: JSON.stringify(event) };
+    },
+    deleteHead: (ownerId: string) => {
+      const name = `projects/demo-project/databases/(default)/documents/users/${ownerId}/predictionJournalMeta/head`;
+      docs.delete(name);
+    },
+  };
 }
 
 test('persists STOCK and OPTION event types in an atomic append-only hash chain', async () => {
@@ -74,6 +98,58 @@ test('retries are idempotent when the exact same event is appended again', async
   assert.equal(first.replayed, false);
   assert.equal(replay.replayed, true);
   assert.equal(fake.counts().commitCalls, 1);
+});
+
+test('enforces prediction identity uniqueness and verifies the complete persisted hash chain', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  const first = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await assert.rejects(
+    () => journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: { ...prediction, snapshotSha256: 'd'.repeat(64) } }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409,
+  );
+  const events = await journal.readEvents('owner_1');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventHash, first.event.eventHash);
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, true);
+  assert.equal(verification.headMatches, true);
+});
+
+test('reports a missing persisted head as an integrity failure, not a valid empty journal', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.deleteHead('owner_1');
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, false);
+  assert.equal(verification.headMatches, false);
+});
+
+test('detects a tampered persisted event during full-history verification', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.tamperFirstEvent();
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, false);
+  assert.equal(verification.headMatches, false);
+  assert.equal(verification.brokenAtSequence, 1);
+});
+
+test('persists and idempotently replays outcome labels with their own uniqueness key', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
+    totalReturnPct: 12, labelSource: 'test-fixture' };
+  const first = await journal.append('owner_1', { eventType: 'OUTCOME_LABELED', predictionId: prediction.predictionId, outcome });
+  const replay = await journal.append('owner_1', { eventType: 'OUTCOME_LABELED', predictionId: prediction.predictionId, outcome });
+  assert.equal(first.event.eventHash, replay.event.eventHash);
+  assert.equal(replay.replayed, true);
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, true);
+  assert.equal(verification.length, 2);
 });
 
 test('rejects invalid owner and malformed event before Firestore access', async () => {
