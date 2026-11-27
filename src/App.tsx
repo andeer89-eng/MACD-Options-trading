@@ -13,6 +13,7 @@ import {
   Bell,
   Activity,
   Terminal,
+  ShieldCheck,
 } from 'lucide-react';
 import { Header, ActiveTab } from './components/Header';
 import { StrategyGuide } from './components/StrategyGuide';
@@ -34,6 +35,7 @@ import { ConfluenceMatrixView } from './components/ConfluenceMatrixView';
 import { TrendSpiderSuite } from './components/TrendSpiderSuite';
 import { TodayView } from './components/TodayView';
 import { Ml4tFactorLabView } from './components/Ml4tFactorLabView';
+import { ExecutionOperationsDashboard } from './components/ExecutionOperationsDashboard';
 
 import { PositionCalculatorModal } from './components/PositionCalculatorModal';
 import { TelegramConfigModal } from './components/TelegramConfigModal';
@@ -53,7 +55,7 @@ type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
 type ChartSubTab = 'studio' | 'sec';
 type MarketsSubTab = 'heatmap' | 'sectors';
 type QuantSubTab = 'luxalgo' | 'trendspider' | 'ml4t' | 'indicators' | 'rules';
-type OpsSubTab = 'alerts' | 'health' | 'python';
+type OpsSubTab = 'alerts' | 'health' | 'python' | 'execution';
 
 interface SubTabItem<T extends string> {
   id: T;
@@ -237,7 +239,7 @@ export default function App() {
         break;
       case 'ops':
         setActiveTab('ops');
-        if (subTab === 'alerts' || subTab === 'health' || subTab === 'python') {
+        if (subTab === 'alerts' || subTab === 'health' || subTab === 'python' || subTab === 'execution') {
           setOpsSubTab(subTab);
         }
         break;
@@ -693,6 +695,7 @@ export default function App() {
                 },
                 { id: 'health', label: 'System Health', icon: Activity },
                 { id: 'python', label: 'Python Daemon', icon: Terminal },
+                { id: 'execution', label: 'Execution Ops', icon: ShieldCheck },
               ]}
             />
             {opsSubTab === 'alerts' && (
@@ -706,6 +709,7 @@ export default function App() {
             )}
             {opsSubTab === 'health' && <SystemHealthView />}
             {opsSubTab === 'python' && <PythonDaemonView />}
+            {opsSubTab === 'execution' && <ExecutionOperationsDashboard />}
           </div>
         )}
       </main>

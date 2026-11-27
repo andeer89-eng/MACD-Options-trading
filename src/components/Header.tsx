@@ -329,6 +329,16 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     description: 'Live upstream feed checks, cache stats & runtime memory profile',
   },
   {
+    id: 'ops-execution',
+    tab: 'ops',
+    subTab: 'execution',
+    label: 'Execution Operations Dashboard',
+    group: 'Ops & Alerts',
+    icon: Activity,
+    color: 'text-emerald-400',
+    description: 'Authenticated Alpaca Paper account, positions, execution ledger, reconciliation & alerts',
+  },
+  {
     id: 'ops-python',
     tab: 'ops',
     subTab: 'python',
