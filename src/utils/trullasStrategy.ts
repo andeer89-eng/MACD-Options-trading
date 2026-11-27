@@ -512,6 +512,7 @@ export function detectDivergences(
             tranche3: '34% on MACD zero-line breakdown confirmation',
           },
           detectedAt: p3.timestamp,
+          confirmationTimestamp: indicatorPoints[p3.index + lookback].candle.timestamp,
         });
       }
     }
@@ -645,6 +646,7 @@ export function detectDivergences(
             tranche3: 'N/A (Standard double divergence)',
           },
           detectedAt: p2.timestamp,
+          confirmationTimestamp: indicatorPoints[p2.index + lookback].candle.timestamp,
         });
       }
     }
