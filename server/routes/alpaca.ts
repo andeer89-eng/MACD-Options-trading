@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
 import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
+import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -115,6 +117,92 @@ export function createAlpacaRouter(
       res.json(result);
     } catch (err) {
       handleAlpacaError(res, err);
+    }
+  });
+
+  router.get('/api/alpaca/reconciliation/positions', async (_req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const snapshot = await alpaca.getPositionSnapshot();
+      const tracked = await executionLedger.listTrackedOrders();
+      const ledgerOrders: Array<{ clientOrderId: string; events: any[] }> = [];
+      for (let offset = 0; offset < tracked.length; offset += 3) {
+        const batch = tracked.slice(offset, offset + 3);
+        const results = await Promise.all(batch.map(async order => ({
+          clientOrderId: order.clientOrderId,
+          events: await executionLedger.readEvents(order.clientOrderId),
+        })));
+        for (const result of results) {
+          const verification = verifyExecutionLedgerChain(result.events);
+          if (!verification.valid) {
+            res.status(409).json({
+              error: 'An execution ledger hash chain is invalid; position reconciliation was not classified.',
+              mode: 'PAPER',
+              clientOrderId: result.clientOrderId,
+              verification,
+            });
+            return;
+          }
+          ledgerOrders.push(result);
+        }
+      }
+      const reconciliation = buildPositionReconciliation({
+        brokerPositions: snapshot.positions.map((position: any) => ({
+          symbol: String(position?.symbol || ''),
+          qty: position?.qty,
+          side: position?.side,
+          asset_class: position?.asset_class,
+        })),
+        orders: ledgerOrders,
+      });
+      const completedAt = new Date().toISOString();
+      const nonMatched = reconciliation.summary.unattributedOrExternalActivity +
+        reconciliation.summary.unexplainedVariance;
+      const runId = 'positions-' + randomUUID();
+      await executionLedger.recordReconciliationRun({
+        runId,
+        runType: 'POSITION_SNAPSHOT',
+        startedAt: snapshot.fetchedAt,
+        completedAt,
+        status: nonMatched === 0 ? 'completed' : 'partial',
+        scanned: snapshot.positions.length,
+        reconciled: reconciliation.summary.ledgerNetEqualsBroker,
+        skippedTerminal: 0,
+        failed: nonMatched,
+        errorCount: nonMatched,
+        errors: reconciliation.rows
+          .filter(row => row.classification !== 'LEDGER_NET_EQUALS_BROKER')
+          .slice(0, 100)
+          .map(row => ({ clientOrderId: row.symbol, error: row.classification })),
+        summary: reconciliation.summary,
+        rows: reconciliation.rows.slice(0, 500).map(row => ({
+          symbol: row.symbol,
+          assetClass: row.assetClass,
+          brokerQty: row.brokerQty,
+          ledgerNetFillQty: row.ledgerNetFillQty,
+          unexplainedQty: row.unexplainedQty,
+          appFillCount: row.appFillCount,
+          classification: row.classification,
+        })),
+      });
+      res.json({
+        mode: 'PAPER',
+        fetchedAt: snapshot.fetchedAt,
+        brokerPositionCount: snapshot.positions.length,
+        ledgerOrderCount: ledgerOrders.length,
+        reconciliation,
+        runId,
+        readOnly: true,
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Position reconciliation could not be completed.',
+        mode: 'PAPER',
+        conclusive: false,
+      });
     }
   });
 

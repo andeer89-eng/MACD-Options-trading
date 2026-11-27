@@ -487,6 +487,17 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     return { items, complete: false };
   }
 
+  async function getPositionSnapshot(): Promise<{
+    positions: any[];
+    fetchedAt: string;
+  }> {
+    const positions = await alpacaRequest<any[]>('/v2/positions');
+    if (!Array.isArray(positions)) {
+      throw new AlpacaApiError(502, 'Alpaca returned an invalid positions snapshot.');
+    }
+    return { positions, fetchedAt: new Date().toISOString() };
+  }
+
   async function getExecutionSnapshot(clientOrderId: string): Promise<{
     order: any | null;
     fills: any[];
@@ -954,6 +965,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     getStatus,
     getOverview,
     getExecutionSnapshot,
+    getPositionSnapshot,
     getOptionContracts,
     submitOrder,
     closePosition,
