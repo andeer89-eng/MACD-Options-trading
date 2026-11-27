@@ -38,6 +38,7 @@ function canonicalJson(value: unknown): string {
 }
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 const digestOk = (value:string) => /^[a-f0-9]{64}$/.test(value);
+const nonEmpty = (value:unknown): value is string => typeof value==='string' && value.trim().length>0;
 const timestampOk = (value:number, ceiling:number) => Number.isFinite(value) && value>0 && value<=ceiling;
 const isoDate = (value:string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value+'T00:00:00.000Z').toISOString().slice(0,10)===value;
 
@@ -49,9 +50,9 @@ export function buildMultiAssetEvidencePack(input: MultiAssetEvidencePackInput):
   const risk=input.risk;
   if (!risk||!timestampOk(risk.evaluatedAt,input.generatedAt)||typeof risk.allowNewEntries!=='boolean'||
     !['OK','CAUTION','HALTED','DATA_INVALID'].includes(risk.status)||!Array.isArray(risk.reasons)||
-    !risk.policyVersion?.trim()||(risk.snapshotSha256!==undefined&&!digestOk(risk.snapshotSha256))) return {ok:false,reason:'INVALID_RISK_SNAPSHOT'};
+    !nonEmpty(risk.policyVersion)||(risk.allowNewEntries&&['HALTED','DATA_INVALID'].includes(risk.status))||(risk.snapshotSha256!==undefined&&!digestOk(risk.snapshotSha256))) return {ok:false,reason:'INVALID_RISK_SNAPSHOT'};
   if (!Array.isArray(input.sources)||input.sources.length===0) return {ok:false,reason:'EVIDENCE_SOURCES_REQUIRED'};
-  for (const s of input.sources) if (!s||!s.kind?.trim()||!s.provider?.trim()||
+  for (const s of input.sources) if (!s||!nonEmpty(s.kind)||!nonEmpty(s.provider)||
     !timestampOk(s.retrievedAt,input.generatedAt)||(s.publishedAt!==undefined&&!timestampOk(s.publishedAt,input.generatedAt))||
     (s.sha256!==undefined&&!digestOk(s.sha256))) return {ok:false,reason:'INVALID_EVIDENCE_SOURCE'};
 
@@ -59,31 +60,36 @@ export function buildMultiAssetEvidencePack(input: MultiAssetEvidencePackInput):
   if (input.assetClass==='STOCK') {
     const s=input.stock;
     if (input.option!==undefined||!s) return {ok:false,reason:'STOCK_OPTION_EVIDENCE_MISMATCH'};
-    if (s.symbol.trim().toUpperCase()!==symbol||!s.market?.provider?.trim()||
-      !timestampOk(s.market.retrievedAt,input.generatedAt)||!s.market.timeframe?.trim()||
+    if (!nonEmpty(s.symbol)||s.symbol.trim().toUpperCase()!==symbol||!nonEmpty(s.market?.provider)||
+      !timestampOk(s.market.retrievedAt,input.generatedAt)||!nonEmpty(s.market.timeframe)||
       !Array.isArray(s.market.candles)||s.market.candles.length===0||!digestOk(s.market.payloadSha256))
       return {ok:false,reason:'INVALID_STOCK_EVIDENCE'};
     if (s.fundamentals) {
-      if (!isoDate(s.fundamentals.asOfDate)||!Array.isArray(s.fundamentals.facts)) return {ok:false,reason:'INVALID_STOCK_FUNDAMENTALS'};
-      for (const f of s.fundamentals.facts) if (!f.metric?.trim()||(f.value!==null&&!Number.isFinite(f.value))||
-        !f.unit||!isoDate(f.periodEnd)||!isoDate(f.filingDate)||f.filingDate>s.fundamentals.asOfDate||
-        !f.accession?.trim()||!/^https:\/\//.test(f.sourceUri)) return {ok:false,reason:'INVALID_STOCK_FUNDAMENTAL_FACT'};
+      if (!isoDate(s.fundamentals.asOfDate)||s.fundamentals.asOfDate>new Date(input.asOf).toISOString().slice(0,10)||!Array.isArray(s.fundamentals.facts)) return {ok:false,reason:'INVALID_STOCK_FUNDAMENTALS'};
+      for (const f of s.fundamentals.facts) if (!f||!nonEmpty(f.metric)||(f.value!==null&&!Number.isFinite(f.value))||
+        !nonEmpty(f.unit)||!isoDate(f.periodEnd)||!isoDate(f.filingDate)||f.filingDate>s.fundamentals.asOfDate||
+        !nonEmpty(f.accession)||!nonEmpty(f.sourceUri)||!/^https:\/\//.test(f.sourceUri)) return {ok:false,reason:'INVALID_STOCK_FUNDAMENTAL_FACT'};
     }
     evidence=s;
   } else {
     const o=input.option;
     if (input.stock!==undefined||!o) return {ok:false,reason:'OPTION_STOCK_EVIDENCE_MISMATCH'};
     const c=o.contract,q=o.quote;
-    if (!/^[A-Z0-9]{1,6}\d{6}[CP]\d{8}$/.test(c?.occSymbol||'')||
-      c.underlyingSymbol.trim().toUpperCase()!==symbol||!['CALL','PUT'].includes(c.optionType)||
-      !isoDate(c.expirationDate)||!Number.isFinite(c.strike)||c.strike<=0||!Number.isFinite(c.multiplier)||c.multiplier<=0||
+    const occ=typeof c?.occSymbol==='string'?c.occSymbol:'';
+    const occMatch=occ.match(/^([A-Z0-9]{1,6})(\d{6})([CP])(\d{8})$/);
+    const expectedExpiry=typeof c?.expirationDate==='string'?c.expirationDate.slice(2,4)+c.expirationDate.slice(5,7)+c.expirationDate.slice(8,10):'';
+    const expectedType=c?.optionType==='CALL'?'C':c?.optionType==='PUT'?'P':'';
+    if (!occMatch||!nonEmpty(c.underlyingSymbol)||c.underlyingSymbol.trim().toUpperCase()!==symbol||
+      !occMatch[1].startsWith(symbol)||occMatch[2]!==expectedExpiry||occMatch[3]!==expectedType||
+      Number(occMatch[4])!==Math.round(Number(c.strike)*1000)||
+      !['CALL','PUT'].includes(c.optionType)||!isoDate(c.expirationDate)||!Number.isFinite(c.strike)||c.strike<=0||!Number.isFinite(c.multiplier)||c.multiplier<=0||
       !q||!Number.isFinite(q.bid)||q.bid<0||!Number.isFinite(q.ask)||q.ask<q.bid||
       !Number.isFinite(q.volume)||q.volume<0||!Number.isFinite(q.openInterest)||q.openInterest<0||
-      !Number.isFinite(q.impliedVolatility)||q.impliedVolatility<0||!timestampOk(q.quoteAt,input.generatedAt)||
+      !Number.isFinite(q.impliedVolatility)||q.impliedVolatility<0||!timestampOk(q.quoteAt,input.asOf)||
       !Number.isFinite(q.underlyingPrice)||q.underlyingPrice<=0||
       ![q.greeks?.delta,q.greeks?.gamma,q.greeks?.theta,q.greeks?.vega].every(Number.isFinite)||
       (q.greeks.rho!==undefined&&!Number.isFinite(q.greeks.rho))||
-      !o.market?.provider?.trim()||!timestampOk(o.market.retrievedAt,input.generatedAt)||!digestOk(o.market.payloadSha256))
+      !nonEmpty(o.market?.provider)||!timestampOk(o.market.retrievedAt,input.generatedAt)||!digestOk(o.market.payloadSha256))
       return {ok:false,reason:'INVALID_OPTION_EVIDENCE'};
     if ((q.bidSize!==undefined&&(!Number.isFinite(q.bidSize)||q.bidSize<0))||
       (q.askSize!==undefined&&(!Number.isFinite(q.askSize)||q.askSize<0))||
