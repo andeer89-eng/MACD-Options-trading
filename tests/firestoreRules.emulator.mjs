@@ -106,6 +106,45 @@ describe('Firestore watchlist security rules', () => {
     }));
   });
 
+  it('rejects client-created and client-triggered watchlist states while allowing trusted server writes', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
+    const triggeredCreate = doc(db, 'users', OWNER_UID, 'watchlistItems', 'client-triggered-create');
+    await assertFails(setDoc(triggeredCreate, {
+      ownerId: OWNER_UID,
+      symbol: 'AAPL',
+      status: 'TRIGGERED',
+      totalScore: 82,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+
+    await seedWatchlistItem('client-triggered-update', 'WATCHING');
+    await assertFails(updateDoc(watchlistRef(db, 'client-triggered-update'), {
+      status: 'TRIGGERED',
+      updatedAt: serverTimestamp(),
+    }));
+
+    // Trusted server code uses the Admin SDK, which bypasses Firestore Security Rules.
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), 'users', OWNER_UID, 'watchlistItems', 'client-triggered-update'), {
+        status: 'TRIGGERED',
+        updatedAt: serverTimestamp(),
+      });
+    });
+    const trustedSnapshot = await assertSucceeds(getDoc(watchlistRef(db, 'client-triggered-update')));
+    assert.equal(trustedSnapshot.data()?.status, 'TRIGGERED');
+
+    // Owners may still edit non-status metadata on a server-triggered record.
+    await assertSucceeds(updateDoc(watchlistRef(db, 'client-triggered-update'), {
+      isPinned: true,
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(watchlistRef(db, 'client-triggered-update'), {
+      status: 'WATCHING',
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
   it('prevents deleting terminal items to bypass the irreversible state guard', async () => {
     await seedWatchlistItem('terminal-delete', 'EXPIRED');
     const db = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
