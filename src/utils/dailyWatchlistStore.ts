@@ -232,12 +232,10 @@ export async function deleteWatchlistItemFromFirestore(symbol: string): Promise<
 export function isValidStatusTransition(from: WatchlistStatus, to: WatchlistStatus): boolean {
   if (from === to) return true;
   if (to === 'TRIGGERED') return false;
-  if (from === 'EXPIRED' || from === 'INVALIDATED') return false;
   switch (from) {
     case 'NEW':
-      return to === 'WATCHING' || to === 'TRIGGERED' || to === 'EXPIRED' || to === 'INVALIDATED';
+      return to === 'WATCHING' || to === 'EXPIRED' || to === 'INVALIDATED';
     case 'WATCHING':
-      return to === 'TRIGGERED' || to === 'EXPIRED' || to === 'INVALIDATED';
     case 'TRIGGERED':
       return to === 'EXPIRED' || to === 'INVALIDATED';
     case 'EXPIRED':
