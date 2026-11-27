@@ -77,7 +77,7 @@ export function buildWatchlistSignalMarketData(input: {
         value => Number.isFinite(value) && value > 0
       ) ||
       !Number.isFinite(candle.volume) || candle.volume < 0 ||
-      typeof candle.dateStr !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(candle.dateStr) ||
+      typeof candle.dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(candle.dateStr) ||
       Number.isNaN(Date.parse(candle.dateStr)) || new Date(candle.timestamp).toISOString().slice(0, 10) !== candle.dateStr ||
       candle.high < Math.max(candle.open, candle.close, candle.low) ||
       candle.low > Math.min(candle.open, candle.close, candle.high)
@@ -138,7 +138,7 @@ export function validateWatchlistSignalMarketData(
   if (evidence.candles.length < 2 || evidence.candles.some(c =>
     c.timestamp >= evidence.excludedLatestCandleTimestamp ||
     !Number.isFinite(c.volume) || c.volume < 0 ||
-    typeof c.dateStr !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(c.dateStr) ||
+    typeof c.dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.dateStr) ||
     Number.isNaN(Date.parse(c.dateStr)) || new Date(c.timestamp).toISOString().slice(0, 10) !== c.dateStr
   )) {
     return 'CLOSED_CANDLE_BOUNDARY_INVALID';
