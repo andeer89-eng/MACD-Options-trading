@@ -487,6 +487,26 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     return { items, complete: false };
   }
 
+  async function getExecutionSnapshot(clientOrderId: string): Promise<{
+    order: any | null;
+    fills: any[];
+    fillHistoryComplete: boolean;
+  }> {
+    const normalizedId = clientOrderId.trim();
+    if (!normalizedId || normalizedId.length > 48) {
+      throw new AlpacaApiError(400, 'client_order_id must be between 1 and 48 characters.');
+    }
+    const order = await getOrderByClientOrderId(normalizedId);
+    if (!order) return { order: null, fills: [], fillHistoryComplete: false };
+    if (String(order.client_order_id || '') !== normalizedId || !order.id) {
+      throw new AlpacaApiError(502, 'Alpaca returned an order that does not match the requested client_order_id.');
+    }
+
+    const history = await fetchAllFillActivities();
+    const fills = history.items.filter(fill => String(fill?.order_id || '') === String(order.id));
+    return { order, fills, fillHistoryComplete: history.complete };
+  }
+
   async function getOverview(): Promise<AlpacaOverviewResponse> {
     const cfg = getConfig();
     const fetchedAt = new Date().toISOString();
@@ -933,6 +953,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     getConfig,
     getStatus,
     getOverview,
+    getExecutionSnapshot,
     getOptionContracts,
     submitOrder,
     closePosition,

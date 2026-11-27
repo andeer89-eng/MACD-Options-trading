@@ -120,3 +120,25 @@ events, but automatic fill-activity ingestion, order-state reconciliation after 
 retention/backup policy, and production IAM verification remain follow-up work. Do not treat
 this increment as a complete execution/fill ledger until those items are implemented and
 validated against a configured Paper account.
+
+## P1.6c — Broker fill reconciliation
+
+The authenticated endpoint
+`POST /api/alpaca/orders/:clientOrderId/reconcile` performs an on-demand reconciliation
+for one existing Paper order:
+
+1. Resolves the broker order by its stable `client_order_id`.
+2. Retrieves the complete paginated Alpaca FILL activity history and selects activities
+   matching that broker `order_id`.
+3. Refuses to write if activity pagination is incomplete, a fill row is malformed, or
+   the sum of activity quantities differs from Alpaca's `filled_qty`.
+4. Appends one deterministic `FILL_RECORDED` event per broker activity ID.
+5. Appends a broker-state event: `ORDER_CANCELED`, `ORDER_REJECTED`, or
+   `RECONCILIATION` (including partial/full fill state and aggregate broker quantity).
+6. Reads back and verifies the complete SHA-256 chain before returning success.
+
+Repeated calls are safe: deterministic event IDs make already-recorded fills and identical
+broker-state snapshots idempotent. New fills or a changed broker status create new events.
+The endpoint is on-demand; it does not run a background scheduler. Automated periodic
+reconciliation, handling of broker corporate actions/adjustments, and live Paper-account
+validation remain follow-up work. Do not claim that the ledger is continuously synchronized.

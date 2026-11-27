@@ -130,6 +130,110 @@ export function createAlpacaRouter(
     }
   });
 
+  router.post('/api/alpaca/orders/:clientOrderId/reconcile', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const clientOrderId = String(req.params.clientOrderId || '');
+      const snapshot = await alpaca.getExecutionSnapshot(clientOrderId);
+      if (!snapshot.order) {
+        res.status(404).json({ error: 'Order was not found by client_order_id at Alpaca.', mode: 'PAPER' });
+        return;
+      }
+      if (!snapshot.fillHistoryComplete) {
+        res.status(503).json({
+          error: 'Alpaca fill activity history is incomplete; reconciliation was not committed.',
+          mode: 'PAPER',
+          brokerOrderId: snapshot.order.id,
+        });
+        return;
+      }
+
+      const order = snapshot.order;
+      const brokerOrderId = String(order.id);
+      const symbol = String(order.symbol || '').toUpperCase();
+      const brokerFilledQty = Number(order.filled_qty || 0);
+      const activityFilledQty = snapshot.fills.reduce((sum, fill) => sum + Number(fill?.qty || 0), 0);
+      if (!Number.isFinite(brokerFilledQty) || brokerFilledQty < 0 ||
+          Math.abs(activityFilledQty - brokerFilledQty) > 0.000001) {
+        res.status(503).json({
+          error: 'Broker order filled_qty does not match the complete fill-activity quantity; reconciliation was not committed.',
+          mode: 'PAPER',
+          brokerOrderId,
+          brokerFilledQty,
+          activityFilledQty,
+        });
+        return;
+      }
+      let fillsRecorded = 0;
+      for (const fill of snapshot.fills) {
+        const activityId = String(fill?.id || '');
+        const qty = Number(fill?.qty);
+        const price = Number(fill?.price);
+        const occurredAt = String(fill?.transaction_time || '');
+        if (!activityId || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price < 0 || !occurredAt) {
+          throw new Error('Alpaca returned an invalid fill activity; reconciliation stopped.');
+        }
+        await executionLedger.append({
+          eventType: 'FILL_RECORDED',
+          clientOrderId,
+          brokerOrderId,
+          symbol,
+          occurredAt,
+          payload: {
+            activityId,
+            side: String(fill.side || order.side || ''),
+            qty,
+            price,
+          },
+        });
+        fillsRecorded++;
+      }
+
+      const status = String(order.status || 'unknown').toLowerCase();
+      const eventType = status === 'canceled' || status === 'cancelled'
+        ? 'ORDER_CANCELED' as const
+        : status === 'rejected' ? 'ORDER_REJECTED' as const : 'RECONCILIATION' as const;
+      const stateEvent = await executionLedger.append({
+        eventType,
+        clientOrderId,
+        brokerOrderId,
+        symbol,
+        occurredAt: String(order.updated_at || order.filled_at || order.canceled_at || order.submitted_at || new Date().toISOString()),
+        payload: {
+          status,
+          qty: Number(order.qty || 0),
+          filledQty: Number(order.filled_qty || 0),
+          filledAvgPrice: order.filled_avg_price == null ? null : Number(order.filled_avg_price),
+        },
+      });
+      const events = await executionLedger.readEvents(clientOrderId);
+      const verification = verifyExecutionLedgerChain(events);
+      if (!verification.valid) {
+        res.status(409).json({ error: 'Execution ledger hash-chain verification failed after reconciliation.', mode: 'PAPER', verification });
+        return;
+      }
+      res.json({
+        mode: 'PAPER',
+        clientOrderId,
+        brokerOrderId,
+        brokerStatus: status,
+        brokerFilledQty: Number(order.filled_qty || 0),
+        brokerFillActivityCount: snapshot.fills.length,
+        fillsRecorded,
+        stateEventSequence: stateEvent.sequence,
+        verification,
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Broker reconciliation failed.',
+        mode: 'PAPER',
+      });
+    }
+  });
+
   router.delete('/api/alpaca/positions/:symbol', async (req: Request, res: Response) => {
     try {
       const qty = req.query.qty ? Number(req.query.qty) : undefined;

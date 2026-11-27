@@ -4,7 +4,7 @@ import http from 'node:http';
 import { generateKeyPairSync, sign as signJwt } from 'node:crypto';
 import { createApp } from '../server.ts';
 import type { Candle } from '../src/utils/trullasStrategy.ts';
-import { isValidAlpacaPaperUrl, resolveAlpacaConfig } from './services/alpaca.ts';
+import { createAlpacaService, isValidAlpacaPaperUrl, resolveAlpacaConfig } from './services/alpaca.ts';
 
 const TEST_FIREBASE_PROJECT_ID = 'macd-options-test';
 const TEST_FIREBASE_UID = 'alpaca-owner-uid';
@@ -93,6 +93,51 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     });
     assert.equal(liveViolation.configured, false);
     assert.equal(liveViolation.paperViolation, true);
+  });
+
+  it('reconciles a broker order with only its own fill activities', async () => {
+    const calls: string[] = [];
+    const service = createAlpacaService({
+      env: {
+        APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
+        APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
+        APCA_API_BASE_URL: 'https://paper-api.alpaca.markets',
+      },
+      fetchImpl: async (input) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('/v2/orders:by_client_order_id?')) {
+          return new Response(JSON.stringify({
+            id: 'broker-order-123',
+            client_order_id: 'intent-123',
+            symbol: 'AAPL',
+            side: 'buy',
+            qty: '3',
+            filled_qty: '2',
+            filled_avg_price: '190.25',
+            status: 'partially_filled',
+            submitted_at: '2026-11-27T12:00:00.000Z',
+            updated_at: '2026-11-27T12:02:00.000Z',
+          }), { status: 200 });
+        }
+        if (url.includes('/v2/account/activities/FILL')) {
+          return new Response(JSON.stringify([
+            { id: 'activity-1', order_id: 'broker-order-123', symbol: 'AAPL', side: 'buy', qty: '1', price: '190.00', transaction_time: '2026-11-27T12:01:00.000Z' },
+            { id: 'activity-other', order_id: 'another-order', symbol: 'MSFT', side: 'buy', qty: '5', price: '400.00', transaction_time: '2026-11-27T12:01:30.000Z' },
+            { id: 'activity-2', order_id: 'broker-order-123', symbol: 'AAPL', side: 'buy', qty: '1', price: '190.50', transaction_time: '2026-11-27T12:02:00.000Z' },
+          ]), { status: 200 });
+        }
+        throw new Error(`Unexpected Alpaca request: ${url}`);
+      },
+    });
+
+    const snapshot = await service.getExecutionSnapshot('intent-123');
+    assert.equal(snapshot.order?.id, 'broker-order-123');
+    assert.equal(snapshot.order?.status, 'partially_filled');
+    assert.equal(snapshot.fillHistoryComplete, true);
+    assert.deepEqual(snapshot.fills.map(fill => fill.id), ['activity-1', 'activity-2']);
+    assert.equal(snapshot.fills.reduce((sum, fill) => sum + Number(fill.qty), 0), 2);
+    assert.equal(calls.length, 2);
   });
 
   it('fails closed when the Alpaca owner UID allowlist is empty', async () => {
