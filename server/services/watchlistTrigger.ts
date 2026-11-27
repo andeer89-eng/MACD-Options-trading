@@ -57,6 +57,7 @@ function base64url(value: string | Buffer): string {
 
 export function createWatchlistTriggerService(options: {
   projectId: string;
+  databaseId?: string;
   serviceAccountJson: string;
   fetchImpl?: FetchLike;
   now?: () => number;
@@ -71,7 +72,8 @@ export function createWatchlistTriggerService(options: {
     throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is invalid.');
   }
 
-  const root = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(options.projectId)}/databases/(default)/documents`;
+  const databaseId = options.databaseId || '(default)';
+  const root = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(options.projectId)}/databases/${encodeURIComponent(databaseId)}/documents`;
   let cachedToken = '';
   let tokenExpiresAt = 0;
 
