@@ -145,6 +145,33 @@ describe('Firestore watchlist security rules', () => {
     }));
   });
 
+  it('allows owners to read prediction journal records but forbids all client mutations', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users', OWNER_UID, 'predictionJournalEvents', 'event-1'), {
+        ownerId: OWNER_UID, sequence: 1, eventType: 'PREDICTION_RECORDED',
+      });
+      await setDoc(doc(db, 'users', OWNER_UID, 'predictionJournalMeta', 'head'), {
+        ownerId: OWNER_UID, sequence: 1, headHash: 'a'.repeat(64),
+      });
+    });
+
+    const ownerDb = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
+    const eventRef = doc(ownerDb, 'users', OWNER_UID, 'predictionJournalEvents', 'event-1');
+    const headRef = doc(ownerDb, 'users', OWNER_UID, 'predictionJournalMeta', 'head');
+    await assertSucceeds(getDoc(eventRef));
+    await assertSucceeds(getDoc(headRef));
+    await assertFails(updateDoc(eventRef, { sequence: 2 }));
+    await assertFails(deleteDoc(eventRef));
+    await assertFails(setDoc(doc(ownerDb, 'users', OWNER_UID, 'predictionJournalEvents', 'event-2'), {
+      ownerId: OWNER_UID, sequence: 2,
+    }));
+    await assertFails(updateDoc(headRef, { sequence: 2 }));
+
+    const otherDb = testEnv.authenticatedContext(OTHER_UID, { email_verified: true }).firestore();
+    await assertFails(getDoc(doc(otherDb, 'users', OWNER_UID, 'predictionJournalEvents', 'event-1')));
+  });
+
   it('prevents deleting terminal items to bypass the irreversible state guard', async () => {
     await seedWatchlistItem('terminal-delete', 'EXPIRED');
     const db = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
