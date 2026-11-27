@@ -214,7 +214,7 @@ test('short put expiration realizes premium less intrinsic liability instead of 
   assert.equal(updatedAccount.cash, 1250);
   assert.equal(updatedAccount.positions.length, 0);
   assert.equal(updatedAccount.sessionLogs[0].action, 'EXPIRED_ITM_ASSIGNED');
-  assert.match(updatedAccount.sessionLogs[0].reason, /does not create underlying share inventory/i);
+  assert.match(updatedAccount.sessionLogs[0].reason, /underlying assignment\/exercise inventory is not represented/i);
   assert.equal(updatedAccount.activeMemory.episodes[0].outcome, 'LOSS');
 
   const [episode] = synthesizeOptionsEpisodesFromHistory([closed]);
