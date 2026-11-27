@@ -129,7 +129,7 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   };
 
   const downloadAudit = (format: 'json' | 'csv') => {
-    const payload = { exportedAt: new Date().toISOString(), mode: 'PAPER', runs: data.runs, ledger: data.ledger || null };
+    const payload = { exportedAt: new Date().toISOString(), mode: 'PAPER', runs: data.runs, integrityAudits: data.integrityAudits, ledger: data.ledger || null };
     let content: string;
     let mime: string;
     if (format === 'json') {
