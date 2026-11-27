@@ -130,6 +130,177 @@ describe('alpacaJournalSync pure logic & FIFO journal ledger mapping', () => {
     assert.equal(optHist[0].profitDollars, 380.0);
   });
 
+
+  it('uses individual Alpaca fills to allocate FIFO option exit prices across opening lots', () => {
+    const orders = [
+      {
+        id: 'opt-open-a',
+        symbol: 'SPY261218P00560000',
+        asset_class: 'us_option',
+        side: 'sell' as const,
+        qty: 1,
+        filled_qty: 1,
+        filled_avg_price: 1.0,
+        type: 'limit',
+        time_in_force: 'day',
+        limit_price: 1.0,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-12T15:00:00Z',
+        filled_at: '2026-11-12T15:00:01Z',
+      },
+      {
+        id: 'opt-open-b',
+        symbol: 'SPY261218P00560000',
+        asset_class: 'us_option',
+        side: 'sell' as const,
+        qty: 1,
+        filled_qty: 1,
+        filled_avg_price: 3.0,
+        type: 'limit',
+        time_in_force: 'day',
+        limit_price: 3.0,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-12T15:01:00Z',
+        filled_at: '2026-11-12T15:01:01Z',
+      },
+      {
+        id: 'opt-close-c',
+        symbol: 'SPY261218P00560000',
+        asset_class: 'us_option',
+        side: 'buy' as const,
+        qty: 2,
+        filled_qty: 2,
+        filled_avg_price: 1.0,
+        type: 'limit',
+        time_in_force: 'day',
+        limit_price: 1.0,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-17T15:00:00Z',
+        filled_at: '2026-11-17T15:00:02Z',
+      },
+    ];
+    const fills = [
+      {
+        id: 'fill-open-a',
+        order_id: 'opt-open-a',
+        symbol: 'SPY261218P00560000',
+        side: 'sell',
+        qty: 1,
+        price: 1.0,
+        transaction_time: '2026-11-12T15:00:01Z',
+      },
+      {
+        id: 'fill-open-b',
+        order_id: 'opt-open-b',
+        symbol: 'SPY261218P00560000',
+        side: 'sell',
+        qty: 1,
+        price: 3.0,
+        transaction_time: '2026-11-12T15:01:01Z',
+      },
+      {
+        id: 'fill-close-a',
+        order_id: 'opt-close-c',
+        symbol: 'SPY261218P00560000',
+        side: 'buy',
+        qty: 1,
+        price: 0.5,
+        transaction_time: '2026-11-17T15:00:01Z',
+      },
+      {
+        id: 'fill-close-b',
+        order_id: 'opt-close-c',
+        symbol: 'SPY261218P00560000',
+        side: 'buy',
+        qty: 1,
+        price: 1.5,
+        transaction_time: '2026-11-17T15:00:02Z',
+      },
+    ];
+
+    const result = mapAlpacaOrdersToJournalEntries(orders, [], [], null, fills, true);
+    const entries = result.entries.sort((a, b) => a.entryPrice - b.entryPrice);
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].entryPrice, 1.0);
+    assert.equal(entries[0].exitPrice, 0.5);
+    assert.equal(entries[0].realizedPnL, 50);
+    assert.equal(entries[1].entryPrice, 3.0);
+    assert.equal(entries[1].exitPrice, 1.5);
+    assert.equal(entries[1].realizedPnL, 150);
+
+    const optionsHistory = alpacaOrdersToOptionsHistory(orders, fills, true)
+      .sort((a, b) => a.strike - b.strike || a.profitDollars - b.profitDollars);
+    assert.equal(optionsHistory.length, 2);
+    assert.deepEqual(optionsHistory.map((trade) => trade.profitDollars).sort((a, b) => a - b), [50, 150]);
+  });
+
+  it('falls back to order weighted averages rather than mixing incomplete fills with full-order aggregates', () => {
+    const orders = [
+      {
+        id: 'opt-open-incomplete',
+        symbol: 'SPY261218P00560000',
+        asset_class: 'us_option',
+        side: 'sell' as const,
+        qty: 2,
+        filled_qty: 2,
+        filled_avg_price: 2.0,
+        type: 'limit',
+        time_in_force: 'day',
+        limit_price: 2.0,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-12T15:00:00Z',
+        filled_at: '2026-11-12T15:00:01Z',
+      },
+      {
+        id: 'opt-close-incomplete',
+        symbol: 'SPY261218P00560000',
+        asset_class: 'us_option',
+        side: 'buy' as const,
+        qty: 2,
+        filled_qty: 2,
+        filled_avg_price: 1.0,
+        type: 'limit',
+        time_in_force: 'day',
+        limit_price: 1.0,
+        stop_price: null,
+        status: 'filled',
+        submitted_at: '2026-11-17T15:00:00Z',
+        filled_at: '2026-11-17T15:00:01Z',
+      },
+    ];
+    const partialFills = [
+      {
+        id: 'fill-open-partial',
+        order_id: 'opt-open-incomplete',
+        symbol: 'SPY261218P00560000',
+        side: 'sell',
+        qty: 1,
+        price: 1.5,
+        transaction_time: '2026-11-12T15:00:01Z',
+      },
+      {
+        id: 'fill-close-partial',
+        order_id: 'opt-close-incomplete',
+        symbol: 'SPY261218P00560000',
+        side: 'buy',
+        qty: 1,
+        price: 0.5,
+        transaction_time: '2026-11-17T15:00:01Z',
+      },
+    ];
+
+    const result = mapAlpacaOrdersToJournalEntries(orders, [], [], null, partialFills, false);
+    assert.equal(result.entries.length, 1);
+    assert.equal(result.entries[0].quantity, 2);
+    assert.equal(result.entries[0].entryPrice, 2.0);
+    assert.equal(result.entries[0].exitPrice, 1.0);
+    assert.equal(result.entries[0].realizedPnL, 200);
+  });
+
   it('sync is idempotent and upgrades an OPEN entry to CLOSED without creating duplicates or losing manual notes', () => {
     const existingOpen: JournalEntry = {
       id: 'alpaca_lot_ord-aapl-open',

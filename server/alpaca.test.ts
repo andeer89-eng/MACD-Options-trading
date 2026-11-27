@@ -287,8 +287,44 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           }
 
           if (url.includes('/v2/orders') && method === 'GET') {
+            const requestUrl = new URL(url);
+            const oldestOrder = {
+              id: 'ord-oldest-501',
+              symbol: 'NVDA',
+              asset_class: 'us_equity',
+              side: 'buy',
+              qty: '0.1',
+              filled_qty: '0.1',
+              filled_avg_price: '130.00',
+              type: 'market',
+              time_in_force: 'day',
+              status: 'filled',
+              submitted_at: '2026-11-18T14:36:00Z',
+              filled_at: '2026-11-18T14:36:01Z',
+            };
+            if (requestUrl.searchParams.has('before_order_id')) {
+              return new Response(JSON.stringify([oldestOrder]), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              });
+            }
+            const recentOrders = Array.from({ length: 499 }, (_, i) => ({
+              id: `ord-dummy-${String(i).padStart(3, '0')}`,
+              symbol: 'DUMMY',
+              asset_class: 'us_equity',
+              side: 'buy',
+              qty: '1',
+              filled_qty: '0',
+              filled_avg_price: null,
+              type: 'market',
+              time_in_force: 'day',
+              status: 'canceled',
+              submitted_at: '2026-11-18T14:30:00Z',
+              filled_at: null,
+            }));
             return new Response(
               JSON.stringify([
+                ...recentOrders,
                 {
                   id: 'ord-eq-open-1',
                   symbol: 'NVDA',
@@ -309,21 +345,33 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           }
 
           if (url.includes('/v2/account/activities/FILL')) {
-            return new Response(
-              JSON.stringify([
-                {
-                  id: 'fill-1',
+            const requestUrl = new URL(url);
+            const pageToken = requestUrl.searchParams.get('page_token');
+            const rows = pageToken
+              ? [{
+                  id: 'fill-page-100',
+                  activity_type: 'FILL',
+                  order_id: 'ord-oldest-501',
+                  symbol: 'NVDA',
+                  side: 'buy',
+                  qty: '0.1',
+                  price: '130.00',
+                  transaction_time: '2026-11-18T14:36:01Z',
+                }]
+              : Array.from({ length: 100 }, (_, i) => ({
+                  id: `fill-page-${String(i).padStart(3, '0')}`,
                   activity_type: 'FILL',
                   order_id: 'ord-eq-open-1',
                   symbol: 'NVDA',
                   side: 'buy',
-                  qty: '10',
+                  qty: '0.1',
                   price: '130.00',
-                  transaction_time: '2026-11-18T14:35:02Z',
-                },
-              ]),
-              { status: 200, headers: { 'Content-Type': 'application/json' } }
-            );
+                  transaction_time: new Date(Date.UTC(2026, 10, 18, 14, 35, 2, i)).toISOString(),
+                }));
+            return new Response(JSON.stringify(rows), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
           }
 
           if (url.includes('/v2/options/contracts')) {
@@ -416,6 +464,12 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.equityPositions[0].symbol, 'NVDA');
       assert.equal(data.optionPositions.length, 1);
       assert.equal(data.optionPositions[0].symbol, 'SPY261218P00560000');
+      assert.equal(data.orders.length, 501, 'Expected order history to be paginated beyond the first 500 orders');
+      assert.equal(data.fills.length, 101, 'Expected fill activity history to be paginated beyond the first 100 activities');
+      assert.equal(data.orderHistoryComplete, true);
+      assert.equal(data.fillHistoryComplete, true);
+      assert.ok(calls.some((call) => call.url.includes('before_order_id=ord-eq-open-1')));
+      assert.ok(calls.some((call) => call.url.includes('page_token=fill-page-099')));
 
       const accountCall = calls.find((c) => c.url.startsWith('https://paper-api.alpaca.markets/v2/account'));
       assert.ok(accountCall);

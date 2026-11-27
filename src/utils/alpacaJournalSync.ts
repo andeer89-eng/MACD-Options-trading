@@ -93,6 +93,9 @@ export interface AlpacaOverviewDTO {
   optionPositions: AlpacaPositionDTO[];
   orders: AlpacaOrderDTO[];
   fills: AlpacaFillDTO[];
+  fillHistoryComplete?: boolean;
+  fillHistoryError?: string;
+  orderHistoryComplete?: boolean;
   error?: string;
 }
 
@@ -163,64 +166,190 @@ interface LotState {
   closed: boolean;
 }
 
-function pairAlpacaOrdersFifo(orders: AlpacaOrderDTO[]): LotState[] {
-  const filledOrders = orders
-    .filter((o) => o.filled_qty > 0 && o.filled_avg_price !== null && o.filled_avg_price > 0)
-    .sort((a, b) => {
-      const ta = new Date(a.filled_at || a.submitted_at).getTime();
-      const tb = new Date(b.filled_at || b.submitted_at).getTime();
-      return ta - tb;
-    });
+interface AlpacaExecutionEvent {
+  id: string;
+  orderId: string;
+  symbol: string;
+  assetClass: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  price: number;
+  timestamp: string;
+}
 
+function buildAlpacaExecutionEvents(
+  orders: AlpacaOrderDTO[],
+  fills: AlpacaFillDTO[],
+  fillHistoryComplete: boolean
+): AlpacaExecutionEvent[] {
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+  const fillsByOrderId = new Map<string, AlpacaFillDTO[]>();
+  const seenFillIds = new Set<string>();
+
+  for (const fill of fills) {
+    if (
+      !fill.id ||
+      !fill.order_id ||
+      !fill.symbol ||
+      !Number.isFinite(fill.qty) ||
+      Math.abs(fill.qty) <= 0 ||
+      !Number.isFinite(fill.price) ||
+      fill.price <= 0 ||
+      !fill.transaction_time ||
+      seenFillIds.has(fill.id)
+    ) {
+      continue;
+    }
+    seenFillIds.add(fill.id);
+    const group = fillsByOrderId.get(fill.order_id) || [];
+    group.push(fill);
+    fillsByOrderId.set(fill.order_id, group);
+  }
+
+  const events: AlpacaExecutionEvent[] = [];
+  const handledOrderIds = new Set<string>();
+  const addFillEvents = (orderId: string, group: AlpacaFillDTO[]) => {
+    const order = orderById.get(orderId);
+    for (const fill of group) {
+      const side = String(fill.side).toLowerCase();
+      if (!['buy', 'buy_to_cover', 'sell', 'sell_short'].includes(side)) continue;
+      const symbol = fill.symbol.trim().toUpperCase();
+      events.push({
+        id: fill.id,
+        orderId,
+        symbol,
+        assetClass: order?.asset_class || (parseOccOptionSymbol(symbol).isOption ? 'us_option' : 'us_equity'),
+        side: side === 'buy' || side === 'buy_to_cover' ? 'buy' : 'sell',
+        qty: Math.abs(fill.qty),
+        price: fill.price,
+        timestamp: fill.transaction_time,
+      });
+    }
+  };
+
+  // Prefer activity-level fills when they reconcile exactly to the broker's
+  // filled quantity. If the activity page is incomplete, use the order's
+  // broker-reported weighted average instead of mixing partial fills with a
+  // full-order aggregate (which would double-count executions).
+  for (const order of orders) {
+    const group = fillsByOrderId.get(order.id) || [];
+    const fillQty = group.reduce((sum, fill) => sum + Math.abs(fill.qty), 0);
+    const expectedQty = Math.abs(order.filled_qty);
+    const tolerance = Math.max(0.00001, expectedQty * 0.000001);
+    const fillsReconcile = group.length > 0 && (
+      expectedQty <= 0 || Math.abs(fillQty - expectedQty) <= tolerance
+    );
+
+    if (fillsReconcile) {
+      addFillEvents(order.id, group);
+      handledOrderIds.add(order.id);
+      continue;
+    }
+
+    if (expectedQty > 0 && order.filled_avg_price !== null && order.filled_avg_price > 0) {
+      const symbol = order.symbol.trim().toUpperCase();
+      events.push({
+        id: `order-average:${order.id}`,
+        orderId: order.id,
+        symbol,
+        assetClass: order.asset_class || (parseOccOptionSymbol(symbol).isOption ? 'us_option' : 'us_equity'),
+        side: order.side,
+        qty: expectedQty,
+        price: order.filled_avg_price,
+        timestamp: order.filled_at || order.submitted_at,
+      });
+      handledOrderIds.add(order.id);
+      continue;
+    }
+
+    if (group.length > 0 && fillHistoryComplete) {
+      addFillEvents(order.id, group);
+      handledOrderIds.add(order.id);
+    }
+  }
+
+  // A complete activity history can contain executions whose orders are older
+  // than the order-history pagination window. These fills remain authoritative.
+  if (fillHistoryComplete) {
+    for (const [orderId, group] of fillsByOrderId) {
+      if (!handledOrderIds.has(orderId) && !orderById.has(orderId)) {
+        addFillEvents(orderId, group);
+      }
+    }
+  }
+
+  return events.sort((a, b) => {
+    const timeDelta = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta;
+    const orderDelta = a.orderId.localeCompare(b.orderId);
+    return orderDelta !== 0 ? orderDelta : a.id.localeCompare(b.id);
+  });
+}
+
+function pairAlpacaOrdersFifo(
+  orders: AlpacaOrderDTO[],
+  fills: AlpacaFillDTO[] = [],
+  fillHistoryComplete = false
+): LotState[] {
+  const executions = buildAlpacaExecutionEvents(orders, fills, fillHistoryComplete);
   const openQueues = new Map<string, LotState[]>();
-  const completedLots: LotState[] = [];
+  const completedByOrderPair = new Map<string, LotState>();
 
-  for (const ord of filledOrders) {
-    const sym = ord.symbol.toUpperCase();
-    const isOption = ord.asset_class === 'us_option' || parseOccOptionSymbol(sym).isOption;
-    const execPrice = Number(ord.filled_avg_price);
-    let remainingQty = Math.abs(ord.filled_qty);
-    const ts = ord.filled_at || ord.submitted_at || new Date().toISOString();
-    const incomingDirection: 'LONG' | 'SHORT' = ord.side === 'buy' ? 'LONG' : 'SHORT';
-
+  for (const execution of executions) {
+    const sym = execution.symbol.toUpperCase();
+    const isOption = execution.assetClass === 'us_option' || parseOccOptionSymbol(sym).isOption;
+    let remainingQty = Math.abs(execution.qty);
+    const incomingDirection: 'LONG' | 'SHORT' = execution.side === 'buy' ? 'LONG' : 'SHORT';
     const queue = openQueues.get(sym) || [];
 
-    // Consume opposite-side open lots FIFO
-    while (remainingQty > 0 && queue.length > 0 && queue[0].side !== incomingDirection) {
+    // Match each execution against the actual opening fill lots in FIFO order.
+    while (remainingQty > 0.00001 && queue.length > 0 && queue[0].side !== incomingDirection) {
       const head = queue[0];
       const matchedQty = Math.min(remainingQty, head.qty);
-      completedLots.push({
-        id: `alpaca_lot_${sanitizeSyncId(head.openOrderId)}_${sanitizeSyncId(ord.id)}`,
-        openOrderId: head.openOrderId,
-        closeOrderId: ord.id,
-        symbol: sym,
-        isOption,
-        side: head.side,
-        qty: matchedQty,
-        entryPrice: head.entryPrice,
-        exitPrice: execPrice,
-        entryTs: head.entryTs,
-        exitTs: ts,
-        closed: true,
-      });
+      const closedId = `alpaca_lot_${sanitizeSyncId(head.openOrderId)}_${sanitizeSyncId(execution.orderId)}`;
+      const previous = completedByOrderPair.get(closedId);
+
+      if (previous) {
+        const combinedQty = previous.qty + matchedQty;
+        previous.entryPrice = (previous.entryPrice * previous.qty + head.entryPrice * matchedQty) / combinedQty;
+        previous.exitPrice = (
+          (previous.exitPrice || 0) * previous.qty + execution.price * matchedQty
+        ) / combinedQty;
+        previous.qty = combinedQty;
+        previous.exitTs = execution.timestamp;
+      } else {
+        completedByOrderPair.set(closedId, {
+          id: closedId,
+          openOrderId: head.openOrderId,
+          closeOrderId: execution.orderId,
+          symbol: sym,
+          isOption: head.isOption,
+          side: head.side,
+          qty: matchedQty,
+          entryPrice: head.entryPrice,
+          exitPrice: execution.price,
+          entryTs: head.entryTs,
+          exitTs: execution.timestamp,
+          closed: true,
+        });
+      }
 
       remainingQty = Number((remainingQty - matchedQty).toFixed(6));
       head.qty = Number((head.qty - matchedQty).toFixed(6));
-      if (head.qty <= 0.00001) {
-        queue.shift();
-      }
+      if (head.qty <= 0.00001) queue.shift();
     }
 
+    // Any excess execution opens/increases the position in the opposite direction.
     if (remainingQty > 0.00001) {
       queue.push({
-        id: `alpaca_lot_${sanitizeSyncId(ord.id)}`,
-        openOrderId: ord.id,
+        id: `alpaca_fill_lot_${sanitizeSyncId(execution.id)}`,
+        openOrderId: execution.orderId,
         symbol: sym,
         isOption,
         side: incomingDirection,
         qty: remainingQty,
-        entryPrice: execPrice,
-        entryTs: ts,
+        entryPrice: execution.price,
+        entryTs: execution.timestamp,
         closed: false,
       });
     }
@@ -228,14 +357,29 @@ function pairAlpacaOrdersFifo(orders: AlpacaOrderDTO[]): LotState[] {
     openQueues.set(sym, queue);
   }
 
-  const stillOpen: LotState[] = [];
+  // Collapse remaining fills from the same opening order into a stable order-level
+  // journal lot ID; completed lots retain distinct opening/closing order pairs.
+  const openByOrder = new Map<string, LotState>();
   for (const queue of openQueues.values()) {
     for (const lot of queue) {
-      stillOpen.push(lot);
+      const id = `alpaca_lot_${sanitizeSyncId(lot.openOrderId)}`;
+      const previous = openByOrder.get(id);
+      if (!previous) {
+        openByOrder.set(id, { ...lot, id });
+        continue;
+      }
+      const combinedQty = previous.qty + lot.qty;
+      previous.entryPrice = (
+        previous.entryPrice * previous.qty + lot.entryPrice * lot.qty
+      ) / combinedQty;
+      previous.qty = combinedQty;
+      if (new Date(lot.entryTs).getTime() < new Date(previous.entryTs).getTime()) {
+        previous.entryTs = lot.entryTs;
+      }
     }
   }
 
-  return [...completedLots, ...stillOpen];
+  return [...completedByOrderPair.values(), ...openByOrder.values()];
 }
 
 export interface JournalSyncResult {
@@ -249,9 +393,11 @@ export function mapAlpacaOrdersToJournalEntries(
   orders: AlpacaOrderDTO[],
   positions: AlpacaPositionDTO[],
   existingEntries: JournalEntry[],
-  marketHealth?: MarketHealthReport | null
+  marketHealth?: MarketHealthReport | null,
+  fills: AlpacaFillDTO[] = [],
+  fillHistoryComplete = true
 ): JournalSyncResult {
-  const lots = pairAlpacaOrdersFifo(orders);
+  const lots = pairAlpacaOrdersFifo(orders, fills, fillHistoryComplete);
   const existingById = new Map<string, JournalEntry>();
   const existingByOpenOrderTag = new Map<string, JournalEntry>();
 
@@ -584,11 +730,17 @@ export function alpacaPositionsToOptionsPositions(
   });
 }
 
-export function alpacaOrdersToOptionsHistory(orders: AlpacaOrderDTO[]): OptionsTradeRecord[] {
+export function alpacaOrdersToOptionsHistory(
+  orders: AlpacaOrderDTO[],
+  fills: AlpacaFillDTO[] = [],
+  fillHistoryComplete = true
+): OptionsTradeRecord[] {
   const optionOrders = orders.filter(
     (o) => o.asset_class === 'us_option' || parseOccOptionSymbol(o.symbol).isOption
   );
-  const lots = pairAlpacaOrdersFifo(optionOrders).filter((l) => l.closed && l.exitPrice !== undefined);
+  const optionFills = fills.filter((fill) => parseOccOptionSymbol(fill.symbol).isOption);
+  const lots = pairAlpacaOrdersFifo(optionOrders, optionFills, fillHistoryComplete)
+    .filter((l) => l.closed && l.exitPrice !== undefined);
 
   return lots
     .map((lot) => {
@@ -599,8 +751,10 @@ export function alpacaOrdersToOptionsHistory(orders: AlpacaOrderDTO[]): OptionsT
         : ((lot.exitPrice ?? lot.entryPrice) - lot.entryPrice) * lot.qty * 100;
       const denom = Math.max(0.01, lot.entryPrice * lot.qty * 100);
       const pnlPct = Number(((pnl / denom) * 100).toFixed(1));
+      // FILL activities describe executions, not OPEXP/OPASN settlement events.
+      // Do not infer worthless expiration from a high realized return percentage.
       const outcomeReason: OptionsTradeRecord['outcomeReason'] =
-        Math.abs(pnl) < 1 ? 'Break Even' : pnlPct >= 95 ? 'Expired Worthless' : 'Early Take-Profit';
+        Math.abs(pnl) < 1 ? 'Break Even' : pnl > 0 ? 'Early Take-Profit' : 'Realized Loss';
 
       return {
         id: lot.id,

@@ -101,6 +101,9 @@ export interface AlpacaOverviewResponse {
   optionPositions: AlpacaPositionItem[];
   orders: AlpacaOrderItem[];
   fills: AlpacaFillActivity[];
+  fillHistoryComplete: boolean;
+  fillHistoryError?: string;
+  orderHistoryComplete: boolean;
   error?: string;
 }
 
@@ -379,6 +382,67 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     }
   }
 
+  async function fetchAllOrders(): Promise<{ items: any[]; complete: boolean }> {
+    const pageSize = 500;
+    const maxPages = 20;
+    const items: any[] = [];
+    const seenCursors = new Set<string>();
+    let beforeOrderId = '';
+
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      const cursor = beforeOrderId ? `&before_order_id=${encodeURIComponent(beforeOrderId)}` : '';
+      const page = await alpacaRequest<any[]>(
+        `/v2/orders?status=all&limit=${pageSize}&direction=desc${cursor}`
+      );
+      const rows = Array.isArray(page) ? page : [];
+      items.push(...rows);
+      if (rows.length < pageSize) return { items, complete: true };
+
+      const nextCursor = String(rows[rows.length - 1]?.id || '');
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        return { items, complete: false };
+      }
+      seenCursors.add(nextCursor);
+      beforeOrderId = nextCursor;
+    }
+
+    // Do not silently label a capped history as complete.
+    return { items, complete: false };
+  }
+
+  async function fetchAllFillActivities(): Promise<{ items: any[]; complete: boolean }> {
+    const pageSize = 100;
+    const maxPages = 100;
+    const items: any[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let pageToken = '';
+
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      const cursor = pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : '';
+      const page = await alpacaRequest<any[]>(
+        `/v2/account/activities/FILL?page_size=${pageSize}&direction=asc${cursor}`
+      );
+      const rows = Array.isArray(page) ? page : [];
+      for (const row of rows) {
+        const id = String(row?.id || '');
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
+        items.push(row);
+      }
+      if (rows.length < pageSize) return { items, complete: true };
+
+      const nextCursor = String(rows[rows.length - 1]?.id || '');
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        return { items, complete: false };
+      }
+      seenCursors.add(nextCursor);
+      pageToken = nextCursor;
+    }
+
+    return { items, complete: false };
+  }
+
   async function getOverview(): Promise<AlpacaOverviewResponse> {
     const cfg = getConfig();
     const fetchedAt = new Date().toISOString();
@@ -396,16 +460,28 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions: [],
         orders: [],
         fills: [],
+        fillHistoryComplete: false,
+        orderHistoryComplete: false,
       };
     }
 
     try {
-      const [rawAccount, rawPositions, rawOrders, rawFills] = await Promise.all([
+      const [rawAccount, rawPositions, orderHistory] = await Promise.all([
         alpacaRequest<any>('/v2/account'),
         alpacaRequest<any[]>('/v2/positions'),
-        alpacaRequest<any[]>('/v2/orders?status=all&limit=100&direction=desc'),
-        alpacaRequest<any[]>('/v2/account/activities/FILL?page_size=100').catch(() => []),
+        fetchAllOrders(),
       ]);
+      let fillHistory: { items: any[]; complete: boolean } = { items: [], complete: false };
+      let fillHistoryError: string | undefined;
+      try {
+        fillHistory = await fetchAllFillActivities();
+      } catch (fillError) {
+        // Keep account/position visibility available, but explicitly mark the
+        // fill ledger as incomplete so downstream code can fall back to order averages.
+        fillHistoryError = fillError instanceof Error ? fillError.message : 'Unable to retrieve Alpaca fill activities.';
+      }
+      const rawOrders = orderHistory.items;
+      const rawFills = fillHistory.items;
 
       const equity = toNum(rawAccount?.equity);
       const lastEquity = toNum(rawAccount?.last_equity, equity);
@@ -496,6 +572,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions,
         orders,
         fills,
+        fillHistoryComplete: fillHistory.complete,
+        fillHistoryError,
+        orderHistoryComplete: orderHistory.complete,
       };
     } catch (err: any) {
       return {
@@ -510,6 +589,8 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions: [],
         orders: [],
         fills: [],
+        fillHistoryComplete: false,
+        orderHistoryComplete: false,
         error: err?.message || 'Failed to retrieve Alpaca Paper overview',
       };
     }
