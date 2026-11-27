@@ -68,6 +68,10 @@ function fakeFirestore() {
       event.eventHash = 'f'.repeat(64);
       entry[1].fields.eventJson = { stringValue: JSON.stringify(event) };
     },
+    deleteHead: (ownerId: string) => {
+      const name = `projects/demo-project/databases/(default)/documents/users/${ownerId}/predictionJournalMeta/head`;
+      docs.delete(name);
+    },
   };
 }
 
@@ -110,6 +114,16 @@ test('enforces prediction identity uniqueness and verifies the complete persiste
   const verification = await journal.verify('owner_1');
   assert.equal(verification.valid, true);
   assert.equal(verification.headMatches, true);
+});
+
+test('reports a missing persisted head as an integrity failure, not a valid empty journal', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.deleteHead('owner_1');
+  const verification = await journal.verify('owner_1');
+  assert.equal(verification.valid, false);
+  assert.equal(verification.headMatches, false);
 });
 
 test('detects a tampered persisted event during full-history verification', async () => {
