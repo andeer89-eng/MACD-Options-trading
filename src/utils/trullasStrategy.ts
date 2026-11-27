@@ -81,6 +81,8 @@ export interface DivergenceSetup {
     tranche3: string; // 34% at trend confirmation
   };
   detectedAt: number;
+  /** First candle timestamp at which the final swing pivot is knowable (right-side lookback completed). */
+  confirmationTimestamp?: number;
 }
 
 /**
@@ -435,6 +437,7 @@ export function detectDivergences(
             tranche3: '34% on MACD signal line zero-line crossover expansion',
           },
           detectedAt: p3.timestamp,
+          confirmationTimestamp: indicatorPoints[p3.index + lookback].candle.timestamp,
         });
       }
     }
@@ -576,6 +579,7 @@ export function detectDivergences(
             tranche3: 'N/A (Standard double divergence)',
           },
           detectedAt: p2.timestamp,
+          confirmationTimestamp: indicatorPoints[p2.index + lookback].candle.timestamp,
         });
       }
     }
