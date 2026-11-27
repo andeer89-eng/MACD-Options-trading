@@ -15,6 +15,9 @@ import { createHealthRouter } from './server/routes/health.ts';
 import { createPythonRouter } from './server/routes/python.ts';
 import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
+import { createWatchlistRouter } from './server/routes/watchlist.ts';
+import { createFirebaseIdTokenVerifier } from './server/services/firebaseAuth.ts';
+import { createWatchlistAdminService } from './server/services/watchlistAdmin.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 
@@ -59,6 +62,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const executionLedger = serviceAccountJson
     ? createExecutionLedger({ projectId: firebaseProjectId, serviceAccountJson })
     : undefined;
+  const watchlistAdmin = serviceAccountJson
+    ? createWatchlistAdminService({
+        projectId: firebaseProjectId,
+        databaseId: firebaseConfig.firestoreDatabaseId,
+        serviceAccountJson,
+      })
+    : undefined;
+  const verifyWatchlistFirebaseIdToken = createFirebaseIdTokenVerifier({ projectId: firebaseProjectId });
+  app.use(createWatchlistRouter(marketData, {
+    verifyFirebaseIdToken: verifyWatchlistFirebaseIdToken,
+    markTriggered: watchlistAdmin?.markTriggered,
+  }));
   const executionLedgerRequired = options.executionLedgerRequiredOverride ??
     (process.env.EXECUTION_LEDGER_REQUIRED === 'true' || (isProduction && process.env.EXECUTION_LEDGER_REQUIRED !== 'false'));
   const configuredInterval = Number(process.env.EXECUTION_RECONCILIATION_INTERVAL_MS);
