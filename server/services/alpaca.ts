@@ -326,8 +326,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     });
     const body = await response.json().catch(() => null) as any;
     const price = toNum(body?.trade?.p, 0);
-    if (!response.ok || price <= 0) {
-      throw new AlpacaApiError(503, `Unable to obtain a current market price for ${symbol}; new equity entries are disabled.`);
+    const tradeTimestamp = Date.parse(String(body?.trade?.t || ''));
+    const quoteAgeMs = Date.now() - tradeTimestamp;
+    if (!response.ok || price <= 0 || !Number.isFinite(tradeTimestamp) ||
+        quoteAgeMs < -5_000 || quoteAgeMs > 90_000) {
+      throw new AlpacaApiError(503, `Unable to obtain a fresh market price for ${symbol}; new equity entries are disabled.`);
     }
     return price;
   }

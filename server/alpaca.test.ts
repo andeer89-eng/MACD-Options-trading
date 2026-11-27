@@ -237,7 +237,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           calls.push({ url, method, headers, body });
 
           if (url.startsWith('https://data.alpaca.markets/v2/stocks/')) {
-            return new Response(JSON.stringify({ trade: { p: 100 } }), {
+            return new Response(JSON.stringify({ trade: { p: 100, t: new Date().toISOString() } }), {
               status: 200, headers: { 'Content-Type': 'application/json' },
             });
           }
