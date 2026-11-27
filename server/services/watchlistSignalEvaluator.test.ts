@@ -53,7 +53,7 @@ function evaluateWatchlistBreakout(setupValue: DivergenceSetup, candles: Candle[
       exchange: 'NMS', exchangeTimezone: 'America/New_York', currency: 'USD',
     },
   });
-  if (!built.ok) throw new Error(built.reason);
+  if (!built.ok) return { status: 'INVALID_INPUT' as const, ruleVersion: WATCHLIST_SIGNAL_RULE_VERSION, reason: built.reason };
   return evaluateWithEvidence(setupValue, built.evidence, evaluatedAt, 60_000);
 }
 
