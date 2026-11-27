@@ -194,7 +194,7 @@ export function createAlpacaRouter(
                 clientOrderId: order.clientOrderId, symbol: order.symbol,
                 classification: verification.valid ? 'VALID' : 'INVALID',
                 eventCount: events.length,
-                ...(verification.brokenAtSequence !== undefined ? { brokenAtSequence: verification.brokenAtSequence } : {}),
+                ...(verification.brokenAtSequence != null ? { brokenAtSequence: verification.brokenAtSequence } : {}),
                 headHash: verification.headHash,
               };
             } catch {
