@@ -498,6 +498,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     }
     const order = await getOrderByClientOrderId(normalizedId);
     if (!order) return { order: null, fills: [], fillHistoryComplete: false };
+    if (String(order.client_order_id || '') !== normalizedId || !order.id) {
+      throw new AlpacaApiError(502, 'Alpaca returned an order that does not match the requested client_order_id.');
+    }
 
     const history = await fetchAllFillActivities();
     const fills = history.items.filter(fill => String(fill?.order_id || '') === String(order.id));
