@@ -78,7 +78,7 @@ function deepFreeze<T>(value: T): T {
 }
 function validateCommittee(pack: MultiAssetEvidencePack, committee: CommitteeResult, now: number): string[] {
   const failures: string[] = [];
-  if (!verifyMultiAssetEvidencePack(pack)) failures.push('EVIDENCE_PACK_HASH_MISMATCH');
+  if (!verifyMultiAssetEvidencePack(pack)) return ['EVIDENCE_PACK_HASH_MISMATCH'];
   if (!committee || committee.packId !== pack.packId || committee.assetClass !== pack.assetClass ||
       committee.schemaVersion !== '1.0.0' || committee.executionEligible !== false ||
       committee.decision !== 'ADVANCE_TO_JUDGE' || !Array.isArray(committee.assessments) || !Number.isFinite(committee.generatedAt) ||
@@ -217,11 +217,15 @@ export async function runIndependentJudge(
   const generatedAt = (options.now ?? Date.now)();
   const policy = { ...DEFAULT_POLICY, ...options.policy };
   const committeeFailures = validateCommittee(pack, committee, generatedAt);
-  const deterministic = deterministicReview(pack, generatedAt, policy);
-  const preflightFailures = [...committeeFailures, ...deterministic.reject];
-  if (preflightFailures.length || committee.riskMultiplierCeiling <= 0) {
+  if (committeeFailures.length) {
     return { schemaVersion: '1.0.0', packId: pack.packId, assetClass: pack.assetClass, disposition: 'REJECT',
-      assessment: null, riskMultiplierCeiling: 0, reasons: [...preflightFailures, ...(committee.riskMultiplierCeiling <= 0 ? ['ZERO_RISK_BUDGET'] : [])],
+      assessment: null, riskMultiplierCeiling: 0, reasons: committeeFailures, generatedAt, executionEligible: false };
+  }
+  const deterministic = deterministicReview(pack, generatedAt, policy);
+  if (deterministic.reject.length || committee.riskMultiplierCeiling <= 0) {
+    return { schemaVersion: '1.0.0', packId: pack.packId, assetClass: pack.assetClass, disposition: 'REJECT',
+      assessment: null, riskMultiplierCeiling: 0,
+      reasons: [...deterministic.reject, ...(committee.riskMultiplierCeiling <= 0 ? ['ZERO_RISK_BUDGET'] : [])],
       generatedAt, executionEligible: false };
   }
   const allowedSourceRefs = pack.sources.map((_, i) => 'source:' + i);
