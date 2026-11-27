@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { InMemoryPredictionJournal, PredictionJournalError, calculateCalibration, verifyPredictionJournal, type PredictionSnapshotInput, type StockOutcome, type OptionOutcome } from './predictionJournal.ts';
+import { InMemoryPredictionJournal, calculateCalibration, verifyPredictionJournal, type PredictionSnapshotInput, type StockOutcome, type OptionOutcome } from './predictionJournal.ts';
 
 let clock = 2_000_000;
 const digest = 'a'.repeat(64);
@@ -14,7 +14,7 @@ function optionInput(id = 'option-1'): PredictionSnapshotInput {
   return { ...stockInput(id), assetClass: 'OPTION', symbol: 'AAPL', contractId: 'AAPL261218C00250000' };
 }
 function stockOutcome(): StockOutcome {
-  return { assetClass: 'STOCK', realizedAt: clock + 1000, observedAt: clock + 1100, outcome: 'POSITIVE',
+  return { assetClass: 'STOCK', realizedAt: clock - 100, observedAt: clock - 50, outcome: 'POSITIVE',
     totalReturnPct: 4.2, benchmarkReturnPct: 2.1, labelSource: 'fixture-close-prices' };
 }
 function optionOutcome(): OptionOutcome {
