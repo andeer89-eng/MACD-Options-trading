@@ -6,7 +6,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-macd-options-rules';
 const OWNER_UID = 'owner-1';
@@ -104,6 +104,15 @@ describe('Firestore watchlist security rules', () => {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));
+  });
+
+  it('prevents deleting terminal items to bypass the irreversible state guard', async () => {
+    await seedWatchlistItem('terminal-delete', 'EXPIRED');
+    const db = testEnv.authenticatedContext(OWNER_UID, { email_verified: true }).firestore();
+    await assertFails(deleteDoc(watchlistRef(db, 'terminal-delete')));
+
+    await seedWatchlistItem('live-delete', 'WATCHING');
+    await assertSucceeds(deleteDoc(watchlistRef(db, 'live-delete')));
   });
 
 });
