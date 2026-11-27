@@ -117,23 +117,36 @@ export class InMemoryPredictionJournal {
     if (!verifyPredictionJournal(this.events).valid) throw new PredictionJournalError('JOURNAL_CHAIN_INVALID');
   }
 }
-export type CalibrationReport = { assetClass: PredictionAssetClass; sampleSize: number; brierScore: number; accuracy: number; meanConfidence: number; reliability: Array<{ bucket: string; count: number; meanPredictedPositive: number; observedPositiveRate: number }> };
+export type CalibrationReport = { assetClass: PredictionAssetClass; sampleSize: number; brierScore: number; multiclassBrierScore: number; logLoss: number; accuracy: number; meanConfidence: number; reliability: Array<{ bucket: string; count: number; meanPredictedPositive: number; observedPositiveRate: number }> };
 /** One-vs-rest positive Brier score; STOCK and OPTION samples are never pooled. */
 export function calculateCalibration(records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>, assetClass: PredictionAssetClass): CalibrationReport {
   const rows = records.filter(r => r.prediction.assetClass === assetClass && r.outcome.assetClass === assetClass);
   if (rows.some(r => r.outcome.realizedAt < r.prediction.targetAt)) throw new PredictionJournalError('OUTCOME_BEFORE_TARGET');
   const buckets = Array.from({ length: 5 }, (_, i) => ({ bucket: `${i * 20}-${(i + 1) * 20}%`, count: 0, predicted: 0, positive: 0 }));
-  let brier = 0, correct = 0, confidence = 0;
+  let positiveBrier = 0, multiclassBrier = 0, logLoss = 0, correct = 0, confidence = 0;
+  const epsilon = 1e-15;
   for (const { prediction, outcome } of rows) {
-    const actual = outcome.outcome === 'POSITIVE' ? 1 : 0, predicted = prediction.probabilities.positive;
-    brier += (predicted - actual) ** 2;
-    if ((predicted >= 0.5) === (actual === 1)) correct++;
+    const probabilities = prediction.probabilities;
+    const actualClass = outcome.outcome.toLowerCase() as keyof PredictionProbabilities;
+    const actual = { positive: 0, neutral: 0, negative: 0 };
+    actual[actualClass] = 1;
+    const predicted = probabilities.positive;
+    positiveBrier += (predicted - actual.positive) ** 2;
+    multiclassBrier += (probabilities.positive - actual.positive) ** 2 +
+      (probabilities.neutral - actual.neutral) ** 2 + (probabilities.negative - actual.negative) ** 2;
+    logLoss -= Math.log(Math.max(epsilon, probabilities[actualClass]));
+    const predictedClass = (Object.entries(probabilities) as Array<[keyof PredictionProbabilities, number]>)
+      .sort((a, b) => b[1] - a[1])[0][0];
+    if (predictedClass === actualClass) correct++;
     confidence += prediction.confidence;
-    const b = buckets[Math.min(4, Math.floor(predicted * 5))]; b.count++; b.predicted += predicted; b.positive += actual;
+    const b = buckets[Math.min(4, Math.floor(predicted * 5))];
+    b.count++; b.predicted += predicted; b.positive += actual.positive;
   }
   const n = rows.length;
-  return { assetClass, sampleSize: n, brierScore: n ? brier / n : 0, accuracy: n ? correct / n : 0,
-    meanConfidence: n ? confidence / n : 0, reliability: buckets.filter(b => b.count).map(b => ({
+  return { assetClass, sampleSize: n, brierScore: n ? positiveBrier / n : 0,
+    multiclassBrierScore: n ? multiclassBrier / n : 0, logLoss: n ? logLoss / n : 0,
+    accuracy: n ? correct / n : 0, meanConfidence: n ? confidence / n : 0,
+    reliability: buckets.filter(b => b.count).map(b => ({
       bucket: b.bucket, count: b.count, meanPredictedPositive: b.predicted / b.count, observedPositiveRate: b.positive / b.count,
     })) };
 }
