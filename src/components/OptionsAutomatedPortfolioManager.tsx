@@ -166,7 +166,11 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
       overview.orders || [],
       account.profitTakePercent
     );
-    const liveHistory = alpacaOrdersToOptionsHistory(overview.orders || []);
+    const liveHistory = alpacaOrdersToOptionsHistory(
+      overview.orders || [],
+      overview.fills || [],
+      overview.fillHistoryComplete ?? Boolean(overview.fills?.length)
+    );
     const liveLogs = alpacaOrdersToOptionsSessionLogs(overview.orders || []);
     const totalRealized = Number(liveHistory.reduce((s, r) => s + r.profitDollars, 0).toFixed(2));
     const totalUnrealized = Number(livePositions.reduce((s, p) => s + p.unrealizedPnL, 0).toFixed(2));
