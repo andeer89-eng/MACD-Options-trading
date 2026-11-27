@@ -7,14 +7,14 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc, type Firestore } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-macd-options-rules';
 const OWNER_UID = 'owner-1';
 const OTHER_UID = 'owner-2';
 let testEnv: RulesTestEnvironment;
 
-function watchlistRef(db: ReturnType<RulesTestEnvironment['authenticatedContext']>['firestore'], id: string) {
+function watchlistRef(db: Firestore, id: string) {
   return doc(db, 'users', OWNER_UID, 'watchlistItems', id);
 }
 
