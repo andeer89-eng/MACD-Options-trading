@@ -606,7 +606,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const overClose = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day' }),
+        body: JSON.stringify({ symbol: 'NVDA', side: 'sell', qty: 3, type: 'market', time_in_force: 'day', client_order_id: 'test-nvda-over-close-001' }),
       });
       assert.equal(overClose.status, 409, 'A new close must not exceed the held position after pending closes');
       includePendingNvdaClose = false;
