@@ -75,7 +75,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     projectId: firebaseProjectId,
     allowedUids: allowedAlpacaUids,
     fetchImpl: options.firebaseAuthFetchOverride,
-  }, executionLedger, executionLedgerRequired));
+  }, executionLedger, executionLedgerRequired, reconciliationWorker));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {
