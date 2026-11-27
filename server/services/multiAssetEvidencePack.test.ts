@@ -20,3 +20,22 @@ test('rejects mixed stock and option payloads',()=>{const x={...stock(),option:o
 test('rejects crossed option markets and non-finite Greeks',()=>{const a=option();a.option.quote.ask=5;assert.equal(buildMultiAssetEvidencePack(a).ok,false);const b=option();b.option.quote.greeks.delta=Number.NaN;assert.equal(buildMultiAssetEvidencePack(b).ok,false);});
 test('rejects future source timestamps, missing sources and missing risk policy',()=>{const a=stock();a.stock.market.retrievedAt=now+1;assert.equal(buildMultiAssetEvidencePack(a).ok,false);const b=stock();b.sources=[];assert.equal(buildMultiAssetEvidencePack(b).ok,false);const c=stock();c.risk.policyVersion='';assert.equal(buildMultiAssetEvidencePack(c).ok,false);});
 test('rejects fundamentals filed after the as-of date',()=>{const a=stock();a.stock.fundamentals!.facts[0].filingDate='2026-11-28';assert.equal(buildMultiAssetEvidencePack(a).ok,false);});
+
+
+test('rejects an OCC symbol that disagrees with the option contract fields',()=>{
+  const a=option();
+  a.option.contract.occSymbol='AAPL261219P00250000';
+  assert.equal(buildMultiAssetEvidencePack(a).ok,false);
+});
+
+test('rejects fundamentals whose as-of date is later than the pack as-of timestamp',()=>{
+  const a=stock();
+  a.stock.fundamentals!.asOfDate='2026-11-28';
+  assert.equal(buildMultiAssetEvidencePack(a).ok,false);
+});
+
+test('rejects a quote timestamp later than the pack as-of timestamp',()=>{
+  const a=option();
+  a.asOf=now-2000;
+  assert.equal(buildMultiAssetEvidencePack(a).ok,false);
+});
