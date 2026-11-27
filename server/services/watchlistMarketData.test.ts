@@ -27,7 +27,7 @@ const metadata = { isLiveFeed: true, source: 'Yahoo Finance v8 Chart API', excha
 
 test('builds provenance envelope and excludes newest potentially-open bar', () => {
   const result = buildWatchlistSignalMarketData({
-    symbol: 'aapl', timeframe: '1d',
+    symbol: 'aapl', timeframe: '1d', range: '3mo',
     candles: [candle(0, 100), candle(1, 101), candle(2, 102)],
     retrievedAt: base + 3 * 86_400_000, feedMetadata: metadata,
   });
@@ -41,18 +41,18 @@ test('builds provenance envelope and excludes newest potentially-open bar', () =
 
 test('fails closed without provider metadata or enough bars', () => {
   assert.equal(buildWatchlistSignalMarketData({
-    symbol: 'AAPL', timeframe: '1d', candles: [candle(0, 100), candle(1, 101), candle(2, 102)],
+    symbol: 'AAPL', timeframe: '1d', range: '3mo', candles: [candle(0, 100), candle(1, 101), candle(2, 102)],
     retrievedAt: base + 3 * 86_400_000, feedMetadata: null,
   }).ok, false);
   assert.equal(buildWatchlistSignalMarketData({
-    symbol: 'AAPL', timeframe: '1d', candles: [candle(0, 100), candle(1, 101)],
+    symbol: 'AAPL', timeframe: '1d', range: '3mo', candles: [candle(0, 100), candle(1, 101)],
     retrievedAt: base + 2 * 86_400_000, feedMetadata: metadata,
   }).ok, false);
 });
 
 test('rejects unordered or malformed provider bars', () => {
   const result = buildWatchlistSignalMarketData({
-    symbol: 'AAPL', timeframe: '1d', candles: [candle(1, 101), candle(0, 100), candle(2, 102)],
+    symbol: 'AAPL', timeframe: '1d', range: '3mo', candles: [candle(1, 101), candle(0, 100), candle(2, 102)],
     retrievedAt: base + 3 * 86_400_000, feedMetadata: metadata,
   });
   assert.equal(result.ok, false);
@@ -60,7 +60,7 @@ test('rejects unordered or malformed provider bars', () => {
 
 test('validates identity, freshness and normalized-payload digest', () => {
   const result = buildWatchlistSignalMarketData({
-    symbol: 'AAPL', timeframe: '1d', candles: [candle(0, 100), candle(1, 101), candle(2, 102)],
+    symbol: 'AAPL', timeframe: '1d', range: '3mo', candles: [candle(0, 100), candle(1, 101), candle(2, 102)],
     retrievedAt: base + 3 * 86_400_000, feedMetadata: metadata,
   });
   assert.equal(result.ok, true);
