@@ -522,16 +522,23 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       let fillHistoryError: string | undefined;
       let optionLifecycleHistory: { items: any[]; complete: boolean } = { items: [], complete: false };
       let optionLifecycleHistoryError: string | undefined;
-      try {
-        [fillHistory, optionLifecycleHistory] = await Promise.all([
-          fetchAllFillActivities(),
-          fetchAllOptionLifecycleActivities(),
-        ]);
-      } catch (historyError) {
-        // Keep account and positions visible, but never claim the event ledger is complete.
-        const message = historyError instanceof Error ? historyError.message : 'Unable to retrieve Alpaca activity history.';
-        if (!fillHistory.complete) fillHistoryError = message;
-        if (!optionLifecycleHistory.complete) optionLifecycleHistoryError = message;
+      const [fillResult, lifecycleResult] = await Promise.allSettled([
+        fetchAllFillActivities(),
+        fetchAllOptionLifecycleActivities(),
+      ]);
+      if (fillResult.status === 'fulfilled') {
+        fillHistory = fillResult.value;
+      } else {
+        fillHistoryError = fillResult.reason instanceof Error
+          ? fillResult.reason.message
+          : 'Unable to retrieve Alpaca fill activities.';
+      }
+      if (lifecycleResult.status === 'fulfilled') {
+        optionLifecycleHistory = lifecycleResult.value;
+      } else {
+        optionLifecycleHistoryError = lifecycleResult.reason instanceof Error
+          ? lifecycleResult.reason.message
+          : 'Unable to retrieve Alpaca option lifecycle activities.';
       }
       const rawOrders = orderHistory.items;
       const rawFills = fillHistory.items;
