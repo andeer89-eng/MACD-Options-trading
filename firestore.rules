@@ -123,7 +123,8 @@ service cloud.firestore {
                          (!isTerminalWatchlistStatus(existing().status) || incoming().status == existing().status) &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isPinned', 'totalScore', 'currentPrice', 'atr', 'setup', 'updatedAt']) &&
                          incoming().updatedAt == request.time;
-        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                          !isTerminalWatchlistStatus(existing().status);
       }
     }
   }
