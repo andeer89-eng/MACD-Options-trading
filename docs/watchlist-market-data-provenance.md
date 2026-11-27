@@ -38,6 +38,10 @@ and must be reviewed before any scheduled production use.
   signed; the digest is an integrity check of the normalized in-process payload.
 - The provider's exchange timezone and symbol metadata are descriptive, not
   proof of listing venue or official market calendar.
+- The P1.18f worker applies conservative timeframe-specific maximum ages to the
+  last closed candle (20m/45m/90m/3h/5d/10d for 5m/15m/30m/1h/1d/1wk). These
+  are not exchange-calendar calculations; holidays may result in fail-closed
+  rejections.
 - The P1.18e read-only evaluation worker consumes this envelope and appends
   journal records; it does not perform Firestore watchlist state transitions.
 - No scheduler, broker order, or trading activation is connected.
