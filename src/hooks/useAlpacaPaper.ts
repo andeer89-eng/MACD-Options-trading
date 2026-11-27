@@ -169,7 +169,16 @@ export async function fetchAlpacaOptionContracts(params: {
   if (params.minStrike !== undefined) qs.set('minStrike', String(params.minStrike));
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
 
-  const headers = await getAlpacaAuthorizationHeaders();
+  let headers: Record<string, string>;
+  try {
+    headers = await getAlpacaAuthorizationHeaders();
+  } catch (error) {
+    return {
+      ok: false,
+      contracts: [],
+      error: error instanceof Error ? error.message : 'Alpaca authentication failed.',
+    };
+  }
   const resp = await fetchJsonSafe<{ contracts?: AlpacaOptionContractDTO[]; error?: string }>(
     `/api/alpaca/options/contracts?${qs.toString()}`,
     { headers }
@@ -275,7 +284,15 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
     async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const { entryMarketContext, ...brokerPayload } = payload;
       const configDigest = computeConfigDigest(loadSettings());
-      const authHeaders = await getAlpacaAuthorizationHeaders();
+      let authHeaders: Record<string, string>;
+      try {
+        authHeaders = await getAlpacaAuthorizationHeaders();
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Alpaca authentication failed.',
+        };
+      }
       const resp = await fetchJsonSafe<{ order?: any; error?: string }>('/api/alpaca/orders', {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
@@ -345,7 +362,15 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
       opts?: { qty?: number; percentage?: number; cancelOrders?: boolean }
     ): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const configDigest = computeConfigDigest(loadSettings());
-      const authHeaders = await getAlpacaAuthorizationHeaders();
+      let authHeaders: Record<string, string>;
+      try {
+        authHeaders = await getAlpacaAuthorizationHeaders();
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Alpaca authentication failed.',
+        };
+      }
       const qs = new URLSearchParams();
       if (opts?.qty !== undefined && opts.qty > 0) qs.set('qty', String(opts.qty));
       else if (opts?.percentage !== undefined && opts.percentage > 0 && opts.percentage < 100) {
@@ -386,7 +411,15 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
 
   const cancelOrder = useCallback(
     async (orderId: string): Promise<{ ok: boolean; error?: string }> => {
-      const authHeaders = await getAlpacaAuthorizationHeaders();
+      let authHeaders: Record<string, string>;
+      try {
+        authHeaders = await getAlpacaAuthorizationHeaders();
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Alpaca authentication failed.',
+        };
+      }
       const resp = await fetchJsonSafe<{ error?: string }>(
         `/api/alpaca/orders/${encodeURIComponent(orderId)}`,
         {
