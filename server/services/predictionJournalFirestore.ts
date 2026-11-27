@@ -47,7 +47,8 @@ export function createFirestorePredictionJournal(options: {
   }
 
   const databaseId = options.databaseId || '(default)';
-  const root = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(options.projectId)}/databases/${encodeURIComponent(databaseId)}/documents`;
+  const resourceRoot = `projects/${options.projectId}/databases/${databaseId}/documents`;
+  const root = `https://firestore.googleapis.com/v1/${resourceRoot}`;
   const collection = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalEvents`;
   const headPath = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalMeta/head`;
   const indexCollection = (ownerId: string) => `users/${encodeURIComponent(ownerId)}/predictionJournalIndex`;
@@ -100,14 +101,14 @@ export function createFirestorePredictionJournal(options: {
     const bodyJson = canonical(body);
     const idempotencyId = hash(bodyJson);
     const eventsPath = collection(ownerId);
-    const eventName = `${root}/${eventsPath}/${idempotencyId}`;
-    const metaName = `${root}/${headPath(ownerId)}`;
+    const eventName = `${resourceRoot}/${eventsPath}/${idempotencyId}`;
+    const metaName = `${resourceRoot}/${headPath(ownerId)}`;
     const identity = body.eventType === 'PREDICTION_RECORDED'
       ? { kind: 'prediction', id: body.prediction.predictionId, identitySha256: body.prediction.snapshotSha256 }
       : { kind: 'outcome', id: body.predictionId, identitySha256: hash(canonical(body.outcome)) };
     const identityId = hash(`${identity.kind}:${identity.id}`);
     const identityPath = `${indexCollection(ownerId)}/${identityId}`;
-    const identityName = `${root}/${identityPath}`;
+    const identityName = `${resourceRoot}/${identityPath}`;
 
     // Deterministic event IDs make retries safe even if the commit succeeded but its response was lost.
     const existingResponse = await request(`/${eventsPath}/${idempotencyId}`);
