@@ -175,3 +175,24 @@ Operational boundaries:
   Firestore optimistic concurrency protect writes, but this release does not implement a
   distributed lease; configure one active worker replica until that is added.
 - No production Firestore or live Paper-account validation is implied by CI.
+
+## P1.7 — distributed reconciliation control and run audit
+
+The reconciliation worker now acquires a Firestore lease at
+`alpacaExecutionControl/reconciliationLease` before polling Alpaca. Lease acquisition,
+renewal, and release use Firestore document update-time preconditions so competing server
+instances cannot both acquire the same unexpired lease. The worker renews the lease while
+processing and stops starting further order batches if renewal fails.
+
+Every run writes an immutable record to `alpacaExecutionRuns/{runId}`, including start/end
+timestamps, outcome, scanned/reconciled/terminal/failed counts, and a bounded list of errors.
+A worker that cannot acquire the lease records a `skipped` run and makes no broker requests.
+
+The lease duration is at least 120 seconds and otherwise four times the configured worker
+interval. Only the server-side worker uses this coordination; no order submission, replace,
+or cancel capability is added.
+
+This increment does not backfill historical order-index documents and does not compare
+broker positions against ledger-derived positions. Position differences can be caused by
+manual trades, exercises/assignments, transfers, and corporate actions; those require a
+separate provenance-aware reconciliation design before any mismatch can be classified.
