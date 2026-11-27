@@ -273,6 +273,99 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Execution ledger history exceeded the safe pagination limit.');
   }
 
+  async function acquireReconciliationLease(ownerId: string, leaseMs: number): Promise<boolean> {
+    if (!ownerId || !Number.isFinite(leaseMs) || leaseMs < 10_000) throw new Error('Invalid reconciliation lease parameters.');
+    const path = '/alpacaExecutionControl/reconciliationLease';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await request(path);
+      const doc = response.ok ? await response.json() as any : null;
+      const current = fromDocument(doc);
+      const nowMs = now();
+      if (doc && Number(current.expiresAt || 0) > nowMs && current.ownerId !== ownerId) return false;
+      const expiresAt = nowMs + leaseMs;
+      const commit = await request(':commit', {
+        method: 'POST',
+        body: JSON.stringify({ writes: [{
+          update: {
+            name: databaseRoot + path,
+            fields: fields({ ownerId, expiresAt, updatedAt: new Date(nowMs).toISOString() }),
+          },
+          currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+        }] }),
+      });
+      if (commit.ok) return true;
+      if (commit.status !== 400 && commit.status !== 409 && commit.status !== 412) {
+        throw new ExecutionLedgerUnavailableError('Reconciliation lease could not be acquired.');
+      }
+    }
+    return false;
+  }
+
+  async function renewReconciliationLease(ownerId: string, leaseMs: number): Promise<boolean> {
+    const path = '/alpacaExecutionControl/reconciliationLease';
+    const response = await request(path);
+    if (!response.ok) return false;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    if (current.ownerId !== ownerId || Number(current.expiresAt || 0) <= now()) return false;
+    const nowMs = now();
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ownerId, expiresAt: nowMs + leaseMs, updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    return commit.ok;
+  }
+
+  async function releaseReconciliationLease(ownerId: string): Promise<void> {
+    const path = '/alpacaExecutionControl/reconciliationLease';
+    const response = await request(path);
+    if (!response.ok) return;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    if (current.ownerId !== ownerId) return;
+    const nowMs = now();
+    await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ownerId: '', expiresAt: 0, updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+  }
+
+  async function recordReconciliationRun(run: {
+    runId: string;
+    startedAt: string;
+    completedAt: string;
+    status: 'completed' | 'partial' | 'failed' | 'skipped';
+    scanned: number;
+    reconciled: number;
+    skippedTerminal: number;
+    failed: number;
+    errorCount: number;
+    errors: Array<{ clientOrderId: string; error: string }>;
+  }): Promise<void> {
+    if (!run.runId || run.runId.length > 128) throw new Error('Invalid reconciliation run ID.');
+    const path = '/alpacaExecutionRuns/' + encodeURIComponent(run.runId);
+    const response = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(run as unknown as Record<string, unknown>) },
+        currentDocument: { exists: false },
+      }] }),
+    });
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Reconciliation run audit record could not be persisted.');
+  }
+
   async function listTrackedOrders(): Promise<TrackedExecutionOrder[]> {
     const orders: TrackedExecutionOrder[] = [];
     const seenTokens = new Set<string>();
@@ -297,5 +390,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders };
+  return { append, readEvents, listTrackedOrders, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun };
 }
