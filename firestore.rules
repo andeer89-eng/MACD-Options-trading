@@ -131,6 +131,8 @@ service cloud.firestore {
                          incoming().updatedAt == request.time;
         allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
                           !isTerminalWatchlistStatus(existing().status);
+      }
+
       // Prediction journal events are append-only from trusted server code.
       // Owners may read their own journal; Admin SDK writes bypass these client rules.
       match /predictionJournalEvents/{eventId} {
@@ -142,7 +144,6 @@ service cloud.firestore {
       match /predictionJournalMeta/{metaId} {
         allow get: if isVerifiedOwner(userId) && isValidId(userId) && metaId == 'head';
         allow list, create, update, delete: if false;
-      }
       }
     }
   }
