@@ -13,7 +13,7 @@ export type PredictionSnapshotInput = {
 export type StockOutcome = { assetClass: 'STOCK'; realizedAt: number; observedAt: number; outcome: PredictionOutcomeClass; totalReturnPct: number; benchmarkReturnPct?: number; labelSource: string };
 export type OptionOutcome = { assetClass: 'OPTION'; realizedAt: number; observedAt: number; outcome: PredictionOutcomeClass; contractReturnPct: number; underlyingReturnPct: number; exitMethod: 'CLOSED' | 'MARK_TO_MARKET' | 'EXPIRED'; entryPremium: number; exitValue: number; labelSource: string };
 export type PredictionOutcome = StockOutcome | OptionOutcome;
-export type PredictionSnapshot = PredictionSnapshotInput & { schemaVersion: '1.0.0'; recordedAt: number; snapshotSha256: string };
+export type PredictionSnapshot = PredictionSnapshotInput & { schemaVersion: '1.0.0'; recordedAt: number; inputSha256: string; snapshotSha256: string };
 export type PredictionEvent =
   | { sequence: number; eventType: 'PREDICTION_RECORDED'; prediction: PredictionSnapshot; prevHash: string; eventHash: string }
   | { sequence: number; eventType: 'OUTCOME_LABELED'; predictionId: string; outcome: PredictionOutcome; prevHash: string; eventHash: string };
@@ -84,11 +84,12 @@ export class InMemoryPredictionJournal {
   getOutcome(id: string): PredictionOutcome | null { const o = this.outcomes.get(id); return o ? structuredClone(o) : null; }
   record(input: PredictionSnapshotInput): PredictionSnapshot {
     const now = this.now(); validatePrediction(input, now);
-    const body = { ...structuredClone(input), schemaVersion: '1.0.0' as const, recordedAt: now };
+    const inputSha256 = hash(canonical(input));
+    const body = { ...structuredClone(input), schemaVersion: '1.0.0' as const, recordedAt: now, inputSha256 };
     const snapshot = { ...body, snapshotSha256: hash(canonical(body)) };
     const old = this.predictions.get(input.predictionId);
     if (old) {
-      if (old.snapshotSha256 === snapshot.snapshotSha256) return structuredClone(old);
+      if (old.inputSha256 === inputSha256) return structuredClone(old);
       throw new PredictionJournalError('PREDICTION_ID_COLLISION');
     }
     this.append({ eventType: 'PREDICTION_RECORDED', prediction: snapshot });
