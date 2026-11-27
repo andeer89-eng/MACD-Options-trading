@@ -19,7 +19,7 @@ export type WatchlistSignalMarketData = {
   retrievedAt: number;
   closurePolicy: typeof WATCHLIST_CANDLE_CLOSURE_POLICY;
   excludedLatestCandleTimestamp: number;
-  candles: Array<Pick<Candle, 'timestamp' | 'open' | 'high' | 'low' | 'close'>>;
+  candles: Candle[];
   normalizedPayloadSha256: string;
 };
 
@@ -32,7 +32,7 @@ export type WatchlistMarketDataBuildResult =
  *
  * The provider does not expose a trustworthy per-candle finalization flag in
  * this integration. We therefore exclude the newest returned bar entirely.
- * The digest covers normalized OHLC records, not Yahoo's original HTTP bytes.
+ * The digest covers normalized OHLCV/date records, not Yahoo's original HTTP bytes.
  */
 export function buildWatchlistSignalMarketData(input: {
   symbol: string;
@@ -85,9 +85,7 @@ export function buildWatchlistSignalMarketData(input: {
   }
 
   const excludedLatestCandleTimestamp = ordered[ordered.length - 1].timestamp;
-  const candles = ordered.slice(0, -1).map(({ timestamp, open, high, low, close }) => ({
-    timestamp, open, high, low, close,
-  }));
+  const candles = ordered.slice(0, -1).map(candle => ({ ...candle }));
   if (candles.length < 2) return { ok: false, reason: 'INSUFFICIENT_CLOSED_CANDLES' };
 
   const normalizedPayloadSha256 = createHash('sha256')
