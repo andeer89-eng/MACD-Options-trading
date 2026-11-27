@@ -234,7 +234,10 @@ export function createFirestorePredictionJournal(options: {
     const events = await readEvents(ownerId);
     const chain = verifyPredictionJournal(events);
     const headResponse = await request(`/${headPath(ownerId)}`);
-    if (events.length === 0 && headResponse.status === 404) return chain;
+    if (events.length === 0 && headResponse.status === 404) return { ...chain, headMatches: true };
+    if (headResponse.status === 404) {
+      return { ...chain, valid: false, brokenAtSequence: Math.max(1, events.length), headMatches: false };
+    }
     if (!headResponse.ok) throw new FirestorePredictionJournalError('Prediction journal head could not be read.', 503);
     const head = await headResponse.json() as { fields?: Record<string, { integerValue?: string; stringValue?: string }> };
     const sequence = Number(head.fields?.sequence?.integerValue ?? -1);
