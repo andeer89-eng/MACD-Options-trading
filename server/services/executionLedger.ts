@@ -630,6 +630,30 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (!response.ok) throw new ExecutionLedgerUnavailableError('Integrity audit report could not be persisted.');
   }
 
+  async function recordCoverageAudit(report: Record<string, unknown>): Promise<void> {
+    const auditId = String(report.auditId || '');
+    if (!auditId || auditId.length > 128) throw new Error('Invalid broker coverage audit ID.');
+    const path = '/alpacaExecutionCoverageAudits/' + encodeURIComponent(auditId);
+    const response = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(report) },
+        currentDocument: { exists: false },
+      }] }),
+    });
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Broker coverage audit report could not be persisted.');
+  }
+
+  async function listCoverageAudits(options: { limit?: number } = {}): Promise<Record<string, any>[]> {
+    const limit = Math.max(1, Math.min(100, Math.floor(options.limit || 20)));
+    const query = new URLSearchParams({ pageSize: String(limit), orderBy: 'startedAt desc' });
+    const response = await request('/alpacaExecutionCoverageAudits?' + query.toString());
+    if (response.status === 404) return [];
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Broker coverage audit history could not be listed.');
+    const body = await response.json() as { documents?: any[] };
+    return (body.documents || []).map(doc => fromDocument(doc));
+  }
+
   async function listIntegrityAudits(options: { limit?: number } = {}): Promise<Record<string, any>[]> {
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit || 20)));
     const query = new URLSearchParams({ pageSize: String(limit), orderBy: 'startedAt desc' });
@@ -664,5 +688,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
