@@ -75,6 +75,18 @@ export interface AlpacaFillActivity {
   transaction_time: string;
 }
 
+export interface AlpacaOptionLifecycleActivity {
+  id: string;
+  activity_type: 'OPASN' | 'OPEXC' | 'OPEXP' | 'OPTRD' | string;
+  date: string;
+  symbol: string;
+  qty: number;
+  net_amount: number;
+  price: number | null;
+  status: string;
+  description: string;
+}
+
 export interface AlpacaOptionContractItem {
   id: string;
   symbol: string;
@@ -104,6 +116,9 @@ export interface AlpacaOverviewResponse {
   fillHistoryComplete: boolean;
   fillHistoryError?: string;
   orderHistoryComplete: boolean;
+  optionLifecycleActivities: AlpacaOptionLifecycleActivity[];
+  optionLifecycleHistoryComplete: boolean;
+  optionLifecycleHistoryError?: string;
   error?: string;
 }
 
@@ -443,6 +458,36 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     return { items, complete: false };
   }
 
+  async function fetchAllOptionLifecycleActivities(): Promise<{ items: any[]; complete: boolean }> {
+    const pageSize = 100;
+    const maxPages = 100;
+    const items: any[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let pageToken = '';
+
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      const cursor = pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : '';
+      const page = await alpacaRequest<any[]>(
+        `/v2/account/activities?activity_types=OPASN,OPEXC,OPEXP,OPTRD&page_size=${pageSize}&direction=asc${cursor}`
+      );
+      const rows = Array.isArray(page) ? page : [];
+      for (const row of rows) {
+        const id = String(row?.id || '');
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
+        items.push(row);
+      }
+      if (rows.length < pageSize) return { items, complete: true };
+
+      const nextCursor = String(rows[rows.length - 1]?.id || '');
+      if (!nextCursor || seenCursors.has(nextCursor)) return { items, complete: false };
+      seenCursors.add(nextCursor);
+      pageToken = nextCursor;
+    }
+    return { items, complete: false };
+  }
+
   async function getOverview(): Promise<AlpacaOverviewResponse> {
     const cfg = getConfig();
     const fetchedAt = new Date().toISOString();
@@ -462,6 +507,8 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         fills: [],
         fillHistoryComplete: false,
         orderHistoryComplete: false,
+        optionLifecycleActivities: [],
+        optionLifecycleHistoryComplete: false,
       };
     }
 
@@ -473,15 +520,29 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       ]);
       let fillHistory: { items: any[]; complete: boolean } = { items: [], complete: false };
       let fillHistoryError: string | undefined;
-      try {
-        fillHistory = await fetchAllFillActivities();
-      } catch (fillError) {
-        // Keep account/position visibility available, but explicitly mark the
-        // fill ledger as incomplete so downstream code can fall back to order averages.
-        fillHistoryError = fillError instanceof Error ? fillError.message : 'Unable to retrieve Alpaca fill activities.';
+      let optionLifecycleHistory: { items: any[]; complete: boolean } = { items: [], complete: false };
+      let optionLifecycleHistoryError: string | undefined;
+      const [fillResult, lifecycleResult] = await Promise.allSettled([
+        fetchAllFillActivities(),
+        fetchAllOptionLifecycleActivities(),
+      ]);
+      if (fillResult.status === 'fulfilled') {
+        fillHistory = fillResult.value;
+      } else {
+        fillHistoryError = fillResult.reason instanceof Error
+          ? fillResult.reason.message
+          : 'Unable to retrieve Alpaca fill activities.';
+      }
+      if (lifecycleResult.status === 'fulfilled') {
+        optionLifecycleHistory = lifecycleResult.value;
+      } else {
+        optionLifecycleHistoryError = lifecycleResult.reason instanceof Error
+          ? lifecycleResult.reason.message
+          : 'Unable to retrieve Alpaca option lifecycle activities.';
       }
       const rawOrders = orderHistory.items;
       const rawFills = fillHistory.items;
+      const rawLifecycleActivities = optionLifecycleHistory.items;
 
       const equity = toNum(rawAccount?.equity);
       const lastEquity = toNum(rawAccount?.last_equity, equity);
@@ -560,6 +621,20 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         transaction_time: String(f?.transaction_time || ''),
       }));
 
+      const optionLifecycleActivities: AlpacaOptionLifecycleActivity[] = rawLifecycleActivities
+        .map((activity) => ({
+          id: String(activity?.id || ''),
+          activity_type: String(activity?.activity_type || ''),
+          date: String(activity?.date || ''),
+          symbol: String(activity?.symbol || '').toUpperCase(),
+          qty: toNum(activity?.qty),
+          net_amount: toNum(activity?.net_amount),
+          price: toNullableNum(activity?.price),
+          status: String(activity?.status || 'unknown'),
+          description: String(activity?.description || ''),
+        }))
+        .filter((activity) => activity.id && activity.activity_type);
+
       return {
         configured: true,
         mode: cfg.mode,
@@ -575,6 +650,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         fillHistoryComplete: fillHistory.complete,
         fillHistoryError,
         orderHistoryComplete: orderHistory.complete,
+        optionLifecycleActivities,
+        optionLifecycleHistoryComplete: optionLifecycleHistory.complete,
+        optionLifecycleHistoryError,
       };
     } catch (err: any) {
       return {
@@ -591,6 +669,8 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         fills: [],
         fillHistoryComplete: false,
         orderHistoryComplete: false,
+        optionLifecycleActivities: [],
+        optionLifecycleHistoryComplete: false,
         error: err?.message || 'Failed to retrieve Alpaca Paper overview',
       };
     }

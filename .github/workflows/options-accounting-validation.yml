@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/options-expiry-fill-reconciliation
+      - feat/options-assignment-exercise-ledger
   pull_request:
     branches:
       - main
