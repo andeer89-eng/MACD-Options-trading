@@ -242,16 +242,23 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
                 account_number: 'PA123456',
                 status: 'ACTIVE',
                 currency: 'USD',
-                cash: '25400.50',
-                buying_power: '50801.00',
-                options_buying_power: '25400.50',
+                cash: '254000.50',
+                buying_power: '508001.00',
+                options_buying_power: '254000.50',
                 options_approved_level: 2,
-                equity: '28120.75',
-                last_equity: '27900.00',
+                equity: '300000.00',
+                last_equity: '297900.00',
                 pattern_day_trader: false,
               }),
               { status: 200, headers: { 'Content-Type': 'application/json' } }
             );
+          }
+          if (url.includes('/v2/account/portfolio/history')) {
+            const nowSeconds = Math.floor(Date.now() / 1000);
+            return new Response(JSON.stringify({
+              timestamp: Array.from({ length: 40 }, (_, index) => nowSeconds - (39 - index) * 86400),
+              equity: Array.from({ length: 40 }, () => '300000.00'),
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
           }
 
           if (url.endsWith('/v2/positions')) {
@@ -459,7 +466,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.configured, true);
       assert.equal(data.mode, 'PAPER');
       assert.equal(data.account.account_number, 'PA123456');
-      assert.equal(data.account.equity, 28120.75);
+      assert.equal(data.account.equity, 300000);
       assert.equal(data.equityPositions.length, 1);
       assert.equal(data.equityPositions[0].symbol, 'NVDA');
       assert.equal(data.optionPositions.length, 1);
@@ -467,6 +474,10 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.orders.length, 501, 'Expected order history to be paginated beyond the first 500 orders');
       assert.equal(data.fills.length, 101, 'Expected fill activity history to be paginated beyond the first 100 activities');
       assert.equal(data.orderHistoryComplete, true);
+      assert.equal(data.portfolioHistoryComplete, true);
+      assert.equal(data.portfolioHistory.length, 40);
+      assert.equal(data.account.trading_blocked, false);
+      assert.equal(data.account.account_blocked, false);
       assert.equal(data.fillHistoryComplete, true);
       assert.ok(calls.some((call) => call.url.includes('before_order_id=ord-eq-open-1')));
       assert.ok(calls.some((call) => call.url.includes('page_token=fill-page-099')));
@@ -512,7 +523,13 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           time_in_force: 'day',
         }),
       });
-      assert.equal(optRes.status, 200);
+      assert.equal(optRes.status, 409, 'Large short put must be blocked by the per-trade worst-case loss limit');
+      const smallPutRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'XYZ261218P00005000', side: 'sell', qty: 1, type: 'limit', limit_price: 0.10, time_in_force: 'day' }),
+      });
+      assert.equal(smallPutRes.status, 200, 'Small short put should pass when portfolio limits are clear');
     });
 
     it('GET /api/alpaca/options/contracts & DELETE /api/alpaca/positions/:symbol work cleanly', async () => {
