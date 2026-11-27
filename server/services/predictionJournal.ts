@@ -17,6 +17,7 @@ export type PredictionSnapshot = PredictionSnapshotInput & { schemaVersion: '1.0
 export type PredictionEvent =
   | { sequence: number; eventType: 'PREDICTION_RECORDED'; prediction: PredictionSnapshot; prevHash: string; eventHash: string }
   | { sequence: number; eventType: 'OUTCOME_LABELED'; predictionId: string; outcome: PredictionOutcome; prevHash: string; eventHash: string };
+type PredictionEventBody = PredictionEvent extends infer E ? E extends PredictionEvent ? Omit<E, 'sequence' | 'prevHash' | 'eventHash'> : never : never;
 export type JournalErrorCode = 'INVALID_PREDICTION' | 'PREDICTION_ID_COLLISION' | 'PREDICTION_NOT_FOUND' | 'OUTCOME_ASSET_CLASS_MISMATCH' | 'OUTCOME_BEFORE_TARGET' | 'OUTCOME_ALREADY_LABELED' | 'INVALID_OUTCOME' | 'JOURNAL_CHAIN_INVALID';
 export class PredictionJournalError extends Error {
   constructor(readonly code: JournalErrorCode) { super(code); this.name = 'PredictionJournalError'; }
@@ -110,7 +111,7 @@ export class InMemoryPredictionJournal {
     this.outcomes.set(id, value);
     return structuredClone(value);
   }
-  private append(body: Omit<PredictionEvent, 'sequence' | 'prevHash' | 'eventHash'>): void {
+  private append(body: PredictionEventBody): void {
     const eventBody = { ...body, sequence: this.events.length + 1, prevHash: this.events.at(-1)?.eventHash || GENESIS };
     this.events.push({ ...eventBody, eventHash: hash(canonical(eventBody)) } as PredictionEvent);
     if (!verifyPredictionJournal(this.events).valid) throw new PredictionJournalError('JOURNAL_CHAIN_INVALID');
