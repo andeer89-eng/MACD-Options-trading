@@ -56,3 +56,30 @@ The calibration report now includes:
 The existing one-vs-rest positive Brier score and positive-probability reliability buckets remain available for continuity. Every report is still explicitly scoped to one asset class; callers must request STOCK and OPTION independently. Empty cohorts return zero-valued aggregate metrics and sampleSize=0; consumers must use sampleSize to distinguish an empty report from a measured zero score.
 
 Tests cover positive, neutral and negative realized outcomes and verify that STOCK and OPTION remain separate. No persistence, API route, worker, UI, broker or execution integration is introduced.
+
+
+## P1.28 — Cohort-based calibration and evaluation
+
+`calculateCohortCalibration(records, assetClass, minimumSampleSize = 30)` supplements the unchanged global `calculateCalibration` API. It filters predictions and outcomes to the requested asset class before calculating any metric; STOCK and OPTION are never pooled.
+
+### Horizon cohorts
+
+Predictions are grouped by elapsed calendar-day horizon between `createdAt` and `targetAt`, using disjoint bands:
+- `0-1d`: up to and including 1 day;
+- `1-7d`: over 1 and up to 7 days;
+- `7-30d`: over 7 and up to 30 days;
+- `30-90d`: over 30 and up to 90 days;
+- `90d+`: over 90 days.
+
+Each cohort carries the same multiclass and one-vs-rest calibration metrics as the global report.
+
+### Asset-specific evaluation
+
+- **OPTION:** calibration is reported independently for `CLOSED`, `MARK_TO_MARKET` and `EXPIRED` exit methods. Contract-return labels remain the outcome target; underlying return is not substituted.
+- **STOCK:** benchmark-relative evaluation uses only observations with `benchmarkReturnPct`. It reports benchmark coverage, mean excess return (`totalReturnPct - benchmarkReturnPct`) and the fraction of observations with positive excess return. If no benchmark observations exist, return metrics are `null` and coverage is zero.
+
+### Sample-size interpretation
+
+Every calibration cohort and benchmark report includes `belowMinimumSample`. The default threshold is 30 and can be overridden with a positive integer. This is an operational warning for thin samples, not a claim of statistical significance or a guarantee of calibration quality. Empty cohorts remain present with `sampleSize=0`; consumers must not interpret zero-valued metrics as measured performance.
+
+This milestone adds only pure research calculations and tests. It does not add API routes, UI, automated outcome labeling, scheduled workers, broker/Alpaca access, or stock/options autotrading integration.
