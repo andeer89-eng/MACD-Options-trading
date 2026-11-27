@@ -15,6 +15,7 @@ import { createHealthRouter } from './server/routes/health.ts';
 import { createPythonRouter } from './server/routes/python.ts';
 import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
+import { createWatchlistTriggerRouter } from './server/routes/watchlist.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 
@@ -32,6 +33,8 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   executionLedgerRequiredOverride?: boolean;
   reconciliationIntervalMs?: number;
   reconciliationLeaseMs?: number;
+  watchlistTriggerWorkerTokenOverride?: string;
+  firebaseServiceAccountJsonOverride?: string;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
@@ -55,7 +58,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const allowedAlpacaUids = options.alpacaAllowedUidsOverride ??
     (process.env.ALPACA_ALLOWED_UIDS || '').split(',').map((uid) => uid.trim()).filter(Boolean);
   const firebaseProjectId = options.firebaseProjectIdOverride || process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId;
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountJson = options.firebaseServiceAccountJsonOverride ?? process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   const executionLedger = serviceAccountJson
     ? createExecutionLedger({ projectId: firebaseProjectId, serviceAccountJson })
     : undefined;
@@ -74,6 +77,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           (Number.isFinite(configuredLease) && configuredLease >= 120_000 ? configuredLease : undefined),
       })
     : undefined;
+
+  app.use(createWatchlistTriggerRouter({
+    projectId: firebaseProjectId,
+    databaseId: firebaseConfig.firestoreDatabaseId,
+    serviceAccountJson,
+    workerToken: options.watchlistTriggerWorkerTokenOverride ?? process.env.WATCHLIST_TRIGGER_WORKER_TOKEN,
+  }));
 
   app.use(createAlpacaRouter(alpaca, {
     projectId: firebaseProjectId,
