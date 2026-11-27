@@ -152,4 +152,32 @@ describe('Persistent Firestore execution ledger', () => {
     assert.equal(events[0].sequence, 1);
     assert.equal(events[1000].sequence, 1001);
   });
+  it('uses Firestore preconditions for a single distributed reconciliation lease', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    const clock = Date.UTC(2026, 10, 27, 12, 0, 0);
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+      now: () => clock,
+    });
+    assert.equal(await ledger.acquireReconciliationLease('worker-a', 120_000), true);
+    assert.equal(await ledger.acquireReconciliationLease('worker-b', 120_000), false);
+    assert.equal(await ledger.renewReconciliationLease('worker-b', 120_000), false);
+    assert.equal(await ledger.renewReconciliationLease('worker-a', 120_000), true);
+    await ledger.releaseReconciliationLease('worker-a');
+    assert.equal(await ledger.acquireReconciliationLease('worker-b', 120_000), true);
+    await ledger.recordReconciliationRun({
+      runId: 'run-test-1',
+      startedAt: new Date(clock).toISOString(),
+      completedAt: new Date(clock + 1000).toISOString(),
+      status: 'completed',
+      scanned: 1, reconciled: 1, skippedTerminal: 0, failed: 0,
+      errorCount: 0, errors: [],
+    });
+    assert.equal([...mock.documents.keys()].some(name => name.endsWith('/alpacaExecutionRuns/run-test-1')), true);
+  });
+
 });
