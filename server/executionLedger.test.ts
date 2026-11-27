@@ -190,6 +190,10 @@ describe('Persistent Firestore execution ledger', () => {
       errorCount: 0, errors: [],
     });
     assert.equal([...mock.documents.keys()].some(name => name.endsWith('/alpacaExecutionRuns/run-test-1')), true);
+    const runs = await ledger.listReconciliationRuns({ limit: 10 });
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].runId, 'run-test-1');
+    assert.equal(runs[0].status, 'completed');
   });
 
   it('backfills missing order-index documents from the complete historical event collection', async () => {
