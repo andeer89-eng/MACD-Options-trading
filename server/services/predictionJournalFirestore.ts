@@ -104,7 +104,7 @@ export function createFirestorePredictionJournal(options: {
     const eventName = `${resourceRoot}/${eventsPath}/${idempotencyId}`;
     const metaName = `${resourceRoot}/${headPath(ownerId)}`;
     const identity = body.eventType === 'PREDICTION_RECORDED'
-      ? { kind: 'prediction', id: body.prediction.predictionId, identitySha256: body.prediction.snapshotSha256 }
+      ? { kind: 'prediction', id: body.prediction.predictionId, identitySha256: hash(canonical(body.prediction)) }
       : { kind: 'outcome', id: body.predictionId, identitySha256: hash(canonical(body.outcome)) };
     const identityId = hash(`${identity.kind}:${identity.id}`);
     const identityPath = `${indexCollection(ownerId)}/${identityId}`;
