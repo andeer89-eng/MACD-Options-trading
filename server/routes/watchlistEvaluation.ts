@@ -52,7 +52,7 @@ export function createWatchlistEvaluationRouter(options: {
     }
 
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match || !safeSecretEqual(match[1], options.workerToken)) {
       res.status(401).json({ error: 'Worker authentication required.' });
       return;
