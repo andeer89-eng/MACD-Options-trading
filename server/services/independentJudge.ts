@@ -1,4 +1,4 @@
-import type { MultiAssetEvidencePack, StockEvidenceInput, OptionEvidenceInput } from './multiAssetEvidencePack.ts';
+import { verifyMultiAssetEvidencePack, type MultiAssetEvidencePack, type StockEvidenceInput, type OptionEvidenceInput } from './multiAssetEvidencePack.ts';
 import type { AgentAssessment, CommitteeResult } from './multiAgentCommittee.ts';
 
 export type JudgeDisposition = 'APPROVE' | 'REDUCE' | 'REJECT';
@@ -76,12 +76,13 @@ function deepFreeze<T>(value: T): T {
   }
   return value;
 }
-function validateCommittee(pack: MultiAssetEvidencePack, committee: CommitteeResult): string[] {
+function validateCommittee(pack: MultiAssetEvidencePack, committee: CommitteeResult, now: number): string[] {
   const failures: string[] = [];
+  if (!verifyMultiAssetEvidencePack(pack)) failures.push('EVIDENCE_PACK_HASH_MISMATCH');
   if (!committee || committee.packId !== pack.packId || committee.assetClass !== pack.assetClass ||
       committee.schemaVersion !== '1.0.0' || committee.executionEligible !== false ||
       committee.decision !== 'ADVANCE_TO_JUDGE' || !Array.isArray(committee.assessments) || !Number.isFinite(committee.generatedAt) ||
-      committee.generatedAt < pack.generatedAt || !Number.isFinite(committee.riskMultiplierCeiling) ||
+      committee.generatedAt < pack.generatedAt || committee.generatedAt > now || pack.generatedAt > now || !Number.isFinite(committee.riskMultiplierCeiling) ||
       committee.riskMultiplierCeiling < 0 || committee.riskMultiplierCeiling > 1) {
     failures.push('COMMITTEE_RESULT_NOT_ELIGIBLE_OR_PACK_MISMATCH');
     return failures;
@@ -215,7 +216,7 @@ export async function runIndependentJudge(
 ): Promise<JudgeResult> {
   const generatedAt = (options.now ?? Date.now)();
   const policy = { ...DEFAULT_POLICY, ...options.policy };
-  const committeeFailures = validateCommittee(pack, committee);
+  const committeeFailures = validateCommittee(pack, committee, generatedAt);
   const deterministic = deterministicReview(pack, generatedAt, policy);
   const preflightFailures = [...committeeFailures, ...deterministic.reject];
   if (preflightFailures.length || committee.riskMultiplierCeiling <= 0) {
