@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Candle, DivergenceSetup } from '../../src/utils/trullasStrategy.ts';
+import { normalizeSymbolForYahoo } from '../../src/utils/dataFetcher.ts';
 
 export const WATCHLIST_MARKET_DATA_PROVIDER = 'YAHOO_FINANCE_CHART_V8' as const;
 export const WATCHLIST_CANDLE_CLOSURE_POLICY = 'DROP_LATEST_RETURNED_BAR' as const;
@@ -8,7 +9,9 @@ export type WatchlistSignalMarketData = {
   provider: typeof WATCHLIST_MARKET_DATA_PROVIDER;
   providerLabel: 'Yahoo Finance Chart API v8';
   symbol: string;
+  providerSymbol: string;
   timeframe: string;
+  range: string;
   exchange: string;
   exchangeTimezone: string;
   currency: string;
@@ -34,6 +37,7 @@ export type WatchlistMarketDataBuildResult =
 export function buildWatchlistSignalMarketData(input: {
   symbol: string;
   timeframe: string;
+  range: string;
   candles: Candle[];
   retrievedAt: number;
   feedMetadata: {
@@ -46,9 +50,11 @@ export function buildWatchlistSignalMarketData(input: {
 }): WatchlistMarketDataBuildResult {
   const symbol = input.symbol.trim().toUpperCase();
   const timeframe = input.timeframe.trim();
+  const range = input.range.trim();
+  const providerSymbol = normalizeSymbolForYahoo(symbol);
   const meta = input.feedMetadata;
 
-  if (!symbol || !timeframe) return { ok: false, reason: 'SYMBOL_OR_TIMEFRAME_MISSING' };
+  if (!symbol || !timeframe || !range) return { ok: false, reason: 'SYMBOL_TIMEFRAME_OR_RANGE_MISSING' };
   if (!Number.isFinite(input.retrievedAt) || input.retrievedAt <= 0) {
     return { ok: false, reason: 'INVALID_RETRIEVAL_TIMESTAMP' };
   }
@@ -94,11 +100,13 @@ export function buildWatchlistSignalMarketData(input: {
       provider: WATCHLIST_MARKET_DATA_PROVIDER,
       providerLabel: 'Yahoo Finance Chart API v8',
       symbol,
+      providerSymbol,
       timeframe,
+      range,
       exchange: String(meta.exchange || 'UNKNOWN'),
       exchangeTimezone: String(meta.exchangeTimezone || 'UNKNOWN'),
       currency: String(meta.currency || 'UNKNOWN'),
-      sourceUrl: `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(timeframe)}`,
+      sourceUrl: `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(providerSymbol)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(timeframe)}`,
       retrievedAt: input.retrievedAt,
       closurePolicy: WATCHLIST_CANDLE_CLOSURE_POLICY,
       excludedLatestCandleTimestamp,
@@ -117,6 +125,7 @@ export function validateWatchlistSignalMarketData(
   if (!evidence || evidence.provider !== WATCHLIST_MARKET_DATA_PROVIDER) return 'UNSUPPORTED_MARKET_DATA_PROVIDER';
   if (evidence.symbol !== setup.symbol.trim().toUpperCase()) return 'MARKET_DATA_SYMBOL_MISMATCH';
   if (evidence.timeframe !== setup.timeframe) return 'MARKET_DATA_TIMEFRAME_MISMATCH';
+  if (!evidence.providerSymbol || !evidence.range || !evidence.sourceUrl.startsWith('https://query1.finance.yahoo.com/v8/finance/chart/')) return 'INVALID_MARKET_DATA_SOURCE_REFERENCE';
   if (evidence.closurePolicy !== WATCHLIST_CANDLE_CLOSURE_POLICY) return 'UNSUPPORTED_CANDLE_CLOSURE_POLICY';
   if (!Number.isFinite(evidence.retrievedAt) || evidence.retrievedAt > evaluatedAt) return 'INVALID_MARKET_DATA_RETRIEVAL_TIME';
   if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0 || evaluatedAt - evidence.retrievedAt > maxAgeMs) {
