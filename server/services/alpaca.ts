@@ -1,3 +1,5 @@
+import { evaluatePortfolioRisk, evaluateShortPutOrderRisk } from '../../src/utils/portfolioRiskEngine.ts';
+
 export const ALPACA_PAPER_ENDPOINT = 'https://paper-api.alpaca.markets';
 export const ALPACA_DATA_ENDPOINT = 'https://data.alpaca.markets';
 
@@ -30,6 +32,9 @@ export interface AlpacaAccountSummary {
   day_pnl: number;
   day_pnl_pct: number;
   pattern_day_trader: boolean;
+  trading_blocked: boolean;
+  account_blocked: boolean;
+  trade_suspended_by_user: boolean;
 }
 
 export interface AlpacaPositionItem {
@@ -88,6 +93,8 @@ export interface AlpacaOptionContractItem {
   tradable: boolean;
 }
 
+export interface AlpacaPortfolioEquityPoint { timestamp: number; equity: number; }
+
 export interface AlpacaOverviewResponse {
   configured: boolean;
   mode: 'PAPER';
@@ -101,6 +108,9 @@ export interface AlpacaOverviewResponse {
   optionPositions: AlpacaPositionItem[];
   orders: AlpacaOrderItem[];
   fills: AlpacaFillActivity[];
+  portfolioHistory: AlpacaPortfolioEquityPoint[];
+  portfolioHistoryComplete: boolean;
+  portfolioHistoryError?: string;
   fillHistoryComplete: boolean;
   fillHistoryError?: string;
   orderHistoryComplete: boolean;
@@ -460,16 +470,19 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions: [],
         orders: [],
         fills: [],
+        portfolioHistory: [],
+        portfolioHistoryComplete: false,
         fillHistoryComplete: false,
         orderHistoryComplete: false,
       };
     }
 
     try {
-      const [rawAccount, rawPositions, orderHistory] = await Promise.all([
+      const [rawAccount, rawPositions, orderHistory, rawPortfolioHistory] = await Promise.all([
         alpacaRequest<any>('/v2/account'),
         alpacaRequest<any[]>('/v2/positions'),
         fetchAllOrders(),
+        alpacaRequest<any>('/v2/account/portfolio/history?period=1A&timeframe=1D&intraday_reporting=extended_hours').catch(() => null),
       ]);
       let fillHistory: { items: any[]; complete: boolean } = { items: [], complete: false };
       let fillHistoryError: string | undefined;
@@ -502,6 +515,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         day_pnl: dayPnl,
         day_pnl_pct: dayPnlPct,
         pattern_day_trader: Boolean(rawAccount?.pattern_day_trader),
+        trading_blocked: Boolean(rawAccount?.trading_blocked),
+        account_blocked: Boolean(rawAccount?.account_blocked),
+        trade_suspended_by_user: Boolean(rawAccount?.trade_suspended_by_user),
       };
 
       const positions: AlpacaPositionItem[] = (Array.isArray(rawPositions) ? rawPositions : []).map((p) => {
@@ -550,6 +566,15 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         };
       });
 
+      const historyTimestamps = Array.isArray(rawPortfolioHistory?.timestamp) ? rawPortfolioHistory.timestamp : [];
+      const historyEquity = Array.isArray(rawPortfolioHistory?.equity) ? rawPortfolioHistory.equity : [];
+      const portfolioHistory = historyTimestamps.map((timestamp: unknown, index: number) => ({
+        timestamp: Number(timestamp),
+        equity: toNum(historyEquity[index], NaN),
+      })).filter((point: AlpacaPortfolioEquityPoint) =>
+        Number.isFinite(point.timestamp) && Number.isFinite(point.equity) && point.equity > 0
+      );
+
       const fills: AlpacaFillActivity[] = (Array.isArray(rawFills) ? rawFills : []).map((f) => ({
         id: String(f?.id || ''),
         order_id: String(f?.order_id || ''),
@@ -572,6 +597,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions,
         orders,
         fills,
+        portfolioHistory,
+        portfolioHistoryComplete: portfolioHistory.length >= 31,
+        ...(portfolioHistory.length < 31 ? { portfolioHistoryError: 'Insufficient Alpaca daily equity history for rolling risk checks.' } : {}),
         fillHistoryComplete: fillHistory.complete,
         fillHistoryError,
         orderHistoryComplete: orderHistory.complete,
@@ -589,6 +617,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         optionPositions: [],
         orders: [],
         fills: [],
+        portfolioHistory: [],
+        portfolioHistoryComplete: false,
+        portfolioHistoryError: err?.message || 'Failed to retrieve Alpaca portfolio history',
         fillHistoryComplete: false,
         orderHistoryComplete: false,
         error: err?.message || 'Failed to retrieve Alpaca Paper overview',
@@ -654,6 +685,57 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
     }
+    // The browser risk gate is advisory. Rebuild a fresh broker snapshot for every opening order.
+    const isShortPutSell = validated.isOption && validated.payload.side === 'sell' && /P\\d{8}$/.test(validated.payload.symbol);
+    const [rawAccount, rawPositions, rawOpenOrders, rawHistory] = await Promise.all([
+      alpacaRequest<any>('/v2/account'),
+      alpacaRequest<any[]>('/v2/positions'),
+      alpacaRequest<any[]>('/v2/orders?status=open&limit=500&direction=desc'),
+      alpacaRequest<any>('/v2/account/portfolio/history?period=1A&timeframe=1D&intraday_reporting=extended_hours'),
+    ]);
+    const equity = toNum(rawAccount?.equity);
+    const lastEquity = toNum(rawAccount?.last_equity, equity);
+    const positions = (Array.isArray(rawPositions) ? rawPositions : []).map((p) => ({
+      symbol: String(p?.symbol || '').toUpperCase(), asset_class: String(p?.asset_class || ''),
+      qty: toNum(p?.qty), side: String(p?.side || ''), market_value: toNum(p?.market_value),
+    }));
+    const openOrders = (Array.isArray(rawOpenOrders) ? rawOpenOrders : []).map((o) => ({
+      symbol: String(o?.symbol || '').toUpperCase(), asset_class: String(o?.asset_class || ''),
+      side: o?.side === 'sell' ? 'sell' as const : 'buy' as const,
+      qty: toNum(o?.qty), status: String(o?.status || ''), limit_price: toNullableNum(o?.limit_price),
+    }));
+    if (isShortPutSell) openOrders.push({
+      symbol: validated.payload.symbol, asset_class: 'us_option', side: 'sell' as const,
+      qty: validated.payload.qty, status: 'new', limit_price: validated.payload.limit_price ?? null,
+    });
+    const timestamps = Array.isArray(rawHistory?.timestamp) ? rawHistory.timestamp : [];
+    const historyValues = Array.isArray(rawHistory?.equity) ? rawHistory.equity : [];
+    const equityHistory = timestamps.map((timestamp: unknown, index: number) => ({
+      timestamp: Number(timestamp), equity: toNum(historyValues[index], NaN),
+    })).filter((point: AlpacaPortfolioEquityPoint) =>
+      Number.isFinite(point.timestamp) && Number.isFinite(point.equity) && point.equity > 0
+    );
+    const riskReport = evaluatePortfolioRisk({
+      account: {
+        equity, day_pnl_pct: lastEquity > 0 ? ((equity - lastEquity) / lastEquity) * 100 : NaN,
+        status: String(rawAccount?.status || 'UNKNOWN'),
+        trading_blocked: Boolean(rawAccount?.trading_blocked),
+        account_blocked: Boolean(rawAccount?.account_blocked),
+        trade_suspended_by_user: Boolean(rawAccount?.trade_suspended_by_user),
+      },
+      positions, openOrders, equityHistory, fetchedAt: new Date().toISOString(),
+    });
+    if (!riskReport.allowNewEntries) {
+      throw new AlpacaApiError(409, `Portfolio risk gate ${riskReport.status}: ${riskReport.reasons.join(' ')}`);
+    }
+    if (isShortPutSell) {
+      const orderRisk = evaluateShortPutOrderRisk({
+        symbol: validated.payload.symbol, contracts: validated.payload.qty,
+        premiumPerShare: validated.payload.limit_price ?? 0, equity,
+      });
+      if (!orderRisk.allowed) throw new AlpacaApiError(409, orderRisk.reason || 'Short-put per-trade loss limit exceeded.');
+    }
+
     const order = await alpacaRequest<any>('/v2/orders', {
       method: 'POST',
       body: JSON.stringify(validated.payload),
