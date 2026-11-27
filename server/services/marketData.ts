@@ -259,6 +259,7 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
     return buildWatchlistSignalMarketData({
       symbol: normalizedSymbol,
       timeframe,
+      range,
       candles,
       retrievedAt,
       feedMetadata,
