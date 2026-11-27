@@ -1,9 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
-import {
-  createFirebaseAlpacaAuthMiddleware,
-  FirebaseAuthOptions,
-} from '../services/firebaseAuth.ts';
+import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
+import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 
 function handleAlpacaError(res: Response, err: unknown) {
   if (err instanceof AlpacaApiError) {
