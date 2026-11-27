@@ -19,11 +19,13 @@ function validateAssessment(value: unknown, role: CommitteeRole, pack: MultiAsse
  return { role, assetClass: pack.assetClass, packSha256: pack.canonicalSha256, generatedAt, finding: { summary: f.summary, stance: f.stance as AgentStance, confidence: f.confidence, sourceRefs: [...f.sourceRefs], risks: [...f.risks] }, ...(riskControls ? { riskControls } : {}) };
 }
 export async function runMultiAgentCommittee(pack: MultiAssetEvidencePack, runAgent: CommitteeAgent, options: { now?: () => number } = {}): Promise<CommitteeResult> {
- const generatedAt = (options.now ?? Date.now)(); const allowedSourceRefs = pack.sources.map((_, i) => 'source:' + i); const allowed = new Set(allowedSourceRefs);\n const immutablePack = deepFreeze(pack);
+ const generatedAt = (options.now ?? Date.now)(); const allowedSourceRefs = pack.sources.map((_, i) => 'source:' + i); const allowed = new Set(allowedSourceRefs);
+ const immutablePack = deepFreeze(pack);
  const raw = await Promise.all(COMMITTEE_ROLES.map(async (role) => { try { return { role, value: await runAgent(role, immutablePack, { allowedSourceRefs, assetClass: pack.assetClass, generatedAt }) }; } catch { return { role, value: null }; } }));
  const assessments: AgentAssessment[] = []; const failures: string[] = [];
  for (const item of raw) { const assessment = validateAssessment(item.value, item.role, pack, allowed, generatedAt); if (!assessment) failures.push('INVALID_OR_MISSING_' + item.role + '_ASSESSMENT'); else assessments.push(assessment); }
  const risk = assessments.find((a) => a.role === 'RISK'); const riskVeto = risk?.riskControls?.vetoNewRisk === true; const riskMultiplier = risk?.riskControls?.maxRiskMultiplier ?? 0;
- const deterministicRiskVeto = !pack.risk.allowNewEntries || pack.risk.status === 'HALTED' || pack.risk.status === 'DATA_INVALID';\n const reasons = [...failures]; if (riskVeto) reasons.push(...(risk?.riskControls?.reasons ?? ['RISK_AGENT_VETO'])); if (risk && riskMultiplier < 1) reasons.push('RISK_AGENT_REDUCED_RISK_BUDGET'); if (deterministicRiskVeto) reasons.push('DETERMINISTIC_RISK_SNAPSHOT_BLOCKS_NEW_RISK');
+ const deterministicRiskVeto = !pack.risk.allowNewEntries || pack.risk.status === 'HALTED' || pack.risk.status === 'DATA_INVALID';
+ const reasons = [...failures]; if (riskVeto) reasons.push(...(risk?.riskControls?.reasons ?? ['RISK_AGENT_VETO'])); if (risk && riskMultiplier < 1) reasons.push('RISK_AGENT_REDUCED_RISK_BUDGET'); if (deterministicRiskVeto) reasons.push('DETERMINISTIC_RISK_SNAPSHOT_BLOCKS_NEW_RISK');
  return { schemaVersion: '1.0.0', packId: pack.packId, assetClass: pack.assetClass, decision: failures.length > 0 || riskVeto || deterministicRiskVeto ? 'VETO' : 'ADVANCE_TO_JUDGE', assessments, riskMultiplierCeiling: riskMultiplier, reasons, generatedAt, executionEligible: false };
 }
