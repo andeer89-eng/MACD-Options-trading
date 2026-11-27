@@ -87,6 +87,23 @@ test('journal append is idempotent for the same evidence record', async () => {
   assert.deepEqual(fake.getCounts(), { createCalls: 2, readCalls: 1 });
 });
 
+test('journal replay ignores a later retry timestamp but preserves the original event record', async () => {
+  const fake = createFakeFetch();
+  const journal = createWatchlistEvaluationJournal({
+    projectId: 'demo-project',
+    databaseId: 'trading',
+    serviceAccountJson,
+    fetchImpl: fake.fetchImpl,
+    now: () => 1_800_000_100_000,
+  });
+  const first = await journal.append(baseInput);
+  const second = await journal.append({ ...baseInput, evaluatedAt: baseInput.evaluatedAt + 30_000 });
+  assert.equal(first.evaluationId, second.evaluationId);
+  assert.equal(first.replayed, false);
+  assert.equal(second.replayed, true);
+  assert.deepEqual(fake.getCounts(), { createCalls: 2, readCalls: 1 });
+});
+
 test('same evaluation identity with changed evidence is a conflict', async () => {
   const fake = createFakeFetch();
   const journal = createWatchlistEvaluationJournal({
