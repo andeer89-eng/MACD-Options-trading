@@ -15,7 +15,7 @@ type FirebaseClaims = {
   auth_time?: unknown;
 };
 
-type FirebaseAuthOptions = {
+export type FirebaseAuthOptions = {
   projectId: string;
   allowedUids: readonly string[];
   fetchImpl?: typeof fetch;
@@ -45,7 +45,7 @@ function readUnixSeconds(value: unknown): number | null {
 }
 
 function cacheDurationMs(cacheControl: string | null): number {
-  const match = cacheControl?.match(/(?:^|,)\\s*max-age=(\\d+)/i);
+  const match = cacheControl?.match(/(?:^|,)\s*max-age=(\d+)/i);
   const seconds = match ? Number(match[1]) : 300;
   if (!Number.isFinite(seconds)) return 300_000;
   return Math.min(6 * 60 * 60_000, Math.max(60_000, seconds * 1000));
@@ -95,7 +95,7 @@ export function createFirebaseIdTokenVerifier(options: {
     }
 
     const entries = Object.entries(certs as Record<string, unknown>).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].includes('BEGIN CERTIFICATE')
+      (entry): entry is [string, string] => typeof entry[1] === 'string' && /BEGIN (?:CERTIFICATE|PUBLIC KEY)/.test(entry[1])
     );
     if (entries.length === 0) {
       throw new FirebaseAuthUnavailableError('No Firebase signing certificates were returned.');
@@ -196,7 +196,7 @@ export function createFirebaseAlpacaAuthMiddleware(options: FirebaseAuthOptions)
     }
 
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) {
       res.status(401).json({ error: 'Authentication required.' });
       return;
