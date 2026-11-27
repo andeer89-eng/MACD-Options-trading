@@ -135,6 +135,13 @@ describe('Trullàs Backtest Engine & LuxAlgo Journal-Core Integration', () => {
 
     assert.ok(result.trades.length >= 1, 'Expected at least 1 TTM Squeeze trade');
     assert.ok(result.trades.some((t) => t.setupType === 'TTM_SQUEEZE_LONG'));
+    for (const trade of result.trades) {
+      assert.equal(
+        trade.entryPrice,
+        candles[trade.entryIndex].open,
+        'TTM/EMA signal must fill at the next candle open, not the signal candle close'
+      );
+    }
     const closed = result.trades.filter((t) => t.status !== 'open');
     for (const t of closed) {
       assert.equal(Number((t.grossPnl - t.feeAndSlippageDollars).toFixed(2)), t.netPnl);
@@ -182,6 +189,13 @@ describe('Trullàs Backtest Engine & LuxAlgo Journal-Core Integration', () => {
 
     assert.ok(result.trades.length >= 1, 'Expected at least 1 Stacked EMA Pullback trade');
     assert.ok(result.trades.some((t) => t.setupType === 'EMA_PULLBACK_LONG'));
+    for (const trade of result.trades) {
+      assert.equal(
+        trade.entryPrice,
+        candles[trade.entryIndex].open,
+        'EMA pullback signal must fill at the next candle open, not the signal candle close'
+      );
+    }
     assert.ok(result.ruleAttribution.length >= 1);
   });
 
