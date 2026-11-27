@@ -23,6 +23,15 @@ import {
   syncClosedJournalEntriesToActiveMemory,
 } from '../utils/activeLearningEngine';
 
+async function getAlpacaAuthorizationHeaders(): Promise<Record<string, string>> {
+  await auth.authStateReady();
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Sign in with an authorized account to access Alpaca Paper.');
+  }
+  return { Authorization: `Bearer ${await user.getIdToken()}` };
+}
+
 export interface AlpacaOptionContractDTO {
   id: string;
   symbol: string;
@@ -160,8 +169,10 @@ export async function fetchAlpacaOptionContracts(params: {
   if (params.minStrike !== undefined) qs.set('minStrike', String(params.minStrike));
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
 
+  const headers = await getAlpacaAuthorizationHeaders();
   const resp = await fetchJsonSafe<{ contracts?: AlpacaOptionContractDTO[]; error?: string }>(
-    `/api/alpaca/options/contracts?${qs.toString()}`
+    `/api/alpaca/options/contracts?${qs.toString()}`,
+    { headers }
   );
   if (!resp.ok) {
     return {
@@ -209,7 +220,9 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
     abortRef.current = controller;
 
     try {
+      const headers = await getAlpacaAuthorizationHeaders();
       const resp = await fetchJsonSafe<AlpacaOverviewDTO>('/api/alpaca/overview', {
+        headers,
         signal: controller.signal,
       });
       if (!mountedRef.current || controller.signal.aborted) return null;
@@ -262,9 +275,10 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
     async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const { entryMarketContext, ...brokerPayload } = payload;
       const configDigest = computeConfigDigest(loadSettings());
+      const authHeaders = await getAlpacaAuthorizationHeaders();
       const resp = await fetchJsonSafe<{ order?: any; error?: string }>('/api/alpaca/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(brokerPayload),
         retryOnHtml: false,
       });
@@ -331,6 +345,7 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
       opts?: { qty?: number; percentage?: number; cancelOrders?: boolean }
     ): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const configDigest = computeConfigDigest(loadSettings());
+      const authHeaders = await getAlpacaAuthorizationHeaders();
       const qs = new URLSearchParams();
       if (opts?.qty !== undefined && opts.qty > 0) qs.set('qty', String(opts.qty));
       else if (opts?.percentage !== undefined && opts.percentage > 0 && opts.percentage < 100) {
@@ -346,6 +361,7 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
         `/api/alpaca/positions/${encodeURIComponent(symbol)}${suffix}`,
         {
           method: 'DELETE',
+          headers: authHeaders,
           retryOnHtml: false,
         }
       );
@@ -370,10 +386,12 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
 
   const cancelOrder = useCallback(
     async (orderId: string): Promise<{ ok: boolean; error?: string }> => {
+      const authHeaders = await getAlpacaAuthorizationHeaders();
       const resp = await fetchJsonSafe<{ error?: string }>(
         `/api/alpaca/orders/${encodeURIComponent(orderId)}`,
         {
           method: 'DELETE',
+          headers: authHeaders,
           retryOnHtml: false,
         }
       );
