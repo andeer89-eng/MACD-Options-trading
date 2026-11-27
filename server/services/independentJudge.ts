@@ -80,7 +80,7 @@ function validateCommittee(pack: MultiAssetEvidencePack, committee: CommitteeRes
   const failures: string[] = [];
   if (!committee || committee.packId !== pack.packId || committee.assetClass !== pack.assetClass ||
       committee.schemaVersion !== '1.0.0' || committee.executionEligible !== false ||
-      committee.decision !== 'ADVANCE_TO_JUDGE' || !Number.isFinite(committee.generatedAt) ||
+      committee.decision !== 'ADVANCE_TO_JUDGE' || !Array.isArray(committee.assessments) || !Number.isFinite(committee.generatedAt) ||
       committee.generatedAt < pack.generatedAt || !Number.isFinite(committee.riskMultiplierCeiling) ||
       committee.riskMultiplierCeiling < 0 || committee.riskMultiplierCeiling > 1) {
     failures.push('COMMITTEE_RESULT_NOT_ELIGIBLE_OR_PACK_MISMATCH');
