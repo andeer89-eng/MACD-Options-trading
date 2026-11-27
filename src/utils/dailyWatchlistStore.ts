@@ -165,6 +165,9 @@ export function mergeDailyWatchlists(
 export async function createWatchlistItemInFirestore(item: DailyWatchlistItem): Promise<void> {
   const user = auth.currentUser;
   if (!user) return;
+  if (item.status === 'TRIGGERED') {
+    throw new Error('TRIGGERED status can only be written by trusted server code.');
+  }
   const docId = sanitizeDocId(item.symbol);
   const path = `users/${user.uid}/watchlistItems/${docId}`;
   const payload: Record<string, any> = {
@@ -195,6 +198,9 @@ export async function updateWatchlistItemInFirestore(
 ): Promise<void> {
   const user = auth.currentUser;
   if (!user) return;
+  if (patch.status === 'TRIGGERED') {
+    throw new Error('TRIGGERED status can only be written by trusted server code.');
+  }
   const docId = sanitizeDocId(symbol);
   const path = `users/${user.uid}/watchlistItems/${docId}`;
   const cleanPatch: Record<string, any> = { updatedAt: serverTimestamp() };
@@ -225,6 +231,8 @@ export async function deleteWatchlistItemFromFirestore(symbol: string): Promise<
 
 export function isValidStatusTransition(from: WatchlistStatus, to: WatchlistStatus): boolean {
   if (from === to) return true;
+  if (to === 'TRIGGERED') return false;
+  if (from === 'EXPIRED' || from === 'INVALIDATED') return false;
   switch (from) {
     case 'NEW':
       return to === 'WATCHING' || to === 'TRIGGERED' || to === 'EXPIRED' || to === 'INVALIDATED';
@@ -234,7 +242,7 @@ export function isValidStatusTransition(from: WatchlistStatus, to: WatchlistStat
       return to === 'EXPIRED' || to === 'INVALIDATED';
     case 'EXPIRED':
     case 'INVALIDATED':
-      return to === 'NEW';
+      return false;
     default:
       return false;
   }
@@ -367,11 +375,7 @@ export function archiveInactiveWatchlistItems(): DailyWatchlistItem[] {
     } catch (e) {
       console.warn('[DailyWatchlistStore] Failed to update archive:', e);
     }
-    for (const dead of toArchive) {
-      deleteWatchlistItemFromFirestore(dead.symbol).catch((e) =>
-        console.warn('[Watchlist Firestore delete error]:', e)
-      );
-    }
+    // Keep terminal records in Firestore as immutable audit history. Only the local active view is pruned.
   }
   saveDailyWatchlist(active);
   return active;
