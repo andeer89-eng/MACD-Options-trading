@@ -142,6 +142,9 @@ export function createWatchlistAdminService(options: WatchlistAdminOptions) {
     if (current.ownerId !== input.uid || String(current.symbol || '').toUpperCase() !== symbol) {
       throw new WatchlistTransitionConflictError('Watchlist item ownership could not be verified.');
     }
+    if (current.direction !== input.direction) {
+      throw new WatchlistTransitionConflictError('Requested trigger direction does not match the saved watchlist thesis.');
+    }
     if (!['NEW', 'WATCHING'].includes(current.status)) {
       throw new WatchlistTransitionConflictError(`Cannot trigger watchlist item from state ${String(current.status)}.`);
     }
