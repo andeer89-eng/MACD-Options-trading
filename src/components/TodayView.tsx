@@ -85,6 +85,14 @@ import {
   PresenceAnnotation,
   getTradingDateKey,
 } from '../utils/watchlistPersistenceTracker';
+import {
+  evaluateDrawdownCircuitBreaker,
+  evaluatePreTradeDiscipline,
+} from '../utils/circuitBreakerEngine';
+import {
+  buildSignalPostmortemReport,
+  SignalPostmortemReport,
+} from '../utils/signalPostmortemEngine';
 
 interface TodayViewProps {
   onOpenChart?: (symbol: string) => void;
@@ -123,6 +131,8 @@ interface WatchlistDisplayRow {
   why: string[];
   levels: Levels;
   gate: ReturnType<typeof canTrade>;
+  scoringSource?: 'UNIFIED_360' | 'HEURISTIC_FALLBACK';
+  legacyHeuristicScore?: number;
 }
 
 type WatchlistSortKey = 'score' | 'days' | 'alpha' | 'rr' | 'symbol';
@@ -437,21 +447,39 @@ export const TodayView: React.FC<TodayViewProps> = ({
     scheduleCloudSync(updated);
   };
 
+  const sectorAlphaBySector = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of liveSectors) {
+      const alpha =
+        typeof (s as any)?.rsVsSpy === 'number' && Number.isFinite((s as any).rsVsSpy)
+          ? (s as any).rsVsSpy
+          : typeof s?.changePercent === 'number' && Number.isFinite(s.changePercent)
+          ? s.changePercent
+          : null;
+      if (alpha !== null && s?.name) {
+        map.set(s.name, alpha);
+      }
+    }
+    return map;
+  }, [liveSectors]);
+
   // Unified Top-50 Bullish & Bearish leaderboards (excludes Grade C/D noise unless explicitly requested)
   const leaderboards = useMemo(() => {
     const minScore = gradeGate === 'includeC' ? 55 : HIGH_CONVICTION_MIN_SCORE;
     return buildDualMarketLeaderboards(scannerResults, {
       minScore,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults, gradeGate]);
+  }, [scannerResults, gradeGate, sectorAlphaBySector]);
 
   const strictLeaderboards = useMemo(() => {
     return buildDualMarketLeaderboards(scannerResults, {
       minScore: HIGH_CONVICTION_MIN_SCORE,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults]);
+  }, [scannerResults, sectorAlphaBySector]);
 
   // Persist daily Top-50 presence history & streak counts strictly from high-conviction Top-50
   useEffect(() => {
@@ -488,6 +516,14 @@ export const TodayView: React.FC<TodayViewProps> = ({
     }
   };
 
+  // Drawdown Circuit Breaker & Consecutive Loss Cooldown
+  const circuitBreaker = useMemo(
+    () => evaluateDrawdownCircuitBreaker(journalEntries, settings.simCapitalUsd, new Date(), {
+      dailyLossLimitPct: settings.dailyLossLimitPct,
+    }),
+    [journalEntries, settings.simCapitalUsd, settings.dailyLossLimitPct]
+  );
+
   // Watchlist Items derived strictly from Top-50 Bullish/Bearish high-conviction leaders (or saved items)
   const watchlistItems = useMemo<WatchlistDisplayRow[]>(() => {
     const todayKey = getTradingDateKey();
@@ -517,6 +553,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
           currentPrice: w.currentPrice,
           regimeScore,
           customSettings: settings,
+          circuitBreaker,
         });
         const { grade } = scoreToConvictionGrade(w.totalScore);
         const pres = presenceMap.get(`${w.direction}:${sym}`);
@@ -577,6 +614,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
         currentPrice: leader.currentPrice,
         regimeScore,
         customSettings: settings,
+        circuitBreaker,
       });
 
       const pres = presenceMap.get(`${leader.direction}:${leader.symbol}`);
@@ -603,9 +641,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
         why: leader.why,
         levels,
         gate,
+        scoringSource: leader.scoringSource,
+        legacyHeuristicScore: leader.legacyHeuristicScore,
       };
     });
-  }, [gradeGate, savedWatchlist, directionView, leaderboards, settings, regimeScore, presenceMap]);
+  }, [gradeGate, savedWatchlist, directionView, leaderboards, settings, regimeScore, presenceMap, circuitBreaker]);
 
   const filteredWatchlist = useMemo(() => {
     const filtered = watchlistItems.filter((item) => {
@@ -659,6 +699,11 @@ export const TodayView: React.FC<TodayViewProps> = ({
     if (!shadowCandleCache) return null;
     return buildShadowAuditReport(shadowCandleCache, selectedExitPolicy);
   }, [shadowCandleCache, selectedExitPolicy]);
+
+  const signalPostmortemReport = useMemo<SignalPostmortemReport | null>(() => {
+    if (!shadowCandleCache) return null;
+    return buildSignalPostmortemReport(shadowCandleCache, { roundTripCostBps: 10 });
+  }, [shadowCandleCache]);
 
   const runLiveShadowAudit = async () => {
     setShadowAuditLoading(true);
@@ -865,6 +910,23 @@ export const TodayView: React.FC<TodayViewProps> = ({
               </span>
             </span>
             <span className="text-zinc-700" aria-hidden="true">|</span>
+            <span
+              data-testid="circuit-breaker-badge"
+              title={`ET Week ${circuitBreaker.etWeekStartKey} · ${circuitBreaker.summary}`}
+              className={`px-2 py-0.5 rounded border text-[10px] font-bold ${
+                circuitBreaker.status === 'OK'
+                  ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                  : circuitBreaker.status === 'CAUTION'
+                  ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+                  : 'text-rose-300 bg-rose-500/15 border-rose-500/40'
+              }`}
+            >
+              CB: {circuitBreaker.status}
+              {circuitBreaker.cooldownActive
+                ? ` (${circuitBreaker.cooldownRemainingHours.toFixed(0)}h)`
+                : ` · W:${circuitBreaker.weeklyDrawdownPct.toFixed(1)}% M:${circuitBreaker.monthlyDrawdownPct.toFixed(1)}% (${circuitBreaker.consecutiveLosses}L)`}
+            </span>
+            <span className="text-zinc-700" aria-hidden="true">|</span>
             <span className="text-zinc-400">
               Computed Risk:{' '}
               <strong className="text-emerald-400">
@@ -1011,9 +1073,61 @@ export const TodayView: React.FC<TodayViewProps> = ({
             ))}
           </div>
 
-          <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800/80 text-[11px] text-zinc-400">
-            <strong className="text-zinc-200 block mb-0.5">Regime Policy:</strong>
-            {regimeBand.policyText}
+          <div className="p-2.5 bg-zinc-950 rounded-lg border border-zinc-800/80 text-[11px] text-zinc-400 space-y-1.5">
+            <div>
+              <strong className="text-zinc-200 block mb-0.5">Regime Policy:</strong>
+              {regimeBand.policyText}
+            </div>
+            {marketHealth && marketHealth.isLive && (
+              <div className="pt-1.5 border-t border-zinc-800/80 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-zinc-400">
+                {marketHealth.scoreSyncSource && marketHealth.scoreSyncSource !== 'internal-ohlcv' && (
+                  <span>
+                    OHLCV Internals:{' '}
+                    <strong className="text-zinc-200">
+                      {marketHealth.current.internalScore ?? regimeScore}/100
+                    </strong>
+                  </span>
+                )}
+                <span>
+                  Sizing:{' '}
+                  <strong className="text-zinc-200">
+                    {marketHealth.current.sizeMultiplier.toFixed(2)}x ({marketHealth.current.safetyStatus.replace(/_/g, ' ')})
+                  </strong>
+                </span>
+                {marketHealth.marketTiming && (
+                  <span>
+                    IBD DD:{' '}
+                    <strong
+                      className={
+                        marketHealth.marketTiming.overallRisk === 'NORMAL'
+                          ? 'text-emerald-400'
+                          : marketHealth.marketTiming.overallRisk === 'CAUTION'
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }
+                    >
+                      {marketHealth.marketTiming.overallRisk}
+                    </strong>
+                  </span>
+                )}
+                {marketHealth.publicBreadth?.sp500Breadth && (
+                  <span>
+                    &gt;200MA:{' '}
+                    <strong className="text-zinc-200">
+                      {marketHealth.publicBreadth.sp500Breadth.pctAbove200Ma.toFixed(0)}%
+                    </strong>
+                  </span>
+                )}
+                {marketHealth.structuralContext?.spy && (
+                  <span>
+                    SPY:{' '}
+                    <strong className="text-sky-300">
+                      {marketHealth.structuralContext.spy.regime.replace(/_/g, ' ')}
+                    </strong>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1356,7 +1470,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
                       R:R {sortBy === 'rr' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
                     </button>
                   </th>
-                  <th className="py-2 px-1.5 text-right">Gate</th>
+                  <th className="py-2 px-1.5 text-right">Chart</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60">
@@ -1468,7 +1582,31 @@ export const TodayView: React.FC<TodayViewProps> = ({
                           1:{item.levels.rr.toFixed(1)}
                         </td>
                         <td className="py-2 px-1.5 text-right whitespace-nowrap">
-                          {item.gate.allow ? (
+                          {onOpenChart ? (
+                            <button
+                              type="button"
+                              aria-label={`Open ${item.s} chart`}
+                              data-testid={`watchlist-open-chart-${item.s}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenChart(item.s);
+                              }}
+                              title={
+                                item.gate.allow
+                                  ? `Open ${item.s} Chart · Gate ALLOWED (${item.gate.suggestedQty} sh)`
+                                  : `Open ${item.s} Chart · Gate blockers: ${item.gate.fails.map((f) => f.name).join(', ')}`
+                              }
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border-sky-500/35 transition whitespace-nowrap"
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  item.gate.allow ? 'bg-emerald-400' : 'bg-amber-400'
+                                }`}
+                              />
+                              <span>Chart</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </button>
+                          ) : item.gate.allow ? (
                             <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30 whitespace-nowrap">
                               OK &times;{item.gate.suggestedQty}
                             </span>
@@ -1543,8 +1681,15 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-zinc-200">
                       {selectedItem.setup}
                     </span>
-                    <span className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400 font-bold">
-                      Grade {selectedItem.grade} ({selectedItem.score})
+                    <span
+                      title={
+                        selectedItem.scoringSource === 'UNIFIED_360'
+                          ? `Canonical Confluence 360° Score (${selectedItem.score}% · matches Confluence 360° Matrix, Scanner & Action Zones)`
+                          : 'Fallback heuristic score (< 30 OHLCV bars)'
+                      }
+                      className="px-2 py-0.5 rounded bg-zinc-950 border border-zinc-800 text-emerald-400 font-bold"
+                    >
+                      Grade {selectedItem.grade} ({selectedItem.score}) · 360° Unified
                     </span>
                     <span
                       title={`First seen: ${selectedItem.firstSeenDate} · Streak: ${selectedItem.consecutiveDays}d · Best: #${selectedItem.bestRank}`}
@@ -1680,32 +1825,68 @@ export const TodayView: React.FC<TodayViewProps> = ({
                   </div>
                 </div>
 
-                {/* Gate Diagnostics & Execution Blockers */}
-                <div
-                  className={`rounded-lg p-2.5 border text-[11px] font-mono ${
-                    selectedItem.gate.allow
-                      ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300'
-                      : 'bg-rose-950/25 border-rose-500/30 text-rose-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between font-bold mb-1">
-                    <span>canTrade() Gate Diagnostics</span>
-                    <span>{selectedItem.gate.allow ? 'ALL 10 CHECKS PASSED' : `${selectedItem.gate.fails.length} BLOCKER(S)`}</span>
-                  </div>
-                  {selectedItem.gate.allow ? (
-                    <p className="text-[10px] text-emerald-200/80">
-                      Approved for {selectedItem.gate.suggestedQty} share(s) within risk budget.
-                    </p>
-                  ) : (
-                    <ul className="space-y-0.5 text-[10px] text-rose-200/90">
-                      {selectedItem.gate.fails.map((f) => (
-                        <li key={f.number}>
-                          #{f.number} {f.name}: {f.detail}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                {/* Gate Diagnostics & Pre-Trade Discipline Gate */}
+                {(() => {
+                  const plannedRiskUsd =
+                    selectedItem.gate.suggestedQty > 0
+                      ? selectedItem.gate.suggestedQty * selectedItem.levels.riskPerUnit
+                      : selectedItem.levels.riskPerUnit;
+                  const discipline = evaluatePreTradeDiscipline({
+                    direction: selectedItem.dir,
+                    entryPrice: selectedItem.p,
+                    stopPrice: selectedItem.levels.stop.price,
+                    targetPrice: selectedItem.levels.targets[0]?.price ?? selectedItem.p,
+                    plannedRiskUsd,
+                    maxRiskBudgetUsd: getRiskUsd(settings),
+                    regimeName: regimeBand.name,
+                    circuitBreaker,
+                  });
+                  return (
+                    <div
+                      className={`rounded-lg p-2.5 border text-[11px] font-mono ${
+                        selectedItem.gate.allow
+                          ? 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300'
+                          : 'bg-rose-950/25 border-rose-500/30 text-rose-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold mb-1 gap-2">
+                        <span>canTrade() Gate Diagnostics</span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            data-testid="pretrade-discipline-badge"
+                            className={`px-1.5 py-0.5 rounded border text-[9px] ${
+                              discipline.verdict === 'GO'
+                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                : discipline.verdict === 'REVIEW_REQUIRED'
+                                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                            }`}
+                          >
+                            DISCIPLINE: {discipline.verdict} ({discipline.passedCount}/{discipline.totalCount})
+                          </span>
+                          <span>
+                            {selectedItem.gate.allow
+                              ? 'ALL 10 CHECKS PASSED'
+                              : `${selectedItem.gate.fails.length} BLOCKER(S)`}
+                          </span>
+                        </div>
+                      </div>
+                      {selectedItem.gate.allow ? (
+                        <p className="text-[10px] text-emerald-200/80">
+                          Approved for {selectedItem.gate.suggestedQty} share(s) within risk budget.
+                        </p>
+                      ) : (
+                        <ul className="space-y-0.5 text-[10px] text-rose-200/90">
+                          {selectedItem.gate.fails.map((f) => (
+                            <li key={f.number}>
+                              #{f.number} {f.name}: {f.detail}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Reasons & Invalidation Rule */}
                 <div className="space-y-2 text-xs">
@@ -1927,6 +2108,109 @@ export const TodayView: React.FC<TodayViewProps> = ({
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {signalPostmortemReport && (
+              <div
+                data-testid="postmortem-residual-audit"
+                className="pt-3 border-t border-zinc-800 space-y-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-zinc-200">
+                    Signal Postmortem (+5D / +20D Precision) &amp; OLS Residual Alpha vs SPY
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded border text-[10px] font-bold font-mono ${
+                      signalPostmortemReport.residualEdge.verdict === 'GENUINE_ALPHA'
+                        ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/35'
+                        : signalPostmortemReport.residualEdge.verdict === 'BETA_DRIVEN'
+                        ? 'text-amber-300 bg-amber-500/15 border-amber-500/35'
+                        : 'text-zinc-300 bg-zinc-900 border-zinc-700'
+                    }`}
+                  >
+                    ATTRIBUTION: {signalPostmortemReport.residualEdge.verdict.replace(/_/g, ' ')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 font-mono text-xs">
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">+20D Precision</span>
+                    <strong className="text-emerald-400 text-sm">
+                      {signalPostmortemReport.precisionPct.toFixed(1)}%
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">
+                      {signalPostmortemReport.truePositives} TP / {signalPostmortemReport.resolvedCount}
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">Errors Taxonomy</span>
+                    <strong className="text-rose-400 text-sm">
+                      {signalPostmortemReport.falsePositives} FP · {signalPostmortemReport.regimeMismatches} Reg
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">
+                      {signalPostmortemReport.pendingCount} pending
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">Avg +5D / +20D Net</span>
+                    <strong
+                      className={`text-sm ${
+                        signalPostmortemReport.avg20dReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {signalPostmortemReport.avg5dReturnPct >= 0 ? '+' : ''}
+                      {signalPostmortemReport.avg5dReturnPct.toFixed(1)}% /{' '}
+                      {signalPostmortemReport.avg20dReturnPct >= 0 ? '+' : ''}
+                      {signalPostmortemReport.avg20dReturnPct.toFixed(1)}%
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">net {signalPostmortemReport.roundTripCostBps}bps</span>
+                  </div>
+
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">OLS Residual Alpha</span>
+                    <strong
+                      className={`text-sm ${
+                        signalPostmortemReport.residualEdge.alphaPerPeriodPct >= 0
+                          ? 'text-emerald-400'
+                          : 'text-rose-400'
+                      }`}
+                    >
+                      {signalPostmortemReport.residualEdge.alphaPerPeriodPct >= 0 ? '+' : ''}
+                      {signalPostmortemReport.residualEdge.alphaPerPeriodPct.toFixed(2)}%
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">
+                      Ann: {signalPostmortemReport.residualEdge.annualizedAlphaPct >= 0 ? '+' : ''}
+                      {signalPostmortemReport.residualEdge.annualizedAlphaPct.toFixed(1)}%
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">SPY Beta &amp; R²</span>
+                    <strong className="text-sky-300 text-sm">
+                      β {signalPostmortemReport.residualEdge.beta.toFixed(2)} · R² {signalPostmortemReport.residualEdge.rSquared.toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">
+                      n={signalPostmortemReport.residualEdge.sampleSize}
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-zinc-900 rounded-lg border border-zinc-800/80">
+                    <span className="text-[10px] text-zinc-400 block">Alpha t-stat</span>
+                    <strong
+                      className={`text-sm ${
+                        signalPostmortemReport.residualEdge.alphaTStat >= 1.5
+                          ? 'text-emerald-400'
+                          : 'text-zinc-200'
+                      }`}
+                    >
+                      {signalPostmortemReport.residualEdge.alphaTStat.toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-zinc-500 block">target ≥ 1.50</span>
+                  </div>
+                </div>
               </div>
             )}
 

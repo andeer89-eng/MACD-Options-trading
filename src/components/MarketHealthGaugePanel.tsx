@@ -772,6 +772,221 @@ export const MarketHealthGaugePanel: React.FC<MarketHealthGaugePanelProps> = ({
             })}
         </div>
       )}
+
+      {/* Live Public Breadth (% > 50/200MA + Sector Uptrend Ratios) & IBD Distribution Days + FTD Detector */}
+      {(report.publicBreadth || report.marketTiming) && (
+        <div
+          data-testid="market-breadth-timing-strip"
+          className="pt-4 border-t border-zinc-800 grid grid-cols-1 lg:grid-cols-2 gap-4"
+        >
+          {/* Left Card: TraderMonty Live Public Breadth & 11-Sector Uptrend Ratios */}
+          <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold text-white">
+                S&amp;P 500 Breadth &amp; Sector Uptrend Ratio
+              </div>
+              {report.publicBreadth?.sp500Breadth ? (
+                <span
+                  className={`px-2 py-0.5 rounded border text-[10px] font-bold font-mono ${
+                    report.publicBreadth.sp500Breadth.regimeLabel === 'STRONG_BREADTH' ||
+                    report.publicBreadth.sp500Breadth.regimeLabel === 'HEALTHY'
+                      ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/35'
+                      : report.publicBreadth.sp500Breadth.regimeLabel === 'OVERSOLD_TROUGH'
+                      ? 'text-sky-300 bg-sky-500/15 border-sky-500/35'
+                      : 'text-rose-300 bg-rose-500/15 border-rose-500/35'
+                  }`}
+                >
+                  {report.publicBreadth.sp500Breadth.regimeLabel.replace(/_/g, ' ')} · {report.publicBreadth.asOf}
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono text-zinc-500">Feed Syncing</span>
+              )}
+            </div>
+
+            {report.publicBreadth?.sp500Breadth ? (
+              <div className="grid grid-cols-3 gap-2 font-mono text-xs tabular-nums">
+                <div className="bg-zinc-900/90 border border-zinc-800/80 rounded px-2.5 py-1.5">
+                  <div className="text-[10px] text-zinc-400">Above 200-SMA</div>
+                  <div className="text-sm font-bold text-white">
+                    {report.publicBreadth.sp500Breadth.pctAbove200Ma.toFixed(1)}%
+                    {typeof report.publicBreadth.sp500Breadth.pctAbove200MaDelta1D === 'number' && (
+                      <span
+                        className={`ml-1 text-[10px] ${
+                          report.publicBreadth.sp500Breadth.pctAbove200MaDelta1D >= 0
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {report.publicBreadth.sp500Breadth.pctAbove200MaDelta1D >= 0 ? '+' : ''}
+                        {report.publicBreadth.sp500Breadth.pctAbove200MaDelta1D.toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    Trend {report.publicBreadth.sp500Breadth.trend200Ma}
+                    {report.publicBreadth.sp500Breadth.aboveCount200 !== null
+                      ? ` · ${report.publicBreadth.sp500Breadth.aboveCount200}/${report.publicBreadth.sp500Breadth.eligibleCount200}`
+                      : ''}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900/90 border border-zinc-800/80 rounded px-2.5 py-1.5">
+                  <div className="text-[10px] text-zinc-400">Above 50-SMA</div>
+                  <div className="text-sm font-bold text-white">
+                    {report.publicBreadth.sp500Breadth.pctAbove50Ma !== null
+                      ? `${report.publicBreadth.sp500Breadth.pctAbove50Ma.toFixed(1)}%`
+                      : 'N/A'}
+                    {typeof report.publicBreadth.sp500Breadth.pctAbove50MaDelta1D === 'number' && (
+                      <span
+                        className={`ml-1 text-[10px] ${
+                          report.publicBreadth.sp500Breadth.pctAbove50MaDelta1D >= 0
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {report.publicBreadth.sp500Breadth.pctAbove50MaDelta1D >= 0 ? '+' : ''}
+                        {report.publicBreadth.sp500Breadth.pctAbove50MaDelta1D.toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    Trend {report.publicBreadth.sp500Breadth.trend50Ma}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900/90 border border-zinc-800/80 rounded px-2.5 py-1.5">
+                  <div className="text-[10px] text-zinc-400">Uptrend Avg (11)</div>
+                  <div className="text-sm font-bold text-white">
+                    {report.publicBreadth.sectorUptrend
+                      ? `${report.publicBreadth.sectorUptrend.avgUptrendPct.toFixed(1)}%`
+                      : 'N/A'}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    {report.publicBreadth.sectorUptrend
+                      ? `${report.publicBreadth.sectorUptrend.sectorsUpCount}/11 Up · ${report.publicBreadth.sectorUptrend.oversoldCount} Oversold`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[11px] text-zinc-500 font-mono py-2">
+                Public breadth CSV snapshot temporarily unavailable from upstream GitHub mirror.
+              </div>
+            )}
+
+            {report.publicBreadth?.sectorUptrend && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {report.publicBreadth.sectorUptrend.sectors.map((sec) => (
+                  <span
+                    key={sec.sector}
+                    title={`${sec.sector}: ${sec.uptrendRatioPct.toFixed(1)}% Uptrend Ratio${
+                      sec.ma10Pct !== null ? ` · 10MA ${sec.ma10Pct.toFixed(1)}%` : ''
+                    } · Trend ${sec.trend} · Status ${sec.status}${sec.stale ? ' (Stale)' : ''}`}
+                    className={`px-2 py-0.5 rounded border text-[10px] font-mono tabular-nums ${
+                      sec.status === 'OVERSOLD'
+                        ? 'text-sky-300 bg-sky-500/10 border-sky-500/30'
+                        : sec.status === 'OVERBOUGHT'
+                        ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+                        : sec.trend === 'UP'
+                        ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                        : 'text-zinc-300 bg-zinc-900 border-zinc-800'
+                    }`}
+                  >
+                    {sec.sector.replace('Information ', '').replace('Consumer ', '')}{' '}
+                    {sec.uptrendRatioPct.toFixed(0)}%
+                    {sec.status === 'OVERBOUGHT'
+                      ? ' OB'
+                      : sec.status === 'OVERSOLD'
+                      ? ' OS'
+                      : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Right Card: IBD Distribution Days & Follow-Through Day (FTD) Detector */}
+          <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold text-white">
+                IBD Distribution Monitor &amp; FTD Bottom Detector
+              </div>
+              {report.marketTiming && (
+                <span
+                  className={`px-2 py-0.5 rounded border text-[10px] font-bold font-mono ${
+                    report.marketTiming.overallRisk === 'NORMAL'
+                      ? 'text-emerald-300 bg-emerald-500/15 border-emerald-500/35'
+                      : report.marketTiming.overallRisk === 'CAUTION'
+                      ? 'text-amber-300 bg-amber-500/15 border-amber-500/35'
+                      : 'text-rose-300 bg-rose-500/15 border-rose-500/35'
+                  }`}
+                >
+                  DD RISK: {report.marketTiming.overallRisk}
+                </span>
+              )}
+            </div>
+
+            {report.marketTiming ? (
+              <>
+                <div className="grid grid-cols-2 gap-2 font-mono text-xs tabular-nums">
+                  {[report.marketTiming.spyDistribution, report.marketTiming.qqqDistribution]
+                    .filter((d): d is NonNullable<typeof d> => Boolean(d))
+                    .map((dist) => (
+                      <div
+                        key={dist.symbol}
+                        className="bg-zinc-900/90 border border-zinc-800/80 rounded px-2.5 py-1.5"
+                      >
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-zinc-400">{dist.symbol} Dist Days (25d)</span>
+                          <span
+                            className={`font-bold ${
+                              dist.riskLevel === 'NORMAL'
+                                ? 'text-emerald-400'
+                                : dist.riskLevel === 'CAUTION'
+                                ? 'text-amber-400'
+                                : 'text-rose-400'
+                            }`}
+                          >
+                            {dist.riskLevel}
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold text-white mt-0.5">
+                          {dist.activeCount25}{' '}
+                          <span className="text-[10px] font-normal text-zinc-400">
+                            ({dist.countLast15} in 15d · {dist.countLast5} in 5d)
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-zinc-500">
+                          vs50MA{' '}
+                          {dist.pctFromSma50 !== null
+                            ? `${dist.pctFromSma50 >= 0 ? '+' : ''}${dist.pctFromSma50.toFixed(1)}%`
+                            : '—'}{' '}
+                          · vs21EMA{' '}
+                          {dist.pctFromEma21 !== null
+                            ? `${dist.pctFromEma21 >= 0 ? '+' : ''}${dist.pctFromEma21.toFixed(1)}%`
+                            : '—'}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+
+                <div className="text-[11px] text-zinc-300 bg-zinc-900/70 border border-zinc-800/80 rounded px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    <strong className="text-sky-300 font-mono">
+                      FTD: {report.marketTiming.ftdStatus.marketRegimeLabel.replace(/_/g, ' ')}
+                    </strong>{' '}
+                    <span className="text-zinc-400">· {report.marketTiming.exposureGuidance}</span>
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="text-[11px] text-zinc-500 font-mono py-2">
+                Insufficient index sessions for distribution count.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 };

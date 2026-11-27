@@ -7,6 +7,7 @@ import { ENGINE_VERSION } from './trullasOutcomeEngine';
 import { isMarketHoliday, isEarlyClosing } from './marketCalendar';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import type { DrawdownCircuitBreakerReport } from './circuitBreakerEngine';
 
 export type DataQuality = 'live' | 'cached' | 'estimated';
 
@@ -539,6 +540,7 @@ export interface CanTradeContext {
   optionsLiquidityOk?: boolean;
   regimeScore?: number;
   customSettings?: MasterPlanSettings;
+  circuitBreaker?: DrawdownCircuitBreakerReport;
 }
 
 /**
@@ -624,15 +626,23 @@ export function canTrade(ctx: CanTradeContext): GateResult {
     detail: settings.botStatus === 'armed' ? 'ARMED' : settings.botStatus === 'paused' ? 'PAUSED' : 'KILLED',
   });
 
-  // Check 4: Daily loss within limit
-  const dailyLoss = ctx.dailyLossPct || 0;
-  const isLossOk = Math.abs(dailyLoss) < settings.dailyLossLimitPct;
+  // Check 4: Daily / Weekly / Monthly Drawdown Circuit Breaker & Cooldown
+  const cb = ctx.circuitBreaker;
+  const dailyLoss = cb ? Math.max(ctx.dailyLossPct || 0, cb.dailyDrawdownPct) : (ctx.dailyLossPct || 0);
+  const dailyLimitOk = Math.abs(dailyLoss) < settings.dailyLossLimitPct;
+  const cbAllows = cb ? cb.allowNewTrades : true;
+  const isLossOk = dailyLimitOk && cbAllows;
+  const check4Detail = cb && !cb.allowNewTrades
+    ? `${cb.status}: ${cb.triggers[0] || cb.summary}`
+    : cb && cb.status === 'CAUTION'
+    ? `CAUTION (0.5x) · W ${cb.weeklyDrawdownPct.toFixed(1)}% · M ${cb.monthlyDrawdownPct.toFixed(1)}% · ${cb.consecutiveLosses}L`
+    : `${dailyLoss.toFixed(1)}% / limit ${settings.dailyLossLimitPct.toFixed(1)}%${cb ? ` (W:${cb.weeklyDrawdownPct.toFixed(1)}% M:${cb.monthlyDrawdownPct.toFixed(1)}%)` : ''}`;
   checks.push({
     number: 4,
-    name: 'Daily Loss Within Limit',
+    name: cb ? 'Drawdown Circuit Breaker & Cooldown' : 'Daily Loss Within Limit',
     shortName: 'daily_loss',
     ok: isLossOk,
-    detail: `${dailyLoss.toFixed(1)}% / limit ${settings.dailyLossLimitPct.toFixed(1)}%`,
+    detail: check4Detail,
   });
 
   // Check 5: Sector exposure within cap
@@ -662,7 +672,8 @@ export function canTrade(ctx: CanTradeContext): GateResult {
   const isDirectionAllowed = !(band.name === 'Risk-off' && ctx.direction === 'long');
   const isScoreAboveThreshold = ctx.setupScore >= band.minSetupScore;
   const isRegimeOk = isDirectionAllowed && isScoreAboveThreshold && band.sizeMultiplier > 0;
-  const sizeMultiplier = isRegimeOk ? band.sizeMultiplier : 0;
+  const cbSizeMult = cb ? cb.sizeMultiplier : 1.0;
+  const sizeMultiplier = isRegimeOk ? Number((band.sizeMultiplier * cbSizeMult).toFixed(2)) : 0;
 
   // Check 7: Minimum position size rule (from current Settings capital)
   const allocatedCapital = settings.simCapitalUsd;

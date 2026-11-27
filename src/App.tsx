@@ -33,6 +33,7 @@ import { SectorPerformanceView } from './components/SectorPerformanceView';
 import { ConfluenceMatrixView } from './components/ConfluenceMatrixView';
 import { TrendSpiderSuite } from './components/TrendSpiderSuite';
 import { TodayView } from './components/TodayView';
+import { Ml4tFactorLabView } from './components/Ml4tFactorLabView';
 
 import { PositionCalculatorModal } from './components/PositionCalculatorModal';
 import { TelegramConfigModal } from './components/TelegramConfigModal';
@@ -51,7 +52,7 @@ import { useMarketStream } from './hooks/useMarketStream';
 type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
 type ChartSubTab = 'studio' | 'sec';
 type MarketsSubTab = 'heatmap' | 'sectors';
-type QuantSubTab = 'luxalgo' | 'trendspider' | 'indicators' | 'rules';
+type QuantSubTab = 'luxalgo' | 'trendspider' | 'ml4t' | 'indicators' | 'rules';
 type OpsSubTab = 'alerts' | 'health' | 'python';
 
 interface SubTabItem<T extends string> {
@@ -204,7 +205,13 @@ export default function App() {
         break;
       case 'quant':
         setActiveTab('quant');
-        if (subTab === 'luxalgo' || subTab === 'trendspider' || subTab === 'indicators' || subTab === 'rules') {
+        if (
+          subTab === 'luxalgo' ||
+          subTab === 'trendspider' ||
+          subTab === 'ml4t' ||
+          subTab === 'indicators' ||
+          subTab === 'rules'
+        ) {
           setQuantSubTab(subTab);
         }
         break;
@@ -215,6 +222,10 @@ export default function App() {
       case 'trendspider':
         setActiveTab('quant');
         setQuantSubTab('trendspider');
+        break;
+      case 'ml4t':
+        setActiveTab('quant');
+        setQuantSubTab('ml4t');
         break;
       case 'indicators':
         setActiveTab('quant');
@@ -614,10 +625,11 @@ export default function App() {
             <WorkspaceSubNav<QuantSubTab>
               active={quantSubTab}
               onSelect={setQuantSubTab}
-              subtitle="Quantitative Indicators, Stage Analysis, PineTS Validation & Playbook"
+              subtitle="Quantitative Indicators, Stage Analysis, Factor IC Research & Playbook"
               items={[
                 { id: 'luxalgo', label: 'Orderflow & SMC Lab', icon: Sparkles },
                 { id: 'trendspider', label: 'Stage & AVWAP Lab', icon: Compass },
+                { id: 'ml4t', label: 'Factor IC & ML Lab', icon: Activity },
                 { id: 'indicators', label: 'Indicator Library', icon: Code2 },
                 { id: 'rules', label: '4-Pillars Playbook', icon: BookOpen },
               ]}
@@ -633,6 +645,12 @@ export default function App() {
                 onSelectSymbolForChart={handleSelectSymbolForChart}
                 onOpenCalculator={(s) => setCalculatorSetup(s)}
                 onNavigateToTab={(t) => navigateTo(t)}
+              />
+            )}
+            {quantSubTab === 'ml4t' && (
+              <Ml4tFactorLabView
+                scannerResults={results}
+                onSelectSymbolForChart={handleSelectSymbolForChart}
               />
             )}
             {quantSubTab === 'indicators' && (

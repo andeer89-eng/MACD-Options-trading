@@ -1,0 +1,455 @@
+//@version=6
+indicator("HA Institutional Suite v2.1 [PRO]", overlay=true, max_labels_count=100)
+
+// ════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════
+
+grpHA = "Heiken Ashi"
+showHA = input.bool(true, "Show HA Candles", group=grpHA)
+showUncert = input.bool(true, "Show Uncertain", group=grpHA)
+firstRunOnly = input.bool(true, "First Bar Only", group=grpHA)
+haOpacity = input.int(90, "Opacity %", minval=50, maxval=100, group=grpHA)
+
+grpSQ = "Signal Quality"
+atrLen = input.int(14, "ATR Length", minval=1, group=grpSQ)
+wickMult = input.float(0.08, "Wick Mult", minval=0.01, maxval=2.0, group=grpSQ)
+wickLogic = input.string("Either", "Wick Logic", options=["Both", "Either", "Dominant"], group=grpSQ)
+
+grpReg = "Regime"
+useRegime = input.bool(true, "Enable Regime", group=grpReg)
+adxLen = input.int(14, "ADX Length", group=grpReg)
+adxThresh = input.float(18.0, "ADX Threshold", group=grpReg)
+atrHiMult = input.float(1.8, "Vol Mult", group=grpReg)
+showBg = input.bool(true, "Show Background", group=grpReg)
+dmiWeight = input.string("Preferred", "DMI", options=["Required", "Preferred", "Ignore"], group=grpReg)
+
+grpVol = "Volume"
+useVol = input.bool(true, "Use Volume", group=grpVol)
+volMaLen = input.int(20, "Vol MA", group=grpVol)
+volMult = input.float(1.3, "Vol Mult", group=grpVol)
+volMomentum = input.bool(true, "Vol Rising", group=grpVol)
+
+grpMA = "MAs"
+ma1Len = input.int(6, "MA 1", group=grpMA)
+ma2Len = input.int(7, "MA 2", group=grpMA)
+ma3Len = input.int(21, "MA 3", group=grpMA)
+ma4Len = input.int(34, "MA 4", group=grpMA)
+ma4Off = input.int(3, "MA 4 Offset", group=grpMA)
+
+grpCloud = "Cloud"
+showCloud = input.bool(true, "Show Cloud", group=grpCloud)
+cloudLo = input.int(8, "Cloud Lo", group=grpCloud)
+cloudHi = input.int(20, "Cloud Hi", group=grpCloud)
+cloudMAType = input.string("SMA", "Type", options=["SMA", "EMA"], group=grpCloud)
+showMASlope = input.bool(true, "Slope Color", group=grpCloud)
+dualColorMode = input.bool(true, "Dual Color", group=grpCloud)
+
+grpRisk = "Risk"
+showLevels = input.bool(true, "Show Levels", group=grpRisk)
+stopMult = input.float(2.0, "Stop Mult", group=grpRisk)
+t1Mult = input.float(2.5, "T1 Mult", group=grpRisk)
+t2Mult = input.float(4.0, "T2 Mult", group=grpRisk)
+
+grpDash = "Dashboard"
+showDash = input.bool(true, "Show Dashboard", group=grpDash)
+dashCompact = input.bool(false, "Compact", group=grpDash)
+showPosSizing = input.bool(true, "Position Sizing", group=grpDash)
+dashPos = input.string("Top Right", "Position", options=["Top Right", "Top Left"], group=grpDash)
+
+grpDev = "Debug"
+showDebug = input.bool(false, "Debug", group=grpDev)
+
+
+// ════════════════════════════════════════════════════════════════════
+// CONTEXT
+// ════════════════════════════════════════════════════════════════════
+
+isCrypto = syminfo.type == "crypto"
+isForex = syminfo.type == "forex"
+isNewSession = ta.change(time("D")) != 0
+
+
+// ════════════════════════════════════════════════════════════════════
+// HEIKEN ASHI
+// ════════════════════════════════════════════════════════════════════
+
+haClose = (open + high + low + close) / 4
+var float haOpen = na
+haOpen := (isNewSession or na(haOpen[1])) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
+haHigh = math.max(high, math.max(haOpen, haClose))
+haLow = math.min(low, math.min(haOpen, haClose))
+upperWick = haHigh - math.max(haOpen, haClose)
+lowerWick = math.min(haOpen, haClose) - haLow
+
+
+// ════════════════════════════════════════════════════════════════════
+// REGIME
+// ════════════════════════════════════════════════════════════════════
+
+atr14 = ta.atr(atrLen)
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+isTrending = adxVal >= adxThresh
+isBullDMI = diPlus > diMinus
+isBearDMI = diMinus > diPlus
+validRegime = not useRegime or isTrending
+regimeStatus = isTrending ? "Trending" : "Ranging"
+regimeColor = isTrending ? color.lime : color.orange
+
+
+// ════════════════════════════════════════════════════════════════════
+// SIGNAL
+// ════════════════════════════════════════════════════════════════════
+
+minWick = atr14 * wickMult
+sigWick = wickLogic == "Both" ? upperWick >= minWick and lowerWick >= minWick : true
+sigWick := wickLogic == "Either" ? upperWick >= minWick or lowerWick >= minWick : sigWick
+isUncertain = upperWick > 0 and lowerWick > 0 and sigWick
+isBullHA = not isUncertain and haClose > haOpen
+isBearHA = not isUncertain and haClose <= haOpen
+
+
+// ════════════════════════════════════════════════════════════════════
+// VOLUME
+// ════════════════════════════════════════════════════════════════════
+
+volMa = ta.sma(volume, volMaLen)
+volRatio = volume / volMa
+volOK = volRatio >= volMult
+volOK := useVol ? volOK : true
+
+
+// ════════════════════════════════════════════════════════════════════
+// MAS
+// ════════════════════════════════════════════════════════════════════
+
+ma1 = ta.sma(close, ma1Len)
+ma2 = ta.sma(close, ma2Len)
+ma3 = ta.sma(close, ma3Len)
+ma4 = ta.sma(close, ma4Len)
+
+
+// ════════════════════════════════════════════════════════════════════
+// RIBBON
+// ════════════════════════════════════════════════════════════════════
+
+rMA1 = ta.sma(close, cloudLo)
+rMA2 = ta.sma(close, cloudLo + 2)
+rMA3 = ta.sma(close, cloudLo + 4)
+rMA4 = ta.sma(close, cloudLo + 6)
+rMA5 = ta.sma(close, cloudLo + 8)
+
+rBull = 0
+rTotal = 0
+if rMA1 > rMA2
+    rBull += 1
+rTotal += 1
+if rMA2 > rMA3
+    rBull += 1
+rTotal += 1
+if rMA3 > rMA4
+    rBull += 1
+rTotal += 1
+if rMA4 > rMA5
+    rBull += 1
+rTotal += 1
+
+alignPct = rTotal > 0 ? rBull / rTotal * 100 : 50
+
+
+// ════════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════════
+
+var int trendState = 0
+trendState := isUncertain ? 0 : isBullHA ? 1 : -1
+toBullish = trendState == 1 and trendState[1] != 1
+toBearish = trendState == -1 and trendState[1] != -1
+toUncertain = trendState == 0 and trendState[1] != 0
+hcBull = toBullish and validRegime and volOK
+hcBear = toBearish and validRegime and volOK
+
+
+// ════════════════════════════════════════════════════════════════════
+// RISK
+// ════════════════════════════════════════════════════════════════════
+
+var float stopLevel = na
+var float t1Level = na
+var float t2Level = na
+if hcBull
+    stopLevel := haLow - atr14 * stopMult
+    t1Level := haClose + atr14 * t1Mult
+    t2Level := haClose + atr14 * t2Mult
+if hcBear
+    stopLevel := haHigh + atr14 * stopMult
+    t1Level := haClose - atr14 * t1Mult
+    t2Level := haClose - atr14 * t2Mult
+
+
+// ════════════════════════════════════════════════════════════════════
+// CLOUD
+// ════════════════════════════════════════════════════════════════════
+
+cloudUpper = ta.sma(close, cloudLo)
+cloudLower = ta.sma(close, cloudHi)
+priceAbove = close[1] > cloudUpper
+priceInside = close[1] >= cloudLower and close[1] <= cloudUpper
+priceBelow = close[1] < cloudLower
+maBull = cloudUpper >= cloudLower
+cloudColor = priceAbove and maBull ? color.green : priceInside ? color.orange : color.red
+cloudStrength = priceAbove and maBull ? 100 : priceInside ? 50 : 0
+
+
+// ════════════════════════════════════════════════════════════════════
+// PLOTS
+// ════════════════════════════════════════════════════════════════════
+
+bgcolor(isTrending ? color.new(color.blue, 95) : color.new(color.gray, 95))
+candleColor = isUncertain ? color.purple : isBullHA ? color.green : color.red
+plotcandle(haOpen, haHigh, haLow, haClose, color=candleColor)
+plot(ma1, "MA1", color.red)
+plot(ma2, "MA2", color.green)
+plot(ma3, "MA3", color.white, linewidth=2)
+plot(ma4, "MA4", color.black, linewidth=3)
+pLo = plot(cloudLower, "CloudLo", color=cloudColor)
+pHi = plot(cloudUpper, "CloudHi", color=cloudColor)
+fill(pLo, pHi, color=color.new(cloudColor, 70))
+plot(stopLevel, "Stop", color.red, style=plot.style_linebr)
+plot(t1Level, "T1", color.lime, style=plot.style_linebr)
+plot(t2Level, "T2", color.green, style=plot.style_linebr)
+plotshape(hcBull, "Bull", text="▲", location=location.belowbar, color=color.green)
+plotshape(hcBear, "Bear", text="▼", location=location.abovebar, color=color.red)
+
+
+// ════════════════════════════════════════════════════════════════════
+// DASHBOARD COUNTERS
+// ════════════════════════════════════════════════════════════════════
+
+var int cntBull = 0
+var int cntBear = 0
+var int cntUncert = 0
+var int cntHCBull = 0
+var int cntHCBear = 0
+
+if barstate.isconfirmed
+    if toBullish
+        cntBull += 1
+    if toBearish
+        cntBear += 1
+    if toUncertain
+        cntUncert += 1
+    if hcBull
+        cntHCBull += 1
+    if hcBear
+        cntHCBear += 1
+
+
+// ════════════════════════════════════════════════════════════════════
+// DASHBOARD TABLE (BOLD DARK TEXT + HIGH CONTRAST)
+// ════════════════════════════════════════════════════════════════════
+
+if showDash and barstate.islast
+    
+    // Calculate correct row count
+    baseRows = 7
+    counterRows = dashCompact ? 0 : 6
+    assetRows = 2
+    sizingRows = showPosSizing and not dashCompact ? 3 : 0
+    totalRows = baseRows + counterRows + assetRows + sizingRows
+    
+    // Table with VERY DARK background
+    var table dash = table.new(position.top_right, 2, totalRows, 
+         bgcolor=color.new(color.black, 98),
+         border_color=color.gray,
+         border_width=2,
+         frame_color=color.teal,
+         frame_width=3)
+    
+    // BOLD DARK colors for MAX visibility
+    lblCol = color.black  // BLACK text for labels
+    valCol = color.black  // BLACK text for values
+    hdrCol = color.new(color.teal, 70)  // Dark teal header
+    cellCol = color.new(color.gray, 80)  // Dark gray cells
+    
+    row = 0
+    
+    // Row 0 - Header (WHITE text on dark teal)
+    var string tt = "HA Institutional Suite v2.1"
+    table.cell(dash, 0, row, "📊 DASHBOARD", 
+         text_color=color.white, text_size=size.normal, bgcolor=hdrCol, tooltip=tt)
+    table.cell(dash, 1, row, "v2.1", 
+         text_color=color.white, text_size=size.normal, bgcolor=hdrCol, tooltip=tt)
+    row := row + 1
+    
+    // Row 1 - Regime (BLACK text on dark gray)
+    regEmoji = isTrending ? "📈" : "🔄"
+    tt := "📈 Trending = ADX ≥ 18\n🔄 Ranging = ADX < 18"
+    table.cell(dash, 0, row, "Regime", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, regEmoji + " " + regimeStatus, 
+         text_color=color.black, text_size=size.small, bgcolor=color.new(regimeColor, 70), tooltip=tt)
+    row := row + 1
+    
+    // Row 2 - ADX (BLACK text)
+    adxPct = math.min(100, adxVal / 60 * 100)
+    adxBar = ""
+    for i = 1 to 10
+        adxBar := adxBar + (i <= adxPct / 10 ? "█" : "░")
+    adxTxt = str.tostring(adxVal, "#.#") + " " + adxBar
+    tt := "ADX: 0-18 Range, 18-25 Weak, 25-50 Strong, 50+ Very Strong"
+    table.cell(dash, 0, row, "ADX", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, adxTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // Row 3 - Ribbon (BLACK text)
+    ribBar = ""
+    for i = 1 to 10
+        ribBar := ribBar + (i <= alignPct / 10 ? "█" : "░")
+    ribTxt = str.tostring(alignPct, "#") + "% " + ribBar
+    tt := "≥65% Bullish, 35-65% Neutral, ≤35% Bearish"
+    table.cell(dash, 0, row, "Ribbon", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, ribTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // Row 4 - Volume (BLACK text)
+    volTxt = volOK ? "✓ OK" : "✗ Weak"
+    volTxt := volTxt + " (" + str.tostring(volRatio, "#.##") + "x)"
+    tt := "✓ OK = Volume ≥ 1.3x MA\n✗ Weak = Below threshold"
+    table.cell(dash, 0, row, "Volume", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, volTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // Row 5 - Cloud (BLACK text)
+    cldEmoji = priceAbove ? "🟢" : priceInside ? "🟠" : "🔴"
+    cldTxt = priceAbove ? "Above" : priceInside ? "Inside" : "Below"
+    tt := "🟢 Above = Bullish\n🟠 Inside = Neutral\n🔴 Below = Bearish"
+    table.cell(dash, 0, row, "Cloud", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, cldEmoji + " " + cldTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=color.new(cloudColor, 70), tooltip=tt)
+    row := row + 1
+    
+    // Row 6 - Strength (BLACK text)
+    strTxt = str.tostring(cloudStrength) + "%"
+    tt := "100% = Strong Bullish\n50% = Neutral\n0% = Strong Bearish"
+    table.cell(dash, 0, row, "Strength", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, strTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // Counter rows (if not compact)
+    if not dashCompact
+        // Separator
+        tt := "Session Signal Counters"
+        table.cell(dash, 0, row, "────────", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, "", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        
+        // Bulls
+        tt := "Total bullish HA transitions"
+        table.cell(dash, 0, row, "▲ Bulls", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, str.tostring(cntBull), 
+             text_color=color.black, text_size=size.normal, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        
+        // Bears
+        tt := "Total bearish HA transitions"
+        table.cell(dash, 0, row, "▼ Bears", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, str.tostring(cntBear), 
+             text_color=color.black, text_size=size.normal, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        
+        // Uncertain
+        tt := "Uncertain/Doji candles"
+        table.cell(dash, 0, row, "~ Uncert", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, str.tostring(cntUncert), 
+             text_color=color.black, text_size=size.normal, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        
+        // HC Bull
+        tt := "High-Conviction Bullish (all filters passed)"
+        table.cell(dash, 0, row, "★ HC Bull", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, str.tostring(cntHCBull), 
+             text_color=color.black, text_size=size.normal, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        
+        // HC Bear
+        tt := "High-Conviction Bearish (all filters passed)"
+        table.cell(dash, 0, row, "★ HC Bear", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, str.tostring(cntHCBear), 
+             text_color=color.black, text_size=size.normal, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+    
+    // Asset (BLACK text)
+    astEmoji = isCrypto ? "₿" : isForex ? "💱" : "📊"
+    astLbl = isCrypto ? "Crypto" : isForex ? "Forex" : "Equity"
+    tt := "₿ Crypto 24/7 | 💱 Forex 24/5 | 📊 Equity Sessions"
+    table.cell(dash, 0, row, "Asset", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, astEmoji + " " + astLbl, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // ATR (BLACK text)
+    atrTxt = str.tostring(math.round(atr14, 2))
+    tt := "ATR = Volatility measure for stops & sizing"
+    table.cell(dash, 0, row, "ATR", 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    table.cell(dash, 1, row, atrTxt, 
+         text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+    row := row + 1
+    
+    // Position Sizing (BLACK text on yellow)
+    if showPosSizing and not dashCompact
+        tt := "1% risk position sizing formula"
+        table.cell(dash, 0, row, "Sizing", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        table.cell(dash, 1, row, "", 
+             text_color=color.black, text_size=size.small, bgcolor=cellCol, tooltip=tt)
+        row := row + 1
+        base1 = "Base: (Eqty*0.01)/"
+        base2 = "(ATR*" + str.tostring(stopMult) + ")"
+        fullHint = base1 + base2
+        tt := "Size = (Equity×0.01)÷(ATR×StopMult)\nEx: $10k÷(2×2) = 25 shares"
+        table.cell(dash, 0, row, fullHint, 
+             text_color=color.black, text_size=size.small, 
+             bgcolor=color.new(color.yellow, 60), tooltip=tt)
+        table.cell(dash, 1, row, "", 
+             text_color=color.black, text_size=size.small, 
+             bgcolor=color.new(color.yellow, 60), tooltip=tt)
+
+
+// ════════════════════════════════════════════════════════════════════
+// ALERTS
+// ════════════════════════════════════════════════════════════════════
+
+alertcondition(hcBull, "Bull Signal", "Bullish")
+alertcondition(hcBear, "Bear Signal", "Bearish")
+alertcondition(priceAbove and not priceAbove[1], "Cloud Green", "Above cloud")
+alertcondition(priceInside and not priceInside[1], "Cloud Orange", "In cloud")
+alertcondition(priceBelow and not priceBelow[1], "Cloud Red", "Below cloud")
+
+
+// ════════════════════════════════════════════════════════════════════
+// DEBUG
+// ════════════════════════════════════════════════════════════════════
+
+if showDebug and barstate.islast
+    txt = "ADX: " + str.tostring(adxVal, "#.#")
+    txt := txt + " | Cloud: " + str.tostring(cloudStrength) + "%"
+    label.new(bar_index, low, txt)

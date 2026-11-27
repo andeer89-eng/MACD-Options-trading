@@ -5,7 +5,7 @@
    ===================================================================== */
 
 import { Levels, calculateLevels, DataQuality, loadSettings } from './masterPlanCore';
-import { DivergenceSetup } from './trullasStrategy';
+import { DivergenceSetup, filterActiveDivergences } from './trullasStrategy';
 import { evaluateTosScans, TosScanReport } from './tosScansEngine';
 import { SP500_UNIVERSE, getCompanyName } from '../data/sp500Universe';
 import { fetchJsonSafe } from './safeFetchJson';
@@ -91,7 +91,13 @@ class ScanService {
     const rsi = Number(raw.rsi ?? 50);
     const volume = Number(raw.volume ?? 0);
     const changePercent = Number(raw.changePercent ?? 0);
-    const setups: DivergenceSetup[] = Array.isArray(raw.setups) ? raw.setups : [];
+    const rawSetups: DivergenceSetup[] = Array.isArray(raw.setups) ? raw.setups : [];
+    const rawCandles = Array.isArray(raw.candles) ? raw.candles : undefined;
+    const setups: DivergenceSetup[] = filterActiveDivergences(
+      rawSetups,
+      rawCandles,
+      currentPrice > 0 ? { spotPrice: currentPrice } : undefined
+    );
 
     // Compute real SMAs from provided candles if available, else use explicit raw ma30/ma150
     let ma30 = typeof raw.ma30 === 'number' && raw.ma30 > 0 ? raw.ma30 : currentPrice;
@@ -109,7 +115,17 @@ class ScanService {
 
     const { stage, stageName } = this.computeStage(currentPrice, ma30, ma150);
 
-    const direction = setups.some((s) => s.type.includes('BEAR')) ? 'short' : 'long';
+    const tosScans: TosScanReport | undefined = raw.tosScans
+      ? raw.tosScans
+      : Array.isArray(raw.candles) && raw.candles.length >= 20
+      ? evaluateTosScans(symbol, raw.candles)
+      : undefined;
+
+    const direction = setups.some((s) => s.type.includes('BEAR'))
+      ? 'short'
+      : setups.length === 0 && (tosScans?.bearishCount ?? 0) > (tosScans?.bullishCount ?? 0)
+      ? 'short'
+      : 'long';
     const recentBars = Array.isArray(raw.candles) && raw.candles.length > 0
       ? raw.candles.map((c: any) => ({
           o: Number(c.open ?? c.o ?? currentPrice),
@@ -132,12 +148,6 @@ class ScanService {
       ma30,
       ma150,
     });
-
-    const tosScans: TosScanReport | undefined = raw.tosScans
-      ? raw.tosScans
-      : Array.isArray(raw.candles) && raw.candles.length >= 20
-      ? evaluateTosScans(symbol, raw.candles)
-      : undefined;
 
     return {
       symbol,

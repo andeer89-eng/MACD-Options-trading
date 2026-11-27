@@ -1,0 +1,46 @@
+You will be analyzing and enhancing a trading chart code. Your task is to add two new features: tooltip descriptions for table indicators and entry/exit points based on VWAP strategy.
+Here is the code you need to work with:
+
+Your task has two main components:
+**Component 1: Add Tooltip Descriptions for Table Indicators**
+You need to make each element in any tables or indicators visible with tooltip descriptions. When a user hovers their cursor over an indicator element, it should display:
+- A short, clear description of what the indicator does
+- Reliable information that helps with decision making
+- The tooltip should be concise but informative enough to guide trading decisions
+**Component 2: Add VWAP Entry/Exit Points on Chart**
+You need to analyze the code and implement a new feature that displays Entry and Exit points for trades according to VWAP (Volume Weighted Average Price) strategy. Specifically:
+- Identify where VWAP is calculated or can be calculated in the code
+- Add visual markers on the chart for Entry points (typically when price crosses above VWAP or meets bullish conditions)
+- Add visual markers on the chart for Exit points (typically when price crosses below VWAP or meets bearish conditions)
+- Use clear, distinguishable visual indicators (such as arrows, labels, or shapes) for entry vs exit points
+- Ensure the entry/exit logic follows standard VWAP trading strategy principles
+Before providing your solution, use a scratchpad to think through your approach:
+<scratchpad>
+In your scratchpad, you should:
+1. Identify what type of code this is (Pine Script, Python, JavaScript, etc.)
+2. Locate existing table/indicator elements that need tooltips
+3. Identify if VWAP is already present in the code or needs to be added
+4. Plan the VWAP entry/exit logic (what conditions trigger entry vs exit)
+5. Determine the best way to implement tooltips in this coding language
+6. Determine the best way to plot entry/exit markers in this coding language
+</scratchpad>
+After your analysis, provide your response in the following format:
+<analysis>
+Explain what you found in the code, including:
+- The programming language/platform being used
+- Existing indicators and table elements identified
+- Whether VWAP exists or needs to be added
+- Your planned approach for both features
+</analysis>
+<modified_code>
+Provide the complete modified code with both features implemented
+</modified_code>
+<explanation>
+Explain the changes you made:
+- How you implemented the tooltip functionality and where
+- What tooltip descriptions you added for each indicator
+- How you implemented the VWAP entry/exit logic
+- What visual markers you used and what they represent
+- Any additional improvements or considerations
+</explanation>
+If the code provided is incomplete, not related to trading/charting, or missing critical information needed to complete the task, explain what is missing and what you would need to complete the implementation.

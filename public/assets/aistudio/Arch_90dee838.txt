@@ -1,0 +1,61 @@
+// © Startup Suite — Arch
+//@version=6
+indicator("Startup Arch", "Arch", overlay=false, format=format.price, precision=4)
+
+// Spec: Green = bullish, Purple = bearish. Linear regression of detrended close.
+// Above zero & extended = "late phase". Below zero & extended = "early phase".
+// Start from high timeframes (e.g. Weekly).
+
+color C_GREEN  = #00E676
+color C_PURPLE = #9C27B0
+color C_GREY   = #424242
+color C_DARK   = #0D0D1A
+color C_WHITE  = #FFFFFF
+
+int    archLen     = input.int(20, "Arch Length", minval=2, group="Arch")
+int    extendedLen = input.int(100, "Extended Z-Score Lookback", minval=10, group="Arch", tooltip="Used to flag early/late phase via Z-score.")
+float  extThresh   = input.float(2.0, "Extended Threshold (σ)", minval=0.5, step=0.1, group="Arch")
+string htfMode     = input.string("Chart", "Source Timeframe", options=["Chart","Daily","Weekly","Custom"], group="Arch")
+string htfCustom   = input.timeframe("W", "Custom Timeframe", group="Arch")
+bool   i_showHist  = input.bool(true, "Show Histogram", group="Display")
+
+string tf = switch htfMode
+    "Chart"  => timeframe.period
+    "Daily"  => "D"
+    "Weekly" => "W"
+    => htfCustom
+
+f_arch() =>
+    ta.linreg(close - ta.sma(close, archLen), archLen, 0)
+
+float arch = request.security(syminfo.tickerid, tf, f_arch(), lookahead=barmerge.lookahead_off)
+
+// Extended-state detection via Z-score
+float archMean = ta.sma(arch, extendedLen)
+float archSd   = ta.stdev(arch, extendedLen)
+float archZ    = archSd != 0 ? (arch - archMean) / archSd : 0
+bool  earlyBull = arch < 0 and archZ < -extThresh
+bool  latedBear = arch > 0 and archZ > extThresh
+
+bool bull = arch > 0
+bool bear = arch < 0
+color archCol = bull ? C_GREEN : C_PURPLE
+
+plot(i_showHist ? arch : na, "Arch", color=archCol, style=plot.style_columns)
+plot(not i_showHist ? arch : na, "Arch Line", color=archCol, linewidth=2)
+hline(0, "Zero", color=C_GREY)
+
+// Phase markers
+plotshape(earlyBull and not earlyBull[1], "Early Phase",  shape.triangleup,   location.bottom, color.new(C_GREEN, 0),  size=size.small, text="EARLY",  textcolor=C_WHITE)
+plotshape(latedBear and not latedBear[1], "Late Phase",   shape.triangledown, location.top,    color.new(C_PURPLE, 0), size=size.small, text="LATE",   textcolor=C_WHITE)
+
+// Confirmation crosses (zero-line)
+bool crossUp = ta.crossover(arch, 0)
+bool crossDn = ta.crossunder(arch, 0)
+plotshape(crossUp, "Bull Cross", shape.circle, location.absolute, C_GREEN,  size=size.tiny)
+plotshape(crossDn, "Bear Cross", shape.circle, location.absolute, C_PURPLE, size=size.tiny)
+
+alertcondition(crossUp,   "Arch Bull Cross", "Arch crossed above zero")
+alertcondition(crossDn,   "Arch Bear Cross", "Arch crossed below zero")
+alertcondition(earlyBull and not earlyBull[1], "Arch Early Phase", "Arch deeply negative — early phase")
+alertcondition(latedBear and not latedBear[1], "Arch Late Phase",  "Arch deeply positive — late phase")

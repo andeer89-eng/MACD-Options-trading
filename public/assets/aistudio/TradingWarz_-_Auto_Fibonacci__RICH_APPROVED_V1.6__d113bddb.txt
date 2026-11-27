@@ -1,0 +1,466 @@
+//@version=6
+indicator("TradingWarz - Auto Fibonacci (RICH APPROVED V1.6)",
+     overlay          = true,
+     max_lines_count  = 500,
+     max_boxes_count  = 500,
+     max_labels_count = 50)
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+// --- Timeframe / Mode ---
+gTF = "Timeframe Settings"
+modeInput = input.string("Current Day", "Range Mode",
+     options = ["Current Day", "Previous Day", "Current Week", "Previous Week", "Current Month", "Previous Month"],
+     group   = gTF,
+     tooltip = "'Current' updates live as the range expands; 'Previous' locks to the last completed period.")
+
+// --- Retracement Levels ---
+gLev = "Retracement Visibility"
+showHigh    = input.bool(true,  "Period High",          group = gLev)
+showLow     = input.bool(true,  "Period Low",           group = gLev)
+show50      = input.bool(true,  "Show 50% Retracement", group = gLev)
+show618Bull = input.bool(true,  "Show 61.8% Bull",      group = gLev)
+show786Bull = input.bool(true,  "Show 78.6% Bull",      group = gLev)
+show886Bull = input.bool(false, "Show 88.6% Bull",      group = gLev)
+show618Bear = input.bool(true,  "Show 61.8% Bear",      group = gLev)
+show786Bear = input.bool(true,  "Show 78.6% Bear",      group = gLev)
+show886Bear = input.bool(false, "Show 88.6% Bear",      group = gLev)
+
+// --- Extension Levels ---
+gExt = "Extension Levels"
+show1272Up = input.bool(false, "Show 127.2% Up Ext",   group = gExt)
+show1618Up = input.bool(false, "Show 161.8% Up Ext",   group = gExt)
+show2000Up = input.bool(false, "Show 200% Up Ext",     group = gExt)
+show1272Dn = input.bool(false, "Show 127.2% Down Ext", group = gExt)
+show1618Dn = input.bool(false, "Show 161.8% Down Ext", group = gExt)
+show2000Dn = input.bool(false, "Show 200% Down Ext",   group = gExt)
+
+// --- Golden Zones ---
+gGZ = "Golden Zone Highlights"
+showBullGZ  = input.bool(true,  "Bull Golden Zone (61.8%–78.6%)",            group = gGZ)
+bullGZColor = input.color(color.new(#ff5252, 75), "Bull Zone Color",         group = gGZ)
+showBearGZ  = input.bool(true,  "Bear Golden Zone (61.8%–78.6%)",            group = gGZ)
+bearGZColor = input.color(color.new(#26a69a, 75), "Bear Zone Color",         group = gGZ)
+showEqZone  = input.bool(true,  "Equilibrium Zone (78.6% Bear ↔ 61.8% Bull)", group = gGZ)
+eqZoneColor = input.color(color.new(#26a69a, 92), "Equilibrium Zone Color",  group = gGZ)
+
+// --- Style ---
+gStyle = "Style Settings"
+showLabels = input.bool(true, "Show Labels?",          group = gStyle)
+showPrice  = input.bool(true, "Show Price in Labels?", group = gStyle)
+labelSize  = input.string(size.large, "Label font size",
+     options = [size.tiny, size.small, size.normal, size.large, size.huge], group = gStyle)
+labelColor = input.color(color.white, "Label font color", group = gStyle)
+labelPos   = input.int(10, "Label Position", minval = 0, group = gStyle)
+lineWidth  = input.int(1, "Line Width", minval = 1, maxval = 5, group = gStyle)
+
+gColors    = "Level Colors"
+colorHL    = input.color(color.white, "High/Low",          group = gColors)
+color50    = input.color(#ffeb3b,     "50% Retrace",       group = gColors)
+colorBull  = input.color(#089981,     "Bull Retracements", group = gColors)
+colorBear  = input.color(#5b9cf6,     "Bear Retracements", group = gColors)
+colorExt   = input.color(#9c27b0,     "Extensions",        group = gColors)
+
+// --- Morning Leg Filter ---
+gMorning = "Morning Leg Filter"
+useMorningFilter = input.bool(true, "Wait for First Push", group = gMorning,
+     tooltip = "Suppresses alerts during the early bars of the period before a directional leg has formed.")
+morningBars      = input.int(6, "Min Bars Since Period Open", minval = 0, maxval = 100, group = gMorning,
+     tooltip = "On 5m, 6 bars = 30 min. On 2m, 6 bars = 12 min. Set to 0 to disable.")
+
+// --- Reclaim Signal ---
+gReclaim = "Reclaim Signal"
+reclaimType = input.string("Deep (786→618)", "Reclaim Trigger",
+     options = ["Deep (786→618)", "Shallow (618→50)", "Either"],
+     group = gReclaim,
+     tooltip = "Deep: price dipped to 78.6% then closed back above 61.8%. Shallow: dipped to 61.8% then closed back above 50%. 'Either' fires both.")
+showReclaimMarkers = input.bool(true, "Plot Reclaim Markers on Chart", group = gReclaim)
+
+// --- Volume Z-Score Filter ---
+gZ = "Volume Z-Score Filter"
+useVolFilter = input.bool(true,  "Gate Alerts by Volume Z-Score", group = gZ,
+     tooltip = "Only fire reclaim alerts when volume is statistically elevated. Cuts false positives in chop.")
+zLength      = input.int(50,    "Z-Score Lookback Bars",          minval = 10, group = gZ)
+zThreshold   = input.float(1.5, "Z-Score Threshold",              minval = 0.0, step = 0.1, group = gZ)
+showVolBg    = input.bool(false, "Highlight Confirmed Bars (background)", group = gZ)
+
+// --- Alerts ---
+gAlerts       = "Alerts"
+enableAlerts  = input.bool(false, "Enable Alerts",                          group = gAlerts)
+alertExtBreak = input.bool(false, "Also alert on 127.2% Extension breaks",  group = gAlerts)
+
+// ============================================================
+// CORE LOGIC
+// ============================================================
+
+// Timeframe and period label assignment
+var string tfReset = "D"
+var string periodLabel = "Today"
+
+switch modeInput
+    "Current Day"    => 
+        tfReset := "D"
+        periodLabel := "Today"
+    "Previous Day"   => 
+        tfReset := "D"
+        periodLabel := "Prev Day"
+    "Current Week"   => 
+        tfReset := "W"
+        periodLabel := "This Week"
+    "Previous Week"  => 
+        tfReset := "W"
+        periodLabel := "Prev Week"
+    "Current Month"  => 
+        tfReset := "M"
+        periodLabel := "This Month"
+    "Previous Month" => 
+        tfReset := "M"
+        periodLabel := "Prev Month"
+    => 
+        tfReset := "D"
+        periodLabel := "Today"
+
+bool usePrevious = modeInput == "Previous Day" or modeInput == "Previous Week" or modeInput == "Previous Month"
+
+// Period accumulator
+var float curHigh        = na
+var float curLow         = na
+var float prevHigh       = na
+var float prevLow        = na
+var int   periodOpenBar  = na
+
+bool isNewPeriod = ta.change(time(tfReset)) != 0
+
+if isNewPeriod
+    prevHigh       := curHigh
+    prevLow        := curLow
+    curHigh        := high
+    curLow         := low
+    periodOpenBar  := bar_index
+else if na(curHigh)
+    curHigh        := high
+    curLow         := low
+    periodOpenBar  := bar_index
+else
+    curHigh := math.max(high, curHigh)
+    curLow  := math.min(low,  curLow)
+
+float rangeHigh  = usePrevious ? prevHigh : curHigh
+float rangeLow   = usePrevious ? prevLow  : curLow
+float rng        = rangeHigh - rangeLow
+bool  validRange = not na(rangeHigh) and not na(rangeLow)
+
+// Fibonacci constants for maintainability
+float _FIB_50   = 0.500
+float _FIB_618  = 0.618
+float _FIB_786  = 0.786
+float _FIB_886  = 0.886
+float _FIB_1272 = 0.272
+float _FIB_1618 = 0.618
+float _FIB_2000 = 1.000
+
+// Retracements
+float level50      = rangeLow  + _FIB_50   * rng
+float level618Bull = rangeHigh - _FIB_618  * rng
+float level786Bull = rangeHigh - _FIB_786  * rng
+float level886Bull = rangeHigh - _FIB_886  * rng
+float level618Bear = rangeLow  + _FIB_618  * rng
+float level786Bear = rangeLow  + _FIB_786  * rng
+float level886Bear = rangeLow  + _FIB_886  * rng
+
+// Extensions
+float level1272Up = rangeHigh + _FIB_1272 * rng
+float level1618Up = rangeHigh + _FIB_1618 * rng
+float level2000Up = rangeHigh + _FIB_2000 * rng
+float level1272Dn = rangeLow  - _FIB_1272 * rng
+float level1618Dn = rangeLow  - _FIB_1618 * rng
+float level2000Dn = rangeLow  - _FIB_2000 * rng
+
+// Volume Z-Score
+float volMean      = ta.sma(volume, zLength)
+float volStdev     = ta.stdev(volume, zLength)
+float volZScore    = volStdev > 0 ? (volume - volMean) / volStdev : 0.0
+bool  volConfirmed = not useVolFilter or volZScore >= zThreshold
+
+// Morning leg filter
+int  barsIntoPeriod = na(periodOpenBar) ? 0 : bar_index - periodOpenBar
+bool morningOK      = not useMorningFilter or barsIntoPeriod >= morningBars
+
+// ============================================================
+// STAIRCASE DRAWING - Types & Functions
+// ============================================================
+
+type LineSeg
+    line  active    = na
+    float activeVal = na
+    array<line> hist = na
+
+type ZoneSeg
+    box   active    = na
+    float activeTop = na
+    float activeBot = na
+    array<box> hist = na
+
+// Helper: Clear line history efficiently
+f_clearHistory(array<line> histArr) =>
+    if not na(histArr) and array.size(histArr) > 0
+        for i = 0 to array.size(histArr) - 1
+            line.delete(array.get(histArr, i))
+        array.clear(histArr)
+
+// Helper: Clear box history efficiently
+f_clearHistoryBoxes(array<box> histArr) =>
+    if not na(histArr) and array.size(histArr) > 0
+        for i = 0 to array.size(histArr) - 1
+            box.delete(array.get(histArr, i))
+        array.clear(histArr)
+
+// Update line segments - procedural function with explicit typed return for v6
+f_updateLine(LineSeg s, bool show, float val, color col, int width, bool reset) =>
+    if na(s.hist)
+        s.hist := array.new<line>()
+    
+    if reset
+        line.delete(s.active)
+        s.active := na
+        s.activeVal := na
+        f_clearHistory(s.hist)
+    
+    if not show or na(val)
+        line.delete(s.active)
+        s.active := na
+        s.activeVal := na
+        f_clearHistory(s.hist)
+    else
+        if na(s.active)
+            s.active    := line.new(time, val, time, val, xloc = xloc.bar_time, color = col, width = width)
+            s.activeVal := val
+        else if val != s.activeVal
+            line.set_xy2(s.active, time, s.activeVal)
+            array.push(s.hist, s.active)
+            s.active    := line.new(time, val, time, val, xloc = xloc.bar_time, color = col, width = width)
+            s.activeVal := val
+        else
+            line.set_xy2(s.active, time, val)
+    float(na) // Explicit return type to satisfy v6 compiler
+
+// Update zone boxes - procedural function with explicit typed return for v6
+f_updateZone(ZoneSeg z, bool show, float top, float bot, color bg, bool reset) =>
+    if na(z.hist)
+        z.hist := array.new<box>()
+    
+    if reset
+        box.delete(z.active)
+        z.active := na
+        z.activeTop := na
+        z.activeBot := na
+        f_clearHistoryBoxes(z.hist)
+    
+    if not show or na(top) or na(bot)
+        box.delete(z.active)
+        z.active := na
+        z.activeTop := na
+        z.activeBot := na
+        f_clearHistoryBoxes(z.hist)
+    else
+        float tHi = math.max(top, bot)
+        float tLo = math.min(top, bot)
+        if na(z.active)
+            z.active    := box.new(time, tHi, time, tLo, xloc = xloc.bar_time, bgcolor = bg, border_color = na)
+            z.activeTop := top
+            z.activeBot := bot
+        else if top != z.activeTop or bot != z.activeBot
+            box.set_right(z.active, time)
+            array.push(z.hist, z.active)
+            z.active    := box.new(time, tHi, time, tLo, xloc = xloc.bar_time, bgcolor = bg, border_color = na)
+            z.activeTop := top
+            z.activeBot := bot
+        else
+            box.set_right(z.active, time)
+    float(na) // Explicit return type to satisfy v6 compiler
+
+// Per-level state instances
+var lsHigh    = LineSeg.new()
+var lsLow     = LineSeg.new()
+var ls50      = LineSeg.new()
+var ls618Bull = LineSeg.new()
+var ls786Bull = LineSeg.new()
+var ls886Bull = LineSeg.new()
+var ls618Bear = LineSeg.new()
+var ls786Bear = LineSeg.new()
+var ls886Bear = LineSeg.new()
+var ls1272Up  = LineSeg.new()
+var ls1618Up  = LineSeg.new()
+var ls2000Up  = LineSeg.new()
+var ls1272Dn  = LineSeg.new()
+var ls1618Dn  = LineSeg.new()
+var ls2000Dn  = LineSeg.new()
+
+var zsBull = ZoneSeg.new()
+var zsBear = ZoneSeg.new()
+var zsEq   = ZoneSeg.new()
+
+// Drive all line and zone updates
+bool reset = isNewPeriod
+
+f_updateLine(lsHigh,    showHigh    and validRange, rangeHigh,    colorHL,   lineWidth + 1, reset)
+f_updateLine(ls886Bear, show886Bear and validRange, level886Bear, colorBear, lineWidth,     reset)
+f_updateLine(ls786Bear, show786Bear and validRange, level786Bear, colorBear, lineWidth,     reset)
+f_updateLine(ls618Bear, show618Bear and validRange, level618Bear, colorBear, lineWidth,     reset)
+f_updateLine(ls50,      show50      and validRange, level50,      color50,   lineWidth,     reset)
+f_updateLine(ls618Bull, show618Bull and validRange, level618Bull, colorBull, lineWidth,     reset)
+f_updateLine(ls786Bull, show786Bull and validRange, level786Bull, colorBull, lineWidth,     reset)
+f_updateLine(ls886Bull, show886Bull and validRange, level886Bull, colorBull, lineWidth,     reset)
+f_updateLine(lsLow,     showLow     and validRange, rangeLow,     colorHL,   lineWidth + 1, reset)
+f_updateLine(ls1272Up,  show1272Up  and validRange, level1272Up,  colorExt,  lineWidth,     reset)
+f_updateLine(ls1618Up,  show1618Up  and validRange, level1618Up,  colorExt,  lineWidth,     reset)
+f_updateLine(ls2000Up,  show2000Up  and validRange, level2000Up,  colorExt,  lineWidth,     reset)
+f_updateLine(ls1272Dn,  show1272Dn  and validRange, level1272Dn,  colorExt,  lineWidth,     reset)
+f_updateLine(ls1618Dn,  show1618Dn  and validRange, level1618Dn,  colorExt,  lineWidth,     reset)
+f_updateLine(ls2000Dn,  show2000Dn  and validRange, level2000Dn,  colorExt,  lineWidth,     reset)
+
+f_updateZone(zsBear, showBearGZ and validRange, level786Bear, level618Bear, bearGZColor, reset)
+f_updateZone(zsBull, showBullGZ and validRange, level618Bull, level786Bull, bullGZColor, reset)
+f_updateZone(zsEq,   showEqZone and validRange, level786Bear, level618Bull, eqZoneColor, reset)
+
+// Volume confirmation background highlight
+bgcolor(showVolBg and volConfirmed ? color.new(color.yellow, 92) : na, title = "Vol Z Confirmed")
+
+// ============================================================
+// LABELS
+// ============================================================
+
+levelShows  = array.from(
+     show2000Up, show1618Up, show1272Up,
+     showHigh, show886Bear, show786Bear, show618Bear, show50, show618Bull, show786Bull, show886Bull, showLow,
+     show1272Dn, show1618Dn, show2000Dn)
+
+levelValues = array.from(
+     level2000Up, level1618Up, level1272Up,
+     rangeHigh, level886Bear, level786Bear, level618Bear, level50, level618Bull, level786Bull, level886Bull, rangeLow,
+     level1272Dn, level1618Dn, level2000Dn)
+
+levelNames  = array.from(
+     "200% Ext Up", "161.8% Ext Up", "127.2% Ext Up",
+     periodLabel + " High", "88.6% Bear", "78.6% Bear", "61.8% Bear", "50% Retrace",
+     "61.8% Bull", "78.6% Bull", "88.6% Bull", periodLabel + " Low - TradingWarz",
+     "127.2% Ext Dn", "161.8% Ext Dn", "200% Ext Dn")
+
+levelCols   = array.from(
+     colorExt, colorExt, colorExt,
+     labelColor, colorBear, colorBear, colorBear, color50,
+     colorBull, colorBull, colorBull, labelColor,
+     colorExt, colorExt, colorExt)
+
+var array<label> labels = array.new<label>(15, na)
+
+f_lblText(string name, float val) =>
+    showPrice ? name + " - " + str.tostring(val, format.mintick) : name
+
+if showLabels and barstate.islast and validRange
+    for i = 0 to 14
+        label.delete(array.get(labels, i))
+        if array.get(levelShows, i)
+            float v = array.get(levelValues, i)
+            if not na(v)
+                int lblBar = math.min(bar_index + labelPos, bar_index + 500)
+                lbl = label.new(lblBar, v,
+                     f_lblText(array.get(levelNames, i), v),
+                     color     = color.new(color.white, 100),
+                     textcolor = array.get(levelCols, i),
+                     style     = label.style_label_left,
+                     size      = labelSize)
+                array.set(labels, i, lbl)
+            else
+                array.set(labels, i, na)
+        else
+            array.set(labels, i, na)
+
+// ============================================================
+// RECLAIM SIGNALS
+// ============================================================
+// State machine:
+// BULL: ARM at 78.6% → FIRE when crossing above 61.8% → DISARM
+// BEAR: ARM at 78.6% → FIRE when crossing below 61.8% → DISARM
+// Shallow variant uses 61.8%→50% levels
+
+bool useDeep    = reclaimType == "Deep (786→618)" or reclaimType == "Either"
+bool useShallow = reclaimType == "Shallow (618→50)" or reclaimType == "Either"
+
+var bool bullArmedDeep    = false
+var bool bullArmedShallow = false
+var bool bearArmedDeep    = false
+var bool bearArmedShallow = false
+
+if isNewPeriod
+    bullArmedDeep    := false
+    bullArmedShallow := false
+    bearArmedDeep    := false
+    bearArmedShallow := false
+
+if validRange
+    if close <= level786Bull
+        bullArmedDeep    := true
+    if close <= level618Bull
+        bullArmedShallow := true
+    if close >= level786Bear
+        bearArmedDeep    := true
+    if close >= level618Bear
+        bearArmedShallow := true
+
+// Crossover detection
+bool xUpBull618 = ta.crossover (close, level618Bull)
+bool xUpBull50  = ta.crossover (close, level50)
+bool xDnBear618 = ta.crossunder(close, level618Bear)
+bool xDnBear50  = ta.crossunder(close, level50)
+bool xUpExtUp   = ta.crossover (close, level1272Up)
+bool xDnExtDn   = ta.crossunder(close, level1272Dn)
+
+// Reclaim signal conditions
+bool bullReclaimDeep    = bullArmedDeep    and xUpBull618 and validRange
+bool bullReclaimShallow = bullArmedShallow and xUpBull50  and validRange
+bool bearReclaimDeep    = bearArmedDeep    and xDnBear618 and validRange
+bool bearReclaimShallow = bearArmedShallow and xDnBear50  and validRange
+
+// Disarm after firing to prevent duplicate signals (fixed "then" syntax)
+if bullReclaimDeep
+    bullArmedDeep := false
+if bullReclaimShallow
+    bullArmedShallow := false
+if bearReclaimDeep
+    bearArmedDeep := false
+if bearReclaimShallow
+    bearArmedShallow := false
+
+bool bullSignal = (useDeep and bullReclaimDeep) or (useShallow and bullReclaimShallow)
+bool bearSignal = (useDeep and bearReclaimDeep) or (useShallow and bearReclaimShallow)
+
+// Plot visual markers
+plotshape(showReclaimMarkers and bullSignal and morningOK and volConfirmed,
+     title = "Bull Reclaim", style = shape.triangleup, location = location.belowbar,
+     color = color.new(colorBull, 0), size = size.small)
+plotshape(showReclaimMarkers and bearSignal and morningOK and volConfirmed,
+     title = "Bear Reclaim", style = shape.triangledown, location = location.abovebar,
+     color = color.new(colorBear, 0), size = size.small)
+
+// ============================================================
+// ALERTS
+// ============================================================
+
+f_zTag() => " | VolZ=" + str.tostring(volZScore, "#.##")
+
+if enableAlerts and validRange and morningOK and volConfirmed
+    if useDeep and bullReclaimDeep
+        alert("BULL Deep Reclaim (786→618) @ " + str.tostring(close, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)
+    if useShallow and bullReclaimShallow
+        alert("BULL Shallow Reclaim (618→50) @ " + str.tostring(close, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)
+    if useDeep and bearReclaimDeep
+        alert("BEAR Deep Reclaim (786→618) @ " + str.tostring(close, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)
+    if useShallow and bearReclaimShallow
+        alert("BEAR Shallow Reclaim (618→50) @ " + str.tostring(close, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)
+    if alertExtBreak and xUpExtUp
+        alert("Broke 127.2% Up Ext @ " + str.tostring(level1272Up, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)
+    if alertExtBreak and xDnExtDn
+        alert("Broke 127.2% Down Ext @ " + str.tostring(level1272Dn, format.mintick) + f_zTag(), alert.freq_once_per_bar_close)

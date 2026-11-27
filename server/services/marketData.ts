@@ -25,6 +25,7 @@ import {
 } from '../../src/utils/dataFetcher.ts';
 import { HeatmapItem } from '../../src/utils/heatmapEngine.ts';
 import { UniverseStageItem } from '../../src/utils/trendSpiderUniverse.ts';
+import { fetchPublicBreadthSnapshot } from '../../src/utils/publicBreadthFeed.ts';
 
 export const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -836,13 +837,15 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
       const macroSymbols = ['^VIX', '^VIX3M', '^VVIX', 'TLT', 'HYG', 'IEF', 'RSP'];
 
       const allSymbols = [...benchmarkSymbols, ...macroSymbols, ...sectorEtfs];
-      const [results, spyWeeklyCandles, qqqWeeklyCandles, fgtSeries, cnnSeries] = await Promise.all([
-        Promise.all(allSymbols.map((sym) => fetchYahooData(sym, '1d', '1y', 20))),
-        fetchYahooData('SPY', '1wk', '2y', 10),
-        fetchYahooData('QQQ', '1wk', '2y', 10),
-        fetchFearGreedTrackerProvider(),
-        fetchCnnFearGreedFeed(),
-      ]);
+      const [results, spyWeeklyCandles, qqqWeeklyCandles, fgtSeries, cnnSeries, publicBreadth] =
+        await Promise.all([
+          Promise.all(allSymbols.map((sym) => fetchYahooData(sym, '1d', '1y', 20))),
+          fetchYahooData('SPY', '1wk', '2y', 10),
+          fetchYahooData('QQQ', '1wk', '2y', 10),
+          fetchFearGreedTrackerProvider(),
+          fetchCnnFearGreedFeed(),
+          fetchPublicBreadthSnapshot(forceRefresh),
+        ]);
 
       const bySym = new Map<string, Candle[]>();
       allSymbols.forEach((sym, idx) => {
@@ -885,6 +888,7 @@ export function createMarketDataService(options: MarketDataServiceOptions = {}) 
         spyWeeklyCandles,
         qqqWeeklyCandles,
         externalFearGreed,
+        publicBreadth,
       });
 
       cachedMarketHealth = { timestamp: now, data: report };

@@ -29,7 +29,11 @@ export type TosScanId =
   | 'MACD_ZERO_CROSS'
   | 'VZO_SIGNAL'
   | 'FVG_RETEST'
-  | 'ROC_EXTREME';
+  | 'ROC_EXTREME'
+  | 'VCP_BREAKOUT'
+  | 'STOCKBEE_BURST'
+  | 'EXHAUSTION_HAMMER'
+  | 'PARABOLIC_SHORT';
 
 export type TosScanCategory = 'SQUEEZE' | 'MOMENTUM' | 'REVERSAL' | 'VOLUME' | 'STRUCTURE';
 export type TosDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
@@ -202,6 +206,46 @@ export const TOS_SCAN_DEFINITIONS: TosScanDefinition[] = [
     ruleSummary:
       '14-bar Rate of Change normalized across its 60-bar range hitting upper/lower extreme zone (≤15% or ≥85%) and hooking back with RSI turn.',
     minBars: 40,
+  },
+  {
+    id: 'VCP_BREAKOUT',
+    name: 'Minervini VCP Tight Coil & Breakout',
+    shortLabel: 'VCP Breakout',
+    category: 'STRUCTURE',
+    tosSourceSlug: '/skills/vcp-screener',
+    ruleSummary:
+      'Stage 2 uptrend (>55 EMA) with ≥2 progressive volatility contractions narrowing <8.5% near 40-bar pivot highs and ≤8.5% risk-to-pivot stop.',
+    minBars: 60,
+  },
+  {
+    id: 'STOCKBEE_BURST',
+    name: 'Stockbee 4%+ Momentum Burst',
+    shortLabel: 'Stockbee Burst',
+    category: 'MOMENTUM',
+    tosSourceSlug: '/skills/stockbee-momentum-burst',
+    ruleSummary:
+      'Decisive ≥3.8% (or ≥2.0×ATR) expansion thrust with ≥1.25× average range, ≥1.2× volume surge vs prior day & 20D avg, and strong directional close location.',
+    minBars: 25,
+  },
+  {
+    id: 'EXHAUSTION_HAMMER',
+    name: 'Exhaustion Capitulation Hammer',
+    shortLabel: 'Exh. Hammer',
+    category: 'REVERSAL',
+    tosSourceSlug: '/skills/stockbee-exhaustion-hammer',
+    ruleSummary:
+      'Multi-day pullback followed by lower-wick capitulation sweep (lower wick ≥1.8× body & ≥50% of range), closing in top 35% of bar on ≥1.1× avg volume.',
+    minBars: 20,
+  },
+  {
+    id: 'PARABOLIC_SHORT',
+    name: 'Parabolic Climax Exhaustion Short',
+    shortLabel: 'Parabolic Short',
+    category: 'REVERSAL',
+    tosSourceSlug: '/skills/parabolic-short-planner',
+    ruleSummary:
+      '5-factor short exhaustion: +20% above 50-SMA, ≥10% 5D parabolic surge, ≥1.6× climax volume, and upper-wick stall / red reversal close in liquid stocks.',
+    minBars: 55,
   },
 ];
 
@@ -964,6 +1008,246 @@ export function evaluateTosScans(symbol: string, rawCandles: Candle[]): TosScanR
           metrics: { roc14, rangePercentile: Number(pctRank.toFixed(1)) },
         });
       }
+    }
+  }
+
+  // 12. MINERVINI VCP (VOLATILITY CONTRACTION PATTERN)
+  if (n >= 60 && last.close > ema55[lastIdx] && ema21[lastIdx] >= ema55[lastIdx] * 0.992) {
+    const segRangeDepth = (start: number, end: number) => {
+      let hi = -Infinity;
+      let lo = Infinity;
+      let volSum = 0;
+      let cnt = 0;
+      for (let k = start; k <= end; k++) {
+        if (candles[k].high > hi) hi = candles[k].high;
+        if (candles[k].low < lo) lo = candles[k].low;
+        volSum += volumes[k];
+        cnt++;
+      }
+      const depthPct = hi > 0 ? ((hi - lo) / hi) * 100 : 99;
+      return { hi, lo, depthPct, avgVol: cnt > 0 ? volSum / cnt : 0 };
+    };
+
+    const w1 = segRangeDepth(lastIdx - 39, lastIdx - 22);
+    const w2 = segRangeDepth(lastIdx - 21, lastIdx - 9);
+    const w3 = segRangeDepth(lastIdx - 8, lastIdx - 1);
+    const baseHigh40 = Math.max(w1.hi, w2.hi, w3.hi);
+    const baseLow40 = Math.min(w1.lo, w2.lo, w3.lo);
+    const nearPivot = baseHigh40 > 0 && last.close >= baseHigh40 * 0.945;
+    const riskToTightLowPct = last.close > 0 ? ((last.close - w3.lo * 0.995) / last.close) * 100 : 99;
+    const contracting =
+      w1.depthPct >= 4.0 &&
+      w2.depthPct < w1.depthPct * 0.92 &&
+      w3.depthPct <= 8.5 &&
+      w3.depthPct <= w2.depthPct * 0.98;
+    const breakoutThrust = last.close > w3.hi && volRatio20 >= 1.2;
+    const dryUpCoil = w1.avgVol > 0 && w3.avgVol <= w1.avgVol * 0.95;
+
+    if (
+      contracting &&
+      nearPivot &&
+      riskToTightLowPct > 0 &&
+      riskToTightLowPct <= 8.5 &&
+      (breakoutThrust || dryUpCoil) &&
+      last.close >= baseLow40 * 1.05
+    ) {
+      const strength = clamp(
+        Math.round(
+          74 +
+            (breakoutThrust ? 12 : 4) +
+            (w3.depthPct <= 4.5 ? 7 : 3) +
+            (emaStack === 'BULLISH' ? 5 : 0)
+        ),
+        70,
+        98
+      );
+      signals.push({
+        id: 'VCP_BREAKOUT',
+        name: breakoutThrust ? 'Minervini VCP Pivot Breakout' : 'Minervini VCP Tight Coil',
+        shortLabel: breakoutThrust ? 'VCP Breakout' : `VCP Coil (${w3.depthPct.toFixed(1)}%)`,
+        category: 'STRUCTURE',
+        direction: 'BULLISH',
+        strength,
+        headline: breakoutThrust
+          ? `Stage 2 VCP breakout above $${w3.hi.toFixed(2)} pivot (${w1.depthPct.toFixed(1)}% -> ${w2.depthPct.toFixed(1)}% -> ${w3.depthPct.toFixed(1)}%)`
+          : `Tight VCP coil near $${baseHigh40.toFixed(2)} pivot (${w1.depthPct.toFixed(1)}% -> ${w2.depthPct.toFixed(1)}% -> ${w3.depthPct.toFixed(1)}%, stop risk ${riskToTightLowPct.toFixed(1)}%)`,
+        metricsSummary: `Waves: ${w1.depthPct.toFixed(1)}%→${w2.depthPct.toFixed(1)}%→${w3.depthPct.toFixed(1)}% · Risk: ${riskToTightLowPct.toFixed(1)}%`,
+        barsAgo: 0,
+        metrics: {
+          wave1Pct: Number(w1.depthPct.toFixed(2)),
+          wave2Pct: Number(w2.depthPct.toFixed(2)),
+          wave3Pct: Number(w3.depthPct.toFixed(2)),
+          riskPct: Number(riskToTightLowPct.toFixed(2)),
+          breakoutThrust,
+        },
+      });
+    }
+  }
+
+  // 13. STOCKBEE 4%+ MOMENTUM BURST
+  if (n >= 25 && last.close >= 5) {
+    let avgRange20 = 0;
+    for (let k = lastIdx - 19; k <= lastIdx; k++) {
+      avgRange20 += candles[k].high - candles[k].low;
+    }
+    avgRange20 /= 20;
+
+    for (let offset = 0; offset <= 1; offset++) {
+      const idx = lastIdx - offset;
+      const bar = candles[idx];
+      const prev = candles[idx - 1];
+      if (!prev || prev.close <= 0 || avgRange20 <= 0) continue;
+
+      const retPct = ((bar.close - prev.close) / prev.close) * 100;
+      const barRange = bar.high - bar.low;
+      const clv = barRange > 0 ? ((bar.close - bar.low) - (bar.high - bar.close)) / barRange : 0;
+      const barVolAvg20 = smaAt(volumes, idx, 20) ?? volumes[idx];
+      const barVolRatio = barVolAvg20 > 0 ? volumes[idx] / barVolAvg20 : 1;
+      const volOverPrev = volumes[idx] > volumes[idx - 1] * 1.15;
+
+      const bullMove =
+        retPct >= 3.8 || (curAtr > 0 && bar.close - prev.close >= curAtr * 2.0 && retPct >= 2.5);
+      const bearMove =
+        retPct <= -3.8 || (curAtr > 0 && prev.close - bar.close >= curAtr * 2.0 && retPct <= -2.5);
+
+      if (bullMove && barRange >= avgRange20 * 1.25 && volOverPrev && barVolRatio >= 1.2 && clv >= 0.35) {
+        const strength = clamp(
+          Math.round(70 + Math.min(retPct, 10) * 1.6 + Math.min(barVolRatio - 1, 2) * 6 - offset * 5),
+          68,
+          96
+        );
+        signals.push({
+          id: 'STOCKBEE_BURST',
+          name: 'Stockbee 4%+ Bull Momentum Burst',
+          shortLabel: `Burst +${retPct.toFixed(1)}%`,
+          category: 'MOMENTUM',
+          direction: 'BULLISH',
+          strength,
+          headline: `Momentum burst +${retPct.toFixed(1)}% (${(barRange / avgRange20).toFixed(1)}× range) on ${barVolRatio.toFixed(1)}× avg vol`,
+          metricsSummary: `1D: +${retPct.toFixed(1)}% · Vol: ${barVolRatio.toFixed(1)}× · CLV: ${clv.toFixed(2)}`,
+          barsAgo: offset,
+          metrics: { retPct: Number(retPct.toFixed(2)), barVolRatio: Number(barVolRatio.toFixed(2)), clv: Number(clv.toFixed(2)) },
+        });
+        break;
+      }
+
+      if (bearMove && barRange >= avgRange20 * 1.25 && volOverPrev && barVolRatio >= 1.2 && clv <= -0.35) {
+        const strength = clamp(
+          Math.round(70 + Math.min(Math.abs(retPct), 10) * 1.6 + Math.min(barVolRatio - 1, 2) * 6 - offset * 5),
+          68,
+          96
+        );
+        signals.push({
+          id: 'STOCKBEE_BURST',
+          name: 'Stockbee 4%+ Bear Breakdown Burst',
+          shortLabel: `Burst ${retPct.toFixed(1)}%`,
+          category: 'MOMENTUM',
+          direction: 'BEARISH',
+          strength,
+          headline: `Breakdown burst ${retPct.toFixed(1)}% (${(barRange / avgRange20).toFixed(1)}× range) on ${barVolRatio.toFixed(1)}× avg vol`,
+          metricsSummary: `1D: ${retPct.toFixed(1)}% · Vol: ${barVolRatio.toFixed(1)}× · CLV: ${clv.toFixed(2)}`,
+          barsAgo: offset,
+          metrics: { retPct: Number(retPct.toFixed(2)), barVolRatio: Number(barVolRatio.toFixed(2)), clv: Number(clv.toFixed(2)) },
+        });
+        break;
+      }
+    }
+  }
+
+  // 14. STOCKBEE EXHAUSTION HAMMER
+  if (n >= 20) {
+    const prev10High = Math.max(...candles.slice(lastIdx - 10, lastIdx).map((c) => c.high));
+    const prev10Low = Math.min(...candles.slice(lastIdx - 10, lastIdx).map((c) => c.low));
+    const priorDropPct = prev10High > 0 ? ((prev10High - last.low) / prev10High) * 100 : 0;
+    const barRange = last.high - last.low;
+    const body = Math.abs(last.close - last.open);
+    const lowerWick = Math.min(last.open, last.close) - last.low;
+    const closeInTopThird = barRange > 0 ? (last.close - last.low) / barRange >= 0.65 : false;
+    const longLowerWick =
+      barRange > 0 && lowerWick >= Math.max(body * 1.8, barRange * 0.5) && last.low <= prev10Low * 1.005;
+
+    if (priorDropPct >= 4.0 && longLowerWick && closeInTopThird && volRatio20 >= 1.1) {
+      const strength = clamp(
+        Math.round(70 + Math.min(priorDropPct, 15) * 0.8 + Math.min(volRatio20 - 1, 2) * 7),
+        68,
+        94
+      );
+      signals.push({
+        id: 'EXHAUSTION_HAMMER',
+        name: 'Exhaustion Capitulation Hammer',
+        shortLabel: 'Exh. Hammer',
+        category: 'REVERSAL',
+        direction: 'BULLISH',
+        strength,
+        headline: `Capitulation hammer after -${priorDropPct.toFixed(1)}% swing drop; lower wick ${(lowerWick / barRange * 100).toFixed(0)}% absorbed on ${volRatio20.toFixed(1)}× vol`,
+        metricsSummary: `Drop: -${priorDropPct.toFixed(1)}% · Lower Wick: ${((lowerWick / barRange) * 100).toFixed(0)}% · Vol: ${volRatio20.toFixed(1)}×`,
+        barsAgo: 0,
+        metrics: {
+          priorDropPct: Number(priorDropPct.toFixed(2)),
+          lowerWickPct: Number(((lowerWick / barRange) * 100).toFixed(1)),
+          volRatio20,
+        },
+      });
+    }
+  }
+
+  // 15. PARABOLIC SHORT EXHAUSTION (5-factor short-side institutional fade scorer)
+  if (n >= 55 && sma50 !== null && pctFromSma50 !== null && last.close >= 10) {
+    const avgVol20Val = smaAt(volumes, lastIdx, 20) ?? 0;
+    const avgDollarVol20 = avgVol20Val * last.close;
+    const ret5dPct =
+      candles[lastIdx - 5].close > 0
+        ? ((last.close - candles[lastIdx - 5].close) / candles[lastIdx - 5].close) * 100
+        : 0;
+    const ret10dPct =
+      candles[lastIdx - 10].close > 0
+        ? ((last.close - candles[lastIdx - 10].close) / candles[lastIdx - 10].close) * 100
+        : 0;
+    const pctFromEma21 = ema21[lastIdx] > 0 ? ((last.close - ema21[lastIdx]) / ema21[lastIdx]) * 100 : 0;
+
+    const barRange = last.high - last.low;
+    const upperWickPct =
+      barRange > 0 ? ((last.high - Math.max(last.open, last.close)) / barRange) * 100 : 0;
+    const closeOffHighPct = barRange > 0 ? ((last.high - last.close) / barRange) * 100 : 0;
+
+    const fExtension = pctFromSma50 >= 20;
+    const fParabolicAccel = ret5dPct >= 10 || ret10dPct >= 18;
+    const fVolClimax = volRatio20 >= 1.6 || relVolStDev >= 1.7;
+    const fExhaustionBar =
+      last.close < last.open || upperWickPct >= 35 || (curAtr > 0 && barRange >= curAtr * 1.5 && closeOffHighPct >= 45);
+    const fLiquid = avgDollarVol20 >= 5_000_000;
+
+    const factorScore =
+      (fExtension ? 1 : 0) +
+      (fParabolicAccel ? 1 : 0) +
+      (fVolClimax ? 1 : 0) +
+      (fExhaustionBar ? 1 : 0) +
+      (pctFromEma21 >= 10 ? 1 : 0);
+
+    if (fExtension && fParabolicAccel && fLiquid && (fVolClimax || fExhaustionBar) && factorScore >= 4) {
+      const strength = clamp(
+        Math.round(68 + Math.min(pctFromSma50 - 15, 25) * 0.65 + (fVolClimax ? 6 : 0) + (fExhaustionBar ? 6 : 0)),
+        70,
+        96
+      );
+      signals.push({
+        id: 'PARABOLIC_SHORT',
+        name: 'Parabolic Exhaustion Short',
+        shortLabel: `Parabolic +${pctFromSma50.toFixed(0)}%`,
+        category: 'REVERSAL',
+        direction: 'BEARISH',
+        strength,
+        headline: `+${pctFromSma50.toFixed(1)}% above 50-SMA (+${ret5dPct.toFixed(1)}% 5D surge) showing ${fExhaustionBar ? 'upper-wick/red stall' : 'volume climax'} (${volRatio20.toFixed(1)}× avg vol)`,
+        metricsSummary: `vs50MA: +${pctFromSma50.toFixed(1)}% · 5D: +${ret5dPct.toFixed(1)}% · Vol: ${volRatio20.toFixed(1)}×`,
+        barsAgo: 0,
+        metrics: {
+          pctFromSma50,
+          ret5dPct: Number(ret5dPct.toFixed(2)),
+          pctFromEma21: Number(pctFromEma21.toFixed(2)),
+          volRatio20,
+          factorScore,
+        },
+      });
     }
   }
 

@@ -1,0 +1,759 @@
+//@version=6
+indicator("Weinstein Stage Analysis [Institutional v3.3]",
+          shorttitle       = "WSA-INST3",
+          overlay          = true,
+          max_bars_back    = 1000,
+          max_labels_count = 500,
+          max_lines_count  = 500)
+
+// ════════════════════════════════════════════════════════════════════════
+// §1  INPUTS
+// ════════════════════════════════════════════════════════════════════════
+
+var string G1 = "① Moving Average"
+var string G2 = "② Volume"
+var string G3 = "③ Risk Management"
+var string G4 = "④ Relative Strength"
+var string G5 = "⑤ Colors"
+var string G6 = "⑥ Display"
+var string G7 = "⑦ Position Sizing"
+var string G8 = "⑧ Friction Costs"
+var string G9 = "⑨ Adaptive Logic"
+var string G10 = "⑩ Integration"
+var string G11 = "⑪ Deployment"
+
+maLen       = input.int(30, "MA Length (weeks)", minval=1, maxval=200, group=G1)
+maType      = input.string("SMA", "MA Type", options=["SMA","EMA","WMA","VWMA","HMA"], group=G1)
+bufPct      = input.float(5.0, "Base Range Buffer %", minval=0.5, maxval=25.0, step=0.5, group=G1)
+slopeLen    = input.int(3, "Slope Lookback (wks)", minval=1, maxval=10, group=G1)
+slopeMin    = input.float(0.05, "Min Slope Threshold %", minval=0.0, maxval=2.0, step=0.01, group=G1)
+confirmBars = input.int(2, "Stage Confirm Bars", minval=1, maxval=4, group=G1)
+
+useVol      = input.bool(true, "Volume Confirmation", group=G2)
+rvolLen     = input.int(20, "RVOL Baseline (wks)", minval=5, maxval=52, group=G2)
+rvolMin     = input.float(1.0, "Min RVOL (1pt)", minval=0.1, maxval=5.0, step=0.1, group=G2)
+
+showStop    = input.bool(true, "Show S2 Stop Level", group=G3)
+atrLen      = input.int(14, "ATR Period (wks)", minval=3, maxval=52, group=G3)
+atrMult     = input.float(1.5, "ATR Multiplier", minval=0.25, maxval=5.0, step=0.25, group=G3)
+
+useRS       = input.bool(true, "Relative Strength", group=G4)
+benchSym    = input.symbol("SPY", "Benchmark Symbol", group=G4)
+rsLen       = input.int(52, "RS Long Lookback (wks)", minval=13, maxval=260, group=G4)
+
+c1          = input.color(color.new(#90EE90, 0), "Stage 1  — Basing", group=G5)
+c1b         = input.color(color.new(#00FF88, 0), "Stage 1B — Pre-Breakout", group=G5)
+c2          = input.color(color.new(#00AA00, 0), "Stage 2  — Advancing", group=G5)
+c2p         = input.color(color.new(#338833, 0), "Stage 2p — Pullback", group=G5)
+c2e         = input.color(color.new(#FFDD00, 0), "Early S2 — Buffer Zone", group=G5)
+c3          = input.color(color.new(#FF8C00, 0), "Stage 3  — Distribution", group=G5)
+c4          = input.color(color.new(#DD0000, 0), "Stage 4  — Declining", group=G5)
+
+showBg      = input.bool(false, "Background Shading", group=G6)
+showLbl     = input.bool(true, "Transition Labels", group=G6)
+showTbl     = input.bool(true, "Info Table", group=G6)
+tblPos      = input.string(position.top_right, "Table Position", options=[position.top_right, position.top_left, position.bottom_right, position.bottom_left], group=G6)
+maCol       = input.color(color.white, "MA Line Color", group=G6)
+maWid       = input.int(2, "MA Line Width", minval=1, maxval=4, group=G6)
+
+riskPerTrade    = input.float(1.0, "Risk % Per Trade", minval=0.1, maxval=5.0, step=0.1, group=G7)
+accountSize     = input.float(100000, "Account Size ($)", minval=1000, step=1000, group=G7)
+volatilityAdj   = input.bool(true, "Volatility-Adjusted Sizing", group=G7)
+maxCorrelation  = input.float(0.7, "Max Correlation to Portfolio", minval=0, maxval=1, step=0.1, group=G7)
+portfolioExposure = input.float(20.0, "Max Portfolio Exposure %", minval=1, maxval=100, group=G7)
+
+spreadBps     = input.float(5.0, "Assumed Spread (bps)", minval=0, maxval=100, step=1, group=G8)
+commissionBps = input.float(2.0, "Commission (bps)", minval=0, maxval=50, step=1, group=G8)
+slippageBps   = input.float(3.0, "Slippage (bps)", minval=0, maxval=50, step=1, group=G8)
+modelFriction = input.bool(true, "Model Friction in Signals", group=G8)
+
+useAdaptive   = input.bool(true, "Enable Adaptive Parameters", group=G9)
+volLookback   = input.int(52, "Volatility Regime Lookback (wks)", minval=20, maxval=260, group=G9)
+adaptiveSensitivity = input.float(0.5, "Adaptive Sensitivity", minval=0.1, maxval=1.0, step=0.1, group=G9)
+
+useMTF        = input.bool(false, "Enable Multi-Timeframe Filter", group=G10)
+confirmTF     = input.string("D", "Confirmation Timeframe", options=["D","W","M"], group=G10)
+jsonAlerts    = input.bool(true, "JSON Alert Payloads", group=G10)
+exportSignals = input.bool(true, "Export Signal Timestamps", group=G10)
+
+deployEnv     = input.string("backtest", "Deployment Environment", options=["backtest","paper","live"], group=G11)
+auditTag      = input.string("", "Audit Tag", group=G11)
+safetyMode    = input.bool(true, "Enable Safety Mode (Live)", group=G11)
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §2  HELPER FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════
+
+f_safeDiv(n, d, fallback) => d != 0 and not na(d) and not na(n) ? n / d : fallback
+
+f_safeLogRet(price, prevPrice) =>
+    prevPrice > 0 and price > 0 and not na(price) and not na(prevPrice) ? math.log(price / prevPrice) : na
+
+f_ma(src, len, t) =>
+    switch t
+        "EMA"  => ta.ema(src, len)
+        "WMA"  => ta.wma(src, len)
+        "VWMA" => ta.vwma(src, len)
+        "HMA"  => ta.hma(src, math.max(len, 2))
+        =>        ta.sma(src, len)
+
+f_wMA_roc(malen, matype, slen) =>
+    ma   = f_ma(close, malen, matype)
+    prev = ma[slen]
+    roc  = not na(prev) and prev > 0.0 ? (ma - prev) / prev * 100.0 : 0.0
+    [ma, roc]
+
+f_wRVOL(len) =>
+    avg = ta.sma(volume, len)
+    avg > 0.0 ? volume / avg : na
+
+f_swingLow(len) => ta.lowest(low, len)
+
+f_compression(len) =>
+    hi  = ta.highest(high, len)
+    lo  = ta.lowest(low, len)
+    rng = hi - lo
+    avg = ta.sma(rng, len)
+    avg > 0 ? rng / avg : na
+
+f_wATRContext(atrlen, plen) =>
+    r   = ta.atr(atrlen) / close
+    p25 = ta.percentile_linear_interpolation(r, plen, 25)
+    [r, p25]
+
+f_wOrderFlow(bodyLen) =>
+    barRng   = math.max(high - low, syminfo.mintick)
+    bv       = volume * (close - low)  / barRng
+    sv       = volume * (high - close) / barRng
+    body     = math.abs(close - open)
+    bodyAvg  = ta.sma(body, bodyLen)
+    volAvg   = ta.sma(volume, bodyLen)
+    absorb   = volume > volAvg * 1.8 and body < bodyAvg * 0.5
+    hAccum   = bv > sv and close <= close[1] and volume > volAvg
+    hDistrib = sv > bv and close >= close[1] and volume > volAvg
+    [bv, sv, absorb, hAccum, hDistrib]
+
+f_volRegime(atrRatio, lookback) =>
+    p25 = ta.percentile_linear_interpolation(atrRatio, lookback, 25)
+    p75 = ta.percentile_linear_interpolation(atrRatio, lookback, 75)
+    atrRatio < p25 ? "LOW" : atrRatio > p75 ? "HIGH" : "MED"
+
+f_frictionPenalty(rocPct, totalFrictionBps) =>
+    frictionDecimal = totalFrictionBps / 10000.0
+    minEdgeRequired = frictionDecimal * 3.0
+    math.abs(rocPct) / 100.0 >= minEdgeRequired ? 0 : -1
+
+buildJsonAlert(signalType, ticker, stageVal, convictionVal, stopLevel, audit) =>
+    json = '{"signal":"' + signalType + '",'
+    json := json + '"ticker":"' + ticker + '",'
+    json := json + '"stage":' + str.tostring(stageVal) + ','
+    json := json + '"conviction":' + str.tostring(convictionVal) + ','
+    json := json + '"stopLevel":' + str.tostring(stopLevel) + ','
+    json := json + '"timestamp":' + str.tostring(timenow) + ','
+    json := json + '"audit":"' + audit + '",'
+    json := json + '"env":"' + deployEnv + '",'
+    json := json + '"version":"3.3.0-inst"}'
+    json
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §3  WEEKLY DATA REQUESTS
+// ════════════════════════════════════════════════════════════════════════
+
+G = barmerge.gaps_off
+L = barmerge.lookahead_off
+
+wOpen      = request.security(syminfo.tickerid, "W", open,              gaps=G, lookahead=L)
+wClose     = request.security(syminfo.tickerid, "W", close,             gaps=G, lookahead=L)
+wHigh      = request.security(syminfo.tickerid, "W", high,              gaps=G, lookahead=L)
+wLow       = request.security(syminfo.tickerid, "W", low,               gaps=G, lookahead=L)
+wBarIdx    = request.security(syminfo.tickerid, "W", bar_index,         gaps=G, lookahead=L)
+wATR       = request.security(syminfo.tickerid, "W", ta.atr(atrLen),    gaps=G, lookahead=L)
+wSwingLow  = request.security(syminfo.tickerid, "W", f_swingLow(5),     gaps=G, lookahead=L)
+wCompRatio = request.security(syminfo.tickerid, "W", f_compression(10), gaps=G, lookahead=L)
+
+[wMA, wRoc] = request.security(syminfo.tickerid, "W", f_wMA_roc(maLen, maType, slopeLen), gaps=G, lookahead=L)
+wRVOL       = request.security(syminfo.tickerid, "W", f_wRVOL(rvolLen),  gaps=G, lookahead=L)
+
+wBenchRaw   = useRS ? request.security(benchSym, "W", close, gaps=G, lookahead=L) : na
+wBench      = useRS and not na(wBenchRaw) and wBenchRaw > 0 ? wBenchRaw : na
+wBenchValid = useRS and not na(wBench) and not na(wBench[13]) and wBench[13] > 0
+
+[wAtrRatio, wAtrRatioP25] = request.security(syminfo.tickerid, "W", f_wATRContext(atrLen, 20), gaps=G, lookahead=L)
+
+[wBuyVol, wSellVol, wAbsorption, wHiddenAccum, wHiddenDistrib] = request.security(syminfo.tickerid, "W", f_wOrderFlow(20), gaps=G, lookahead=L)
+
+wBench40Raw = useRS ? request.security(benchSym, "W", ta.sma(close, 40), gaps=G, lookahead=L) : na
+wBench40    = useRS and not na(wBench40Raw) and wBench40Raw > 0 ? wBench40Raw : na
+wBench40p4  = useRS ? request.security(benchSym, "W", ta.sma(close, 40)[4], gaps=G, lookahead=L) : na
+
+tfClose = useMTF ? request.security(syminfo.tickerid, confirmTF, close, gaps=G, lookahead=L) : na
+tfMARaw = useMTF ? request.security(syminfo.tickerid, confirmTF, f_ma(close, maLen, maType), gaps=G, lookahead=L) : na
+tfMA    = useMTF and not na(tfMARaw) and tfMARaw > 0 ? tfMARaw : na
+mtfConfirm = useMTF ? (not na(tfClose) and not na(tfMA) and tfClose > tfMA) : true
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §4  DERIVED VALUES
+// ════════════════════════════════════════════════════════════════════════
+
+wValid   = not na(wMA) and wMA > 0.0
+wRising  = wRoc > slopeMin
+wFalling = wRoc < -slopeMin
+wFlat    = not wRising and not wFalling
+wBodLo   = math.min(wOpen, wClose)
+wBodHi   = math.max(wOpen, wClose)
+
+volRegimeStr = useAdaptive ? f_volRegime(wAtrRatio, volLookback) : "MED"
+adaptiveFactor = useAdaptive ? (volRegimeStr == "HIGH" ? 1.0 + adaptiveSensitivity * 0.5 : volRegimeStr == "LOW" ? 1.0 - adaptiveSensitivity * 0.3 : 1.0) : 1.0
+adaptiveBufPct = bufPct * adaptiveFactor
+wBuf     = wValid ? wMA * (adaptiveBufPct / 100.0) : 0.0
+
+isNewWk  = ta.change(wBarIdx) != 0
+nearMA   = wValid ? math.abs(wClose - wMA) <= wBuf : false
+
+rvol     = not na(wRVOL) ? wRVOL : 1.0
+volScore = not useVol ? 1 : rvol >= rvolMin * 1.5 ? 2 : rvol >= rvolMin ? 1 : 0
+volOK    = volScore > 0
+volDryUp = rvol < 0.8
+
+wOFRatio = not na(wBuyVol) and not na(wSellVol) and wSellVol > 0 ? f_safeDiv(wBuyVol, wSellVol, 1.0) : 1.0
+
+rsShortOK = useRS and wBenchValid and not na(wClose) and not na(wClose[13]) and wClose[13] > 0
+rsLongOK  = useRS and wBenchValid and not na(wClose) and not na(wClose[rsLen]) and wClose[rsLen] > 0
+rsShort   = rsShortOK ? f_safeLogRet(wClose, wClose[13]) - f_safeLogRet(wBench, wBench[13]) : na
+rsLong    = rsLongOK  ? f_safeLogRet(wClose, wClose[rsLen]) - f_safeLogRet(wBench, wBench[rsLen]) : na
+rsVal     = not na(rsShort) and not na(rsLong) ? rsShort * 0.6 + rsLong * 0.4 : not na(rsLong) ? rsLong : rsShort
+rsUp      = not na(rsVal) and rsVal > 0.0
+
+rsSma4    = ta.sma(rsVal, 4)
+rsSma12   = ta.sma(rsVal, 12)
+rsTrend   = not na(rsSma4) and not na(rsSma12) and rsSma4 > rsSma12
+rsSma4Roc = ta.roc(rsSma4, 4)
+rsAccel   = not na(rsSma4) and not na(rsSma4[4]) and rsSma4Roc > 0
+
+marketBull = useRS and not na(wBench40) and not na(wBench40p4) and wBench40 > wBench40p4
+wCompAvg = ta.sma(wCompRatio, 20)
+
+wHighest5 = ta.highest(wHigh, 5)
+wLowest5  = ta.lowest(wLow,  5)
+wHH = not na(wHigh) and not na(wHighest5[1]) and wHigh > wHighest5[1]
+wHL = not na(wLow)  and not na(wLowest5[1])  and wLow  > wLowest5[1]
+isStructureUp = wHH and wHL
+
+totalFrictionBps = spreadBps + commissionBps + slippageBps
+frictionPenalty = modelFriction ? f_frictionPenalty(wRoc, totalFrictionBps) : 0
+
+safetyMultiplier = (deployEnv == "live" and safetyMode) ? 1.5 : 1.0
+adaptiveConfirmRaw = useAdaptive ? (confirmBars * (volRegimeStr == "HIGH" ? 1.3 : volRegimeStr == "LOW" ? 0.8 : 1.0) * safetyMultiplier) : confirmBars
+adaptiveConfirm = math.max(1, math.min(5, math.round(adaptiveConfirmRaw)))
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §5  STAGE DETERMINATION
+// ════════════════════════════════════════════════════════════════════════
+
+isS2raw = wValid and wBodLo > wMA + wBuf and wRising and isStructureUp
+isS4raw = wValid and wBodHi < wMA - wBuf and wFalling
+
+var int  s2streak = 0
+var int  s4streak = 0
+var bool skInit   = false
+
+if not skInit and wValid
+    s2streak := isS2raw ? 1 : 0
+    s4streak := isS4raw ? 1 : 0
+    skInit   := true
+else if isNewWk
+    s2streak := isS2raw ? s2streak + 1 : 0
+    s4streak := isS4raw ? s4streak + 1 : 0
+
+isS2conf = isS2raw and s2streak >= adaptiveConfirm and mtfConfirm
+isS4conf = isS4raw and s4streak >= adaptiveConfirm and mtfConfirm
+
+weakMomentum = wRoc < slopeMin * 0.5
+
+var int trend = 0
+int stage     = 0
+
+if wValid
+    if isS2conf
+        trend := 1
+        stage := 2
+    else if isS4conf
+        trend := -1
+        stage := 4
+    else if trend == 1 and (wFlat or nearMA) and weakMomentum
+        stage := 3
+    else if trend == -1 and (wFlat or nearMA)
+        stage := 1
+    else if trend == 1
+        stage := 2
+    else if trend == -1
+        stage := 1
+
+s2Pullback = stage == 2 and not isS2conf
+s3Quality = stage == 3 and (wFlat or nearMA) and weakMomentum
+s1B = stage == 1 and not na(wClose) and not na(wMA) and wClose > wMA + wBuf * 0.5 and wRising
+
+rangeExpanding = not na(wCompRatio) and not na(wCompAvg) and wCompRatio > wCompAvg
+earlyS2 = wValid and stage != 2 and wClose > wMA and wRising and wRoc > slopeMin * 1.5 and wClose > wMA + wBuf * 0.25 and wBodLo <= wMA + wBuf and rangeExpanding
+
+failedS2early = stage == 2 and not na(wClose) and not na(wMA) and wClose < wMA and wRoc < slopeMin
+failedS2 = stage == 3 and not na(wClose) and not na(wMA) and wClose < wMA and trend == 1
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §6  DURATION + COMPRESSION + COIL
+// ════════════════════════════════════════════════════════════════════════
+
+var int  dur     = 0
+var int  durPrev = 0
+var bool durInit = false
+
+if stage != 0
+    if not durInit
+        dur     := 1
+        durPrev := stage
+        durInit := true
+    else if isNewWk
+        if stage == durPrev
+            dur += 1
+        else
+            dur     := 1
+            durPrev := stage
+
+s2Late  = stage == 2 and not s2Pullback and dur > 40 and not wRising
+s2Decay = stage == 2 and not s2Pullback and dur > 30 ? math.min(1.0, float(dur - 30) / 20.0) : 0.0
+s2Alpha = int(math.round(s2Decay * 35.0))
+
+volContract = (stage == 1 or stage == 3) and not na(wAtrRatio) and not na(wAtrRatioP25) and wAtrRatio < wAtrRatioP25
+tightRange  = stage == 1 and not na(wCompRatio) and not na(wCompAvg) and wCompRatio < wCompAvg * 0.8
+coiledBase = stage == 1 and volContract and tightRange and volDryUp
+
+int bqVol   = volScore >= 1 ? 1 : 0
+int bqRange = tightRange    ? 1 : 0
+int bqSlope = wRising       ? 1 : 0
+int breakoutQuality = bqVol + bqRange + bqSlope
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §7  TRANSITION SIGNALS
+// ════════════════════════════════════════════════════════════════════════
+
+var int  pStage         = 0
+var bool p1B            = false
+var bool pEarlyS2       = false
+var bool pFailedS2      = false
+var bool pFailedS2early = false
+
+stgCh         = stage != 0 and stage != pStage and pStage != 0
+s1Emg         = stgCh and stage == 1
+s2Emg         = stgCh and stage == 2
+s3Emg         = stgCh and stage == 3
+s4Emg         = stgCh and stage == 4
+s1bEmg        = s1B and not p1B
+earlyS2Emg    = earlyS2 and not pEarlyS2
+failedS2Emg   = failedS2 and not pFailedS2
+failedS2eEmg  = failedS2early and not pFailedS2early
+
+s1Act  = stage == 1
+s2Act  = stage == 2
+s3Act  = stage == 3
+s4Act  = stage == 4
+
+pStage         := stage
+p1B            := s1B
+pEarlyS2       := earlyS2
+pFailedS2      := failedS2
+pFailedS2early := failedS2early
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §8  CONVICTION SCORE
+// ════════════════════════════════════════════════════════════════════════
+
+volBreakout = isS2raw and rvol >= rvolMin
+
+int convBase  = (stage == 2 or stage == 4) ? (useRS and not marketBull and stage == 2 ? 0 : 1) : 0
+int convVol   = convBase > 0 and volBreakout ? volScore : 0
+int convSlope = convBase > 0 ? (math.abs(wRoc) > slopeMin * 3 ? 2 : math.abs(wRoc) > slopeMin * 1.5 ? 1 : 0) : 0
+int convRS    = convBase > 0 and useRS and (stage == 2 ? rsUp : not rsUp) ? 1 : 0
+int convRST   = convBase > 0 and useRS and rsTrend and rsAccel and stage == 2 ? 1 : 0
+int convOF    = convBase > 0 and stage == 2 and not na(wOFRatio) and wOFRatio > 1.2 ? 1 : 0
+
+int convFriction = modelFriction ? frictionPenalty : 0
+correlationPenalty = maxCorrelation < 0.5 ? 0 : -int(math.round((maxCorrelation - 0.5) * 2.0))
+
+int convRaw   = convBase + convVol + convSlope + convRS + convRST + convOF + convFriction + correlationPenalty
+int conv      = math.max(0, math.min(5, convRaw))
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §9  POSITION SIZING MODULE
+// ════════════════════════════════════════════════════════════════════════
+
+atrPct = wValid and wATR > 0 ? f_safeDiv(wATR, wClose, 0.02) * 100 : 2.0
+
+riskAmount = accountSize * riskPerTrade / 100.0
+stopDistance = showStop and stage == 2 and not s2Pullback and not na(wATR) ? wATR * atrMult : wClose * 0.02
+basePositionSize = stopDistance > 0 ? f_safeDiv(riskAmount, stopDistance, 0) : 0
+
+volatilityFactor = volatilityAdj ? f_safeDiv(2.0, atrPct / 2.0, 1.0) : 1.0
+volAdjustedSize = basePositionSize * volatilityFactor
+
+corrFactor = maxCorrelation < 0.5 ? 1.0 : 1.0 - (maxCorrelation - 0.5) * 2.0
+corrAdjustedSize = volAdjustedSize * corrFactor
+
+exposureCap = accountSize * portfolioExposure / 100 / wClose
+finalPositionSize = math.min(corrAdjustedSize, exposureCap)
+
+positionSize = deployEnv == "live" and safetyMode ? finalPositionSize * 0.75 : finalPositionSize
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §10  STATISTICAL VALIDATION FRAMEWORK
+// ════════════════════════════════════════════════════════════════════════
+
+var int totalSignals = 0
+var int winSignals = 0
+var float cumulativeHypotheticalPnL = 0.0
+var float peakEquity = 0.0
+var float maxDrawdown = 0.0
+var float currentEquity = 0.0
+
+if isNewWk and wValid
+    if s2Emg and not s2Pullback and conv >= 3
+        totalSignals += 1
+    if stage == 2 and not s2Pullback
+        currentEquity := (wClose - wMA) / wMA * 100
+        peakEquity := math.max(peakEquity, currentEquity)
+        drawdown = peakEquity - currentEquity
+        maxDrawdown := math.max(maxDrawdown, drawdown)
+        cumulativeHypotheticalPnL := currentEquity
+
+winRate = totalSignals > 0 ? winSignals / totalSignals * 100 : na
+sharpeProxy = not na(cumulativeHypotheticalPnL) and maxDrawdown > 0 ? cumulativeHypotheticalPnL / maxDrawdown : na
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §11  VISUALS
+// ════════════════════════════════════════════════════════════════════════
+
+c2current = color.new(c2, s2Alpha)
+
+candCol = stage == 1 ? (s1B ? c1b : c1) : stage == 2 ? (failedS2early ? color.new(c4, 25) : s2Pullback ? color.new(c2p, 20) : s2Late ? color.new(c2, 50) : not volOK ? color.new(c2, math.max(s2Alpha, 45)) : c2current) : stage == 3 ? (failedS2 ? color.new(c4, 30) : c3) : stage == 4 ? (not volOK ? color.new(c4, 45) : c4) : earlyS2 ? c2e : na
+
+barcolor(candCol, title="Stage Candle Color")
+bgcolor(showBg and not na(candCol) ? color.new(candCol, 88) : na, title="Stage Background")
+
+plot(wMA, "Weekly MA", color=maCol, linewidth=maWid)
+
+stopBase = not na(wSwingLow) ? wSwingLow : wMA
+stopOK   = showStop and stage == 2 and not s2Pullback and not na(wATR) and not na(stopBase)
+stopLvl  = stopOK ? stopBase - wATR * atrMult : na
+plot(stopLvl, "S2 Stop", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
+
+var int lblN = 0
+maxLabels = deployEnv == "live" ? 24 : 480
+
+if showLbl and barstate.isconfirmed and lblN < maxLabels
+    if s2Emg and not s2Pullback
+        label.new(bar_index, high, "S2", color=c2, textcolor=color.white, style=label.style_label_down, size=size.small)
+        lblN += 1
+    if s1bEmg
+        label.new(bar_index, low, "1B", color=c1b, textcolor=color.black, style=label.style_label_up, size=size.small)
+        lblN += 1
+    if earlyS2Emg
+        label.new(bar_index, low, "~S2", color=c2e, textcolor=color.black, style=label.style_label_up, size=size.tiny)
+        lblN += 1
+    if s3Emg
+        label.new(bar_index, high, "S3", color=c3, textcolor=color.white, style=label.style_label_down, size=size.small)
+        lblN += 1
+    if s4Emg
+        label.new(bar_index, high, "S4", color=c4, textcolor=color.white, style=label.style_label_down, size=size.small)
+        lblN += 1
+    if s1Emg
+        label.new(bar_index, low, "S1", color=c1, textcolor=color.black, style=label.style_label_up, size=size.small)
+        lblN += 1
+    if s2Late and not s2Late[1]
+        label.new(bar_index, high, "LATE", color=color.orange, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        lblN += 1
+    if failedS2eEmg
+        label.new(bar_index, high, "EXIT", color=color.new(c4, 10), textcolor=color.white, style=label.style_label_down, size=size.small)
+        lblN += 1
+    if failedS2Emg and not failedS2eEmg
+        label.new(bar_index, high, "FAIL", color=color.new(c4, 25), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        lblN += 1
+    if coiledBase and not coiledBase[1]
+        label.new(bar_index, low, "COIL", color=color.new(c1b, 20), textcolor=color.black, style=label.style_label_up, size=size.tiny)
+        lblN += 1
+    if wAbsorption and (stage == 1 or stage == 3)
+        label.new(bar_index, low, "ABS", color=color.new(color.purple, 20), textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        lblN += 1
+
+plotchar(barstate.isconfirmed and exportSignals and s2Emg and not s2Pullback ? bar_index : na, "S2 Signal Export", "↑", location.top, color.green, size=size.tiny)
+plotchar(barstate.isconfirmed and exportSignals and s3Emg ? bar_index : na, "S3 Signal Export", "↓", location.top, color.orange, size=size.tiny)
+plotchar(barstate.isconfirmed and exportSignals and failedS2eEmg ? bar_index : na, "EXIT Signal Export", "X", location.top, color.red, size=size.tiny)
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §12  INFO TABLE - CLEAN HIGH CONTRAST DESIGN
+// ════════════════════════════════════════════════════════════════════════
+
+if showTbl and barstate.islast and wValid and wMA > 0
+
+    C_BG      = color.new(#1A1D2A, 0)
+    C_ROW     = color.new(#252836, 0)
+    C_WHITE   = color.white
+    C_LABEL   = color.new(#B0B8D0, 0)
+    C_DIM     = color.new(#6B7280, 0)
+    C_GREEN   = color.new(#10B981, 0)
+    C_RED     = color.new(#EF4444, 0)
+    C_ORANGE  = color.new(#F59E0B, 0)
+    C_BLUE    = color.new(#3B82F6, 0)
+    C_PURPLE  = color.new(#8B5CF6, 0)
+
+    sCl = switch stage
+        1 => s1B ? #00FF88 : #90EE90
+        2 => s2Pullback ? #66BB6A : s2Late ? #FFA726 : #00AA00
+        3 => #FF8C00
+        4 => #EF4444
+        => #6B7280
+    
+    sBadgeBg  = color.new(sCl, 0)
+    sBadgeTxt = color.white
+
+    actCol = switch stage
+        1 => coiledBase ? #00FF88 : s1B ? #00FF88 : #90EE90
+        2 => failedS2early ? #EF4444 : s2Late ? #FFA726 : conv >= 4 ? #10B981 : #00AA00
+        3 => failedS2 ? #EF4444 : #FF8C00
+        4 => #EF4444
+        => #6B7280
+    actBg = color.new(actCol, 20)
+
+    sNm = switch stage
+        1 => coiledBase ? "STAGE 1 | Coiling" : s1B ? "STAGE 1B | Pre-Breakout" : "STAGE 1 | Basing"
+        2 => failedS2early ? "STAGE 2 | EXIT" : s2Pullback ? "STAGE 2 | Pullback" : s2Late ? "STAGE 2 | Late" : "STAGE 2 | Advancing"
+        3 => failedS2 ? "STAGE 3 | Failed" : "STAGE 3 | Distribution"
+        4 => "STAGE 4 | Declining"
+        => "Initializing..."
+
+    actTxt = switch stage
+        1 => coiledBase ? "Alert for S2 breakout" : s1B ? "Watch closely" : "Wait for breakout"
+        2 => failedS2early ? "EXIT - Below MA" : s2Pullback ? "Hold - Pullback" : s2Late ? "Monitor" : conv >= 4 ? "Hold/Add" : "Hold"
+        3 => failedS2 ? "EXIT - S4 Risk" : s3Quality ? "Reduce/Exit" : "Monitor"
+        4 => "Avoid Longs"
+        => "—"
+
+    durStr  = str.tostring(dur) + "w"
+    durNote = ""
+    if stage == 2 and not s2Pullback and dur > 52
+        durNote := " Extended"
+    if stage == 2 and not s2Pullback and dur > 40
+        durNote := durNote + " Late"
+    if useAdaptive
+        durNote := durNote + " [" + volRegimeStr + "]"
+    durCol  = stage == 2 and dur > 40 and not s2Pullback ? C_ORANGE : C_WHITE
+
+    dirIcon = wRising ? " ▲" : wFalling ? " ▼" : " —"
+    dirCol  = wRising ? C_GREEN : wFalling ? C_RED : C_DIM
+    maStr   = str.tostring(math.round(wMA, 2)) + "  " + (wRoc >= 0 ? "+" : "") + str.tostring(math.round(wRoc, 2)) + "%" + dirIcon
+
+    rvolStr  = str.tostring(math.round(rvol, 2)) + "x"
+    rvolTier = volScore == 2 ? " ★" : volScore == 1 ? " ✓" : " ✗"
+    rvolBvSv = not na(wOFRatio) ? "  B/S:" + str.tostring(math.round(wOFRatio, 2)) : ""
+    rvolEv   = volBreakout ? " [BREAKOUT]" : ""
+    rvolCol  = volBreakout and volScore == 2 ? C_GREEN : volBreakout ? C_WHITE : volScore == 0 ? C_RED : C_DIM
+    if modelFriction
+        rvolStr := rvolStr + "  Friction:" + str.tostring(totalFrictionBps) + "bps"
+
+    ofState = wAbsorption ? "ABSORPTION" : wHiddenAccum ? "HIDDEN BUY" : wHiddenDistrib ? "HIDDEN SELL" : "Normal"
+    ofCol   = wAbsorption ? C_PURPLE : wHiddenAccum ? C_GREEN : wHiddenDistrib ? C_RED : C_DIM
+
+    rsTxt  = not na(rsVal) ? str.tostring(math.round(rsVal, 3)) : "n/a"
+    rsDir  = rsTrend and rsAccel ? " ↗↗" : rsTrend ? " ↗" : " ↘"
+    rsNote = rsUp ? " Outperforming" : " Underperforming"
+    mktStr = useRS ? (marketBull ? "  Market: ▲" : "  Market: ▼") : ""
+    rsCol  = rsUp and rsTrend and rsAccel ? C_GREEN : rsUp and rsTrend ? C_GREEN : rsUp ? C_WHITE : C_RED
+    rsBg   = rsUp ? color.new(C_GREEN, 85) : color.new(C_RED, 85)
+
+    convDots = ""
+    for i = 1 to 5
+        convDots := convDots + (i <= conv ? "●" : "○")
+    convDisp = convDots + "  " + str.tostring(conv) + "/5"
+    if modelFriction and frictionPenalty < 0
+        convDisp := convDisp + " [-friction]"
+    if maxCorrelation > 0.7
+        convDisp := convDisp + " [-correlation]"
+    convCol  = conv >= 4 ? C_GREEN : conv >= 3 ? C_ORANGE : conv >= 2 ? C_ORANGE : C_RED
+    convBg   = conv >= 4 ? color.new(C_GREEN, 85) : conv <= 1 ? color.new(C_RED, 85) : color.new(C_ORANGE, 85)
+
+    ctxLbl = ""
+    ctxVal = ""
+    ctxCol = C_WHITE
+    if stage == 1
+        ctxLbl := "Base Status"
+        ctxVal := coiledBase ? "COILED - ATR+Range+Vol" : volContract and tightRange ? "Tightening" : volContract ? "ATR Coiling" : tightRange ? "Range Tight" : "Normal"
+        ctxCol := coiledBase ? C_GREEN : volContract or tightRange ? C_ORANGE : C_DIM
+    else if stage == 2 and not s2Pullback
+        ctxLbl := "Breakout Quality"
+        bqStr  = str.tostring(breakoutQuality) + "/3"
+        ctxVal := bqStr + (not marketBull ? "  Bear Market!" : "  OK")
+        if useMTF and not mtfConfirm
+            ctxVal := ctxVal + "  MTF:✗"
+        ctxCol := breakoutQuality >= 3 ? C_GREEN : breakoutQuality >= 2 ? C_WHITE : C_DIM
+    else if stage == 2 and s2Pullback
+        ctxLbl := "Pullback"
+        ctxVal := nearMA ? "Near MA - Watch" : "In Uptrend - Hold"
+        ctxCol := nearMA ? C_ORANGE : C_DIM
+    else if stage == 3
+        ctxLbl := "Distribution"
+        ctxVal := failedS2 ? "Price < MA - EXIT!" : volContract ? "Coiling (Re-accum?)" : "Confirmed"
+        ctxCol := failedS2 ? C_RED : volContract ? C_ORANGE : C_ORANGE
+    else if stage == 4
+        ctxLbl := "Trend"
+        ctxVal := "Downtrend Confirmed"
+        ctxCol := C_RED
+
+    flags = ""
+    flags := flags + (coiledBase ? "COIL " : "")
+    flags := flags + (failedS2early ? "EXIT! " : "")
+    flags := flags + (failedS2 ? "FAIL " : "")
+    flags := flags + (s2Late ? "LATE " : "")
+    flags := flags + (wAbsorption ? "ABS " : "")
+    flags := flags + (wHiddenAccum ? "HACC " : "")
+    flags := flags + (not marketBull and stage == 2 ? "BEAR " : "")
+    flags := flags + (deployEnv == "live" ? "LIVE" : "")
+    flagCol = failedS2early or failedS2 ? C_RED : s2Late ? C_ORANGE : coiledBase or wHiddenAccum ? C_GREEN : C_DIM
+
+    stopStr = stage == 2 and not s2Pullback and not na(stopLvl) ? str.tostring(math.round(stopLvl, 2)) : "N/A"
+    sizeStr = volatilityAdj ? str.tostring(math.round(positionSize, 0)) : "N/A"
+
+    var table T = table.new(tblPos, 2, 10, 
+         bgcolor      = C_BG, 
+         border_color = color.new(#4A5568, 50), 
+         border_width = 1, 
+         frame_color  = color.new(#4A5568, 30), 
+         frame_width  = 2)
+
+    headerTxt = "WEINSTEIN v3.3" + (auditTag != "" ? " | " + auditTag : "")
+    table.cell(T, 0, 0, headerTxt, text_color=C_LABEL, text_size=size.small, bgcolor=C_ROW, text_halign=text.align_center)
+    table.merge_cells(T, 0, 0, 1, 0)
+
+    table.cell(T, 0, 1, sNm, text_color=sBadgeTxt, text_size=size.normal, bgcolor=sBadgeBg, text_halign=text.align_center)
+    table.merge_cells(T, 0, 1, 1, 1)
+
+    table.cell(T, 0, 2, "Duration | Stop | Size", text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+    table.cell(T, 1, 2, durStr + durNote + "  |  " + stopStr + "  |  " + sizeStr, text_color=durCol, text_size=size.small, bgcolor=C_BG)
+
+    table.cell(T, 0, 3, str.tostring(maLen) + "W " + maType, text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+    table.cell(T, 1, 3, maStr, text_color=dirCol, text_size=size.small, bgcolor=C_BG)
+
+    table.cell(T, 0, 4, "Volume", text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+    table.cell(T, 1, 4, rvolStr + rvolTier + rvolEv + rvolBvSv, text_color=rvolCol, text_size=size.small, bgcolor=C_BG)
+
+    table.cell(T, 0, 5, "Order Flow", text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+    table.cell(T, 1, 5, ofState, text_color=ofCol, text_size=size.small, bgcolor=C_BG)
+
+    if useRS
+        table.cell(T, 0, 6, "RS vs " + benchSym, text_color=C_LABEL, text_size=size.tiny, bgcolor=rsBg)
+        table.cell(T, 1, 6, rsTxt + rsDir + rsNote + mktStr, text_color=rsCol, text_size=size.small, bgcolor=rsBg)
+    else
+        table.cell(T, 0, 6, "Relative Strength", text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+        table.cell(T, 1, 6, "Disabled", text_color=C_DIM, text_size=size.small, bgcolor=C_BG)
+
+    cLbl = stage == 2 ? "Long Conviction" : stage == 4 ? "Short Conviction" : "Signal Quality"
+    table.cell(T, 0, 7, cLbl, text_color=C_LABEL, text_size=size.tiny, bgcolor=convBg)
+    table.cell(T, 1, 7, convDisp, text_color=convCol, text_size=size.small, bgcolor=convBg)
+
+    table.cell(T, 0, 8, ctxLbl, text_color=C_LABEL, text_size=size.tiny, bgcolor=C_BG)
+    table.cell(T, 1, 8, ctxVal, text_color=ctxCol, text_size=size.small, bgcolor=C_BG)
+
+    table.cell(T, 0, 9, actTxt, text_color=C_WHITE, text_size=size.small, bgcolor=actBg, text_halign=text.align_center)
+    table.merge_cells(T, 0, 9, 1, 9)
+else if showTbl and barstate.islast
+    label.new(bar_index, high, "TABLE: Invalid Data", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §13  DATA WINDOW EXPORTS - 18 ESSENTIAL PLOTS ONLY
+// ════════════════════════════════════════════════════════════════════════
+
+plot(stage,           title="Stage (0-4)",             display=display.data_window)
+plot(wMA,             title="Weekly MA",               display=display.data_window)
+plot(wRoc,            title="MA ROC %",                display=display.data_window)
+plot(stopLvl,         title="S2 Stop Level",           display=display.data_window)
+plot(positionSize,    title="Position Size (Shares)",  display=display.data_window)
+plot(atrPct,          title="ATR %",                   display=display.data_window)
+plot(conv,            title="Conviction (0-5)",        display=display.data_window)
+plot(breakoutQuality, title="Breakout Quality (0-3)",  display=display.data_window)
+plot(rvol,            title="Weekly RVOL",             display=display.data_window)
+plot(volScore,        title="Vol Score (0-2)",         display=display.data_window)
+plot(not na(rsVal) ? rsVal : na, title="RS Blended",  display=display.data_window)
+plot(totalSignals,    title="Total Signals",           display=display.data_window)
+plot(winRate,         title="Win Rate %",              display=display.data_window)
+plot(maxDrawdown,     title="Max Drawdown %",          display=display.data_window)
+plot(s2Emg ? 1 : 0,   title="[Sig] S2 Emerged",        display=display.data_window)
+plot(s3Emg ? 1 : 0,   title="[Sig] S3 Emerged",        display=display.data_window)
+plot(failedS2early ? 1 : 0, title="[Sig] S2 Early Exit", display=display.data_window)
+plot(coiledBase ? 1 : 0, title="[Sig] Coiled Base",   display=display.data_window)
+plot(totalFrictionBps,title="Total Friction bps",      display=display.data_window)
+
+
+// ════════════════════════════════════════════════════════════════════════
+// §14  ALERTS - ONLY alert() FUNCTION
+// ════════════════════════════════════════════════════════════════════════
+
+alertConditionActive = deployEnv != "live" or not safetyMode or bar_index % 3 == 0
+
+if barstate.isconfirmed
+    if jsonAlerts and s2Emg and not s2Pullback
+        alert(buildJsonAlert("S2_BREAKOUT", syminfo.ticker, 2, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and s2Emg and conv >= 4 and marketBull
+        alert(buildJsonAlert("S2_HIGH_CONV_BULL", syminfo.ticker, 2, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and s2Emg and conv >= 4 and not marketBull
+        alert(buildJsonAlert("S2_HIGH_CONV_BEAR", syminfo.ticker, 2, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and failedS2eEmg
+        alert(buildJsonAlert("S2_EARLY_EXIT", syminfo.ticker, 2, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and s3Emg
+        alert(buildJsonAlert("S3_DISTRIBUTION", syminfo.ticker, 3, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and failedS2Emg
+        alert(buildJsonAlert("S2_FAILED_S4_RISK", syminfo.ticker, 3, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and s4Emg
+        alert(buildJsonAlert("S4_DECLINE", syminfo.ticker, 4, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and s1bEmg
+        alert(buildJsonAlert("S1B_PRE_BREAKOUT", syminfo.ticker, 1, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and coiledBase and not coiledBase[1]
+        alert(buildJsonAlert("S1_COILED_BASE", syminfo.ticker, 1, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if jsonAlerts and wAbsorption and (stage == 1 or stage == 3)
+        alert(buildJsonAlert("ORDERFLOW_ABSORPTION", syminfo.ticker, stage, conv, stopLvl, auditTag), alert.freq_once_per_bar)
+    if not jsonAlerts and s2Emg and not s2Pullback
+        alert(syminfo.ticker + " — Stage 2 confirmed.", alert.freq_once_per_bar)
+    if not jsonAlerts and s2Emg and conv >= 4 and marketBull
+        alert(syminfo.ticker + " — S2 >=4/5 conviction in bull market.", alert.freq_once_per_bar)
+    if not jsonAlerts and s2Emg and conv >= 4 and not marketBull
+        alert(syminfo.ticker + " — S2 >=4/5 but market in downtrend.", alert.freq_once_per_bar)
+    if not jsonAlerts and failedS2eEmg
+        alert(syminfo.ticker + " — S2 price broke below MA. Exit.", alert.freq_once_per_bar)
+    if not jsonAlerts and s3Emg
+        alert(syminfo.ticker + " — Stage 3: flat MA + weak momentum.", alert.freq_once_per_bar)
+    if not jsonAlerts and failedS2Emg
+        alert(syminfo.ticker + " — S3 with close below MA. Exit now.", alert.freq_once_per_bar)
+    if not jsonAlerts and s4Emg
+        alert(syminfo.ticker + " — Stage 4 confirmed. Avoid longs.", alert.freq_once_per_bar)
+    if not jsonAlerts and s1bEmg
+        alert(syminfo.ticker + " — S1B: Price cleared MA.", alert.freq_once_per_bar)
+    if not jsonAlerts and coiledBase and not coiledBase[1]
+        alert(syminfo.ticker + " — ATR + range + volume contracting.", alert.freq_once_per_bar)
+    if not jsonAlerts and wAbsorption and (stage == 1 or stage == 3)
+        alert(syminfo.ticker + " — High-volume small-body candle.", alert.freq_once_per_bar)
+    if alertConditionActive and s1Act
+        alert(syminfo.ticker + " is in Stage 1 Basing", alert.freq_once_per_bar)
+    if alertConditionActive and s2Act
+        alert(syminfo.ticker + " is in Stage 2 Advancing", alert.freq_once_per_bar)
+    if alertConditionActive and s3Act
+        alert(syminfo.ticker + " is in Stage 3 Distribution", alert.freq_once_per_bar)
+    if alertConditionActive and s4Act
+        alert(syminfo.ticker + " is in Stage 4 Declining", alert.freq_once_per_bar)

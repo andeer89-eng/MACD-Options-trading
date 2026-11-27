@@ -987,9 +987,16 @@ export function selectAlpacaEquityCandidates(
     }
 
     const adaptiveMult = memoryEval ? memoryEval.sizingMultiplier : 1.0;
+    const marketSafetyMult =
+      marketHealth &&
+      marketHealth.current.sizeMultiplier > 0 &&
+      marketHealth.current.sizeMultiplier < 1.0
+        ? marketHealth.current.sizeMultiplier
+        : 1.0;
+    const effectiveMult = Number((adaptiveMult * marketSafetyMult).toFixed(4));
     const adaptedSuggestedQty =
-      adaptiveMult !== 1.0
-        ? Math.max(1, Math.round(gate.suggestedQty * adaptiveMult))
+      effectiveMult !== 1.0
+        ? Math.max(1, Math.round(gate.suggestedQty * effectiveMult))
         : gate.suggestedQty;
 
     const maxAffordable = Math.floor(remainingBuyingPower / item.currentPrice);
@@ -1062,6 +1069,10 @@ export function selectAlpacaEquityCandidates(
     const memTag = memoryEval
       ? ` • Memory ${memoryEval.sizingMultiplier.toFixed(2)}x`
       : '';
+    const safetyMultTag =
+      marketSafetyMult < 1.0
+        ? ` • Safety ${marketSafetyMult.toFixed(2)}x`
+        : '';
 
     ordersToPlace.push({
       symbol: sym,
@@ -1076,9 +1087,9 @@ export function selectAlpacaEquityCandidates(
       stopLoss: stopPrice,
       targetPrice: levels.targets[1]?.price || levels.targets[0]?.price || Number((item.currentPrice * 1.05).toFixed(2)),
       initialRiskDollars,
-      regimeMultiplier: adaptiveMult,
+      regimeMultiplier: effectiveMult,
       entryMarketContext,
-      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${structuralTag}${memTag}${
+      rationale: `${mainSetup.type} (Score ${mainSetup.qualityScore}) • Risk-sized ${qty} sh @ ~$${item.currentPrice.toFixed(2)} [${sector}]${structuralTag}${memTag}${safetyMultTag}${
         marketHealthSummary ? ` • ${marketHealthSummary}` : ''
       }`,
     });

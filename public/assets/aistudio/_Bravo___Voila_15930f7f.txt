@@ -1,0 +1,311 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=6
+indicator("Startup Suite", "SS Suite", overlay=true, max_boxes_count=50, max_lines_count=50)
+
+// --- Colors ---
+color C_BLUE       = #2196F3
+color C_GREEN      = #00E676
+color C_PINK       = #FF4081
+color C_PURPLE     = #9C27B0
+color C_GOLD       = #FFD700
+color C_WHITE      = #FFFFFF
+color C_GREY       = #424242
+color C_SILVER     = #C0C0C0
+color C_BULL_BODY  = #26A69A
+color C_BEAR_BODY  = #7E57C2
+color C_EMA        = #C9B789
+color C_UPPER_BAND = #787b86
+color C_LOWER_BAND = #787b86
+
+// --- Inputs ---
+g_b = "Bravo Settings"
+int    bravoLen        = input.int(12, "Bravo EMA Length", minval=2, group=g_b, tooltip="Length for the core EMA calculation.")
+int    atrLen          = input.int(14, "ATR Length", minval=2, group=g_b, tooltip="Length for ATR used in volatility bands.")
+int    volSmoLen       = input.int(50, "Volatility Smoothing", minval=2, group=g_b, tooltip="Smoothing for average volatility calculation.")
+float  volMult         = input.float(1.5, "Volatility Multiplier", minval=1.0, step=0.1, group=g_b, tooltip="Multiplier to determine the high volatility state.")
+bool   i_quietPlots    = input.bool(true, "Quiet Diamonds", group=g_b, tooltip="Only show trend diamonds on the first bar of a change.")
+bool   i_showEma       = input.bool(true, "Show Bravo EMA Ribbon", group=g_b)
+bool   i_customCandles = input.bool(true, "Color Candles (Teal/Purple)", group=g_b)
+bool   i_showBands     = input.bool(true, "Show Volatility Bands", group=g_b)
+bool   i_showArrows    = input.bool(true, "Show Triangle Arrows", group=g_b)
+
+g_p = "Pivot Markers"
+bool i_showPivots = input.bool(true, "Show Pivot Symbols", group=g_p, tooltip="Shows squares, circles, and triangles at historical pivot points.")
+
+g_sr = "Bravo S/R (Chart TF)"
+bool i_showSR    = input.bool(true, "Show Gold / Purple / Green Levels", group=g_sr, tooltip="Displays horizontal support and resistance crosses.")
+int  goldLen     = input.int(30, "Gold Pivot Length (Major)", minval=2, group=g_sr)
+int  minorLen    = input.int(10, "Minor Pivot Length",        minval=2, group=g_sr)
+int  confirmBars = input.int(3, "Confirmation Buffer (bars)", minval=0, group=g_sr, tooltip="Bars required after pivot to confirm and display the level.")
+
+g_v = "Voila S/R (HTF Silver)"
+bool i_showD       = input.bool(true, "Show 1D Silver", group=g_v)
+bool i_showW       = input.bool(true, "Show 1W Silver", group=g_v)
+int  pivotLenHTF   = input.int(5, "HTF Pivot Length", minval=2, group=g_v)
+bool i_voilaFills  = input.bool(true, "Stratification Fills", group=g_v, tooltip="Fills the background between Silver levels.")
+
+// --- Logic & Functions ---
+
+// Processes pending pivot levels into active levels after confirmation
+processPending(array<float> pendL, array<int> pendB, array<float> active, bool isRes) =>
+    array<float> newPendL = array.new<float>()
+    array<int>   newPendB = array.new<int>()
+    
+    for i = 0 to array.size(pendL) - 1
+        float lvl = array.get(pendL, i)
+        int   det = array.get(pendB, i)
+        bool  violated = isRes ? close > lvl : close < lvl
+        
+        if not violated
+            if bar_index - det >= confirmBars
+                // Shift active levels to make room for newest
+                for j = 0 to array.size(active) - 2
+                    array.set(active, j, array.get(active, j + 1))
+                array.set(active, array.size(active) - 1, lvl)
+            else
+                array.push(newPendL, lvl)
+                array.push(newPendB, det)
+    
+    array.clear(pendL)
+    array.clear(pendB)
+    for i = 0 to array.size(newPendL) - 1
+        array.push(pendL, array.get(newPendL, i))
+        array.push(pendB, array.get(newPendB, i))
+
+// Clears active levels if they are breached by price
+checkBreaks(array<float> active, bool isRes) =>
+    for i = 0 to array.size(active) - 1
+        float lvl = array.get(active, i)
+        if not na(lvl)
+            bool broken = isRes ? close > lvl : close < lvl
+            if broken
+                array.set(active, i, na)
+
+// --- Core Calculations ---
+float bravoEma   = ta.ema(close, bravoLen)
+float atrVal     = ta.atr(atrLen)
+float atrSma     = ta.sma(atrVal, volSmoLen)
+bool  isVolatile = atrVal > atrSma * volMult
+
+bool bravoBull       = close > bravoEma
+bool bravoBear       = close < bravoEma
+bool bravoBullStrong = bravoBull and close > close[1] and close > open
+bool bravoBearStrong = bravoBear and close < close[1] and close < open
+
+// --- Visual Elements ---
+
+// Candles
+barcolor(i_customCandles ? (close >= open ? C_BULL_BODY : C_BEAR_BODY) : na)
+
+// EMA Ribbon
+plot(i_showEma ? bravoEma : na, "EMA Glow", color=color.new(C_EMA, 70), linewidth=4)
+plot(i_showEma ? bravoEma : na, "EMA Mid",  color=C_EMA,                linewidth=2)
+plot(i_showEma ? bravoEma : na, "EMA Core", color=C_GREY,               linewidth=1)
+
+// Volatility Bands
+upperBand1 = bravoEma + (atrVal * 1.0)
+upperBand2 = bravoEma + (atrVal * 2.0)
+upperBand3 = bravoEma + (atrVal * 3.0)
+lowerBand1 = bravoEma - (atrVal * 1.0)
+lowerBand2 = bravoEma - (atrVal * 2.0)
+lowerBand3 = bravoEma - (atrVal * 3.0)
+
+p_upper1 = plot(i_showBands ? upperBand1 : na, "Upper 1", color=color.new(C_UPPER_BAND, 60), linewidth=1)
+p_upper2 = plot(i_showBands ? upperBand2 : na, "Upper 2", color=color.new(C_UPPER_BAND, 40), linewidth=1)
+p_upper3 = plot(i_showBands ? upperBand3 : na, "Upper 3", color=color.new(C_UPPER_BAND, 20), linewidth=1)
+p_lower1 = plot(i_showBands ? lowerBand1 : na, "Lower 1", color=color.new(C_LOWER_BAND, 60), linewidth=1)
+p_lower2 = plot(i_showBands ? lowerBand2 : na, "Lower 2", color=color.new(C_LOWER_BAND, 40), linewidth=1)
+p_lower3 = plot(i_showBands ? lowerBand3 : na, "Lower 3", color=color.new(C_LOWER_BAND, 20), linewidth=1)
+
+fill(p_upper1, p_upper2, color=color.new(C_UPPER_BAND, 85), title="Upper Fill 1-2")
+fill(p_upper2, p_upper3, color=color.new(C_UPPER_BAND, 90), title="Upper Fill 2-3")
+fill(p_lower1, p_lower2, color=color.new(C_LOWER_BAND, 85), title="Lower Fill 1-2")
+fill(p_lower2, p_lower3, color=color.new(C_LOWER_BAND, 90), title="Lower Fill 2-3")
+
+// Trend Diamonds
+bool plotBull = i_quietPlots ? (bravoBull and not bravoBull[1]) : bravoBull
+bool plotBear = i_quietPlots ? (bravoBear and not bravoBear[1]) : bravoBear
+
+color bullCol = isVolatile ? C_WHITE : C_BLUE
+color bearCol = isVolatile ? C_WHITE : C_PINK
+
+plotshape(plotBull and not bravoBullStrong, "Bull Diamond", shape.diamond, location.belowbar, bullCol, size=size.tiny)
+plotshape(plotBull and bravoBullStrong, "Bull Diamond Strong", shape.diamond, location.belowbar, bullCol, size=size.small)
+plotshape(plotBear and not bravoBearStrong, "Bear Diamond", shape.diamond, location.abovebar, bearCol, size=size.tiny)
+plotshape(plotBear and bravoBearStrong, "Bear Diamond Strong", shape.diamond, location.abovebar, bearCol, size=size.small)
+
+// Triangle Arrows
+bool arrowBull = ta.crossover(close, bravoEma)
+bool arrowBear = ta.crossunder(close, bravoEma)
+plotshape(i_showArrows and arrowBull, "Bull Arrow", shape.triangleup,   location.belowbar, color.new(C_WHITE, 30), size=size.tiny)
+plotshape(i_showArrows and arrowBear, "Bear Arrow", shape.triangledown, location.abovebar, color.new(C_WHITE, 30), size=size.tiny)
+
+// --- Pivot Markers ---
+float hiG = ta.pivothigh(high, goldLen,  goldLen)
+float loG = ta.pivotlow(low,   goldLen,  goldLen)
+float hiM = ta.pivothigh(high, minorLen, minorLen)
+float loM = ta.pivotlow(low,   minorLen, minorLen)
+
+plotshape(i_showPivots ? hiM : na, "Minor High", shape.triangledown, location.absolute, color.new(C_WHITE, 50), size=size.tiny, offset=-minorLen)
+plotshape(i_showPivots ? loM : na, "Minor Low",  shape.triangleup,   location.absolute, color.new(C_WHITE, 50), size=size.tiny, offset=-minorLen)
+plotshape(i_showPivots ? hiG : na, "Major High", shape.square,       location.absolute, color.new(C_WHITE, 50), size=size.tiny, offset=-goldLen)
+plotshape(i_showPivots ? loG : na, "Major Low",  shape.circle,       location.absolute, color.new(C_WHITE, 50), size=size.tiny, offset=-goldLen)
+
+// --- Bravo S/R Logic ---
+var array<float> pGoldR_L = array.new<float>()
+var array<int>   pGoldR_B = array.new<int>()
+var array<float> pGoldS_L = array.new<float>()
+var array<int>   pGoldS_B = array.new<int>()
+var array<float> pPurp_L  = array.new<float>()
+var array<int>   pPurp_B  = array.new<int>()
+var array<float> pGrn_L   = array.new<float>()
+var array<int>   pGrn_B   = array.new<int>()
+
+var array<float> aGoldR = array.new<float>(5, na)
+var array<float> aGoldS = array.new<float>(5, na)
+var array<float> aPurp  = array.new<float>(5, na)
+var array<float> aGrn   = array.new<float>(5, na)
+
+if i_showSR
+    if not na(hiG)
+        array.push(pGoldR_L, hiG), array.push(pGoldR_B, bar_index - goldLen)
+    if not na(loG)
+        array.push(pGoldS_L, loG), array.push(pGoldS_B, bar_index - goldLen)
+    if not na(hiM)
+        array.push(pPurp_L, hiM),  array.push(pPurp_B,  bar_index - minorLen)
+    if not na(loM)
+        array.push(pGrn_L,  loM),  array.push(pGrn_B,   bar_index - minorLen)
+
+processPending(pGoldR_L, pGoldR_B, aGoldR, true)
+processPending(pGoldS_L, pGoldS_B, aGoldS, false)
+processPending(pPurp_L,  pPurp_B,  aPurp,  true)
+processPending(pGrn_L,   pGrn_B,   aGrn,   false)
+
+checkBreaks(aGoldR, true)
+checkBreaks(aGoldS, false)
+checkBreaks(aPurp,  true)
+checkBreaks(aGrn,   false)
+
+// S/R Plots
+plot(i_showSR ? array.get(aGoldR, 0) : na, "GoldR1", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldR, 1) : na, "GoldR2", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldR, 2) : na, "GoldR3", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldR, 3) : na, "GoldR4", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldR, 4) : na, "GoldR5", C_GOLD, 2, plot.style_cross)
+
+plot(i_showSR ? array.get(aGoldS, 0) : na, "GoldS1", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldS, 1) : na, "GoldS2", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldS, 2) : na, "GoldS3", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldS, 3) : na, "GoldS4", C_GOLD, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGoldS, 4) : na, "GoldS5", C_GOLD, 2, plot.style_cross)
+
+plot(i_showSR ? array.get(aPurp, 0) : na, "Purp1", C_PURPLE, 2, plot.style_cross)
+plot(i_showSR ? array.get(aPurp, 1) : na, "Purp2", C_PURPLE, 2, plot.style_cross)
+plot(i_showSR ? array.get(aPurp, 2) : na, "Purp3", C_PURPLE, 2, plot.style_cross)
+plot(i_showSR ? array.get(aPurp, 3) : na, "Purp4", C_PURPLE, 2, plot.style_cross)
+plot(i_showSR ? array.get(aPurp, 4) : na, "Purp5", C_PURPLE, 2, plot.style_cross)
+
+plot(i_showSR ? array.get(aGrn, 0) : na, "Grn1", C_GREEN, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGrn, 1) : na, "Grn2", C_GREEN, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGrn, 2) : na, "Grn3", C_GREEN, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGrn, 3) : na, "Grn4", C_GREEN, 2, plot.style_cross)
+plot(i_showSR ? array.get(aGrn, 4) : na, "Grn5", C_GREEN, 2, plot.style_cross)
+
+// --- Voila - HTF Silver Levels ---
+[pHiD, pLoD] = request.security(syminfo.tickerid, "D", [ta.pivothigh(high, pivotLenHTF, pivotLenHTF), ta.pivotlow(low, pivotLenHTF, pivotLenHTF)], lookahead=barmerge.lookahead_off)
+[pHiW, pLoW] = request.security(syminfo.tickerid, "W", [ta.pivothigh(high, pivotLenHTF, pivotLenHTF), ta.pivotlow(low, pivotLenHTF, pivotLenHTF)], lookahead=barmerge.lookahead_off)
+
+bool newHi_D = not na(pHiD) and (na(pHiD[1]) or pHiD != pHiD[1])
+bool newLo_D = not na(pLoD) and (na(pLoD[1]) or pLoD != pLoD[1])
+bool newHi_W = not na(pHiW) and (na(pHiW[1]) or pHiW != pHiW[1])
+bool newLo_W = not na(pLoW) and (na(pLoW[1]) or pLoW != pLoW[1])
+
+var array<float> pDR_L = array.new<float>()
+var array<int>   pDR_B = array.new<int>()
+var array<float> pDS_L = array.new<float>()
+var array<int>   pDS_B = array.new<int>()
+var array<float> pWR_L = array.new<float>()
+var array<int>   pWR_B = array.new<int>()
+var array<float> pWS_L = array.new<float>()
+var array<int>   pWS_B = array.new<int>()
+
+var array<float> aDR = array.new<float>(3, na)
+var array<float> aDS = array.new<float>(3, na)
+var array<float> aWR = array.new<float>(3, na)
+var array<float> aWS = array.new<float>(3, na)
+
+if i_showD or i_showW
+    if i_showD
+        if newHi_D
+            array.push(pDR_L, pHiD), array.push(pDR_B, bar_index)
+        if newLo_D
+            array.push(pDS_L, pLoD), array.push(pDS_B, bar_index)
+    
+    if i_showW
+        if newHi_W
+            array.push(pWR_L, pHiW), array.push(pWR_B, bar_index)
+        if newLo_W
+            array.push(pWS_L, pLoW), array.push(pWS_B, bar_index)
+    
+    processPending(pDR_L, pDR_B, aDR, true)
+    processPending(pDS_L, pDS_B, aDS, false)
+    processPending(pWR_L, pWR_B, aWR, true)
+    processPending(pWS_L, pWS_B, aWS, false)
+    
+    checkBreaks(aDR, true)
+    checkBreaks(aDS, false)
+    checkBreaks(aWR, true)
+    checkBreaks(aWS, false)
+
+// Voila Plots (Silver Lines)
+plot(i_showD ? array.get(aDR, 0) : na, "1DR1", C_SILVER, 1)
+plot(i_showD ? array.get(aDR, 1) : na, "1DR2", C_SILVER, 1)
+plot(i_showD ? array.get(aDR, 2) : na, "1DR3", C_SILVER, 1)
+plot(i_showD ? array.get(aDS, 0) : na, "1DS1", C_SILVER, 1)
+plot(i_showD ? array.get(aDS, 1) : na, "1DS2", C_SILVER, 1)
+plot(i_showD ? array.get(aDS, 2) : na, "1DS3", C_SILVER, 1)
+
+plot(i_showW ? array.get(aWR, 0) : na, "1WR1", C_SILVER, 2)
+plot(i_showW ? array.get(aWR, 1) : na, "1WR2", C_SILVER, 2)
+plot(i_showW ? array.get(aWR, 2) : na, "1WR3", C_SILVER, 2)
+plot(i_showW ? array.get(aWS, 0) : na, "1WS1", C_SILVER, 2)
+plot(i_showW ? array.get(aWS, 1) : na, "1WS2", C_SILVER, 2)
+plot(i_showW ? array.get(aWS, 2) : na, "1WS3", C_SILVER, 2)
+
+// --- Stratification Fills (Boxes) ---
+var array<box> voilaBoxes = array.new<box>()
+
+if i_voilaFills and barstate.islast
+    for b in voilaBoxes
+        box.delete(b)
+    array.clear(voilaBoxes)
+    
+    array<float> allLvls = array.new<float>()
+    for i = 0 to 2
+        if not na(array.get(aDR, i))
+            array.push(allLvls, array.get(aDR, i))
+        if not na(array.get(aDS, i))
+            array.push(allLvls, array.get(aDS, i))
+        if not na(array.get(aWR, i))
+            array.push(allLvls, array.get(aWR, i))
+        if not na(array.get(aWS, i))
+            array.push(allLvls, array.get(aWS, i))
+    
+    if array.size(allLvls) >= 2
+        array.sort(allLvls, order.ascending)
+        
+        // Filter unique levels with some tolerance
+        array<float> uniqueLvls = array.new<float>()
+        float prevLvl = na
+        for lvl in allLvls
+            if na(prevLvl) or math.abs(lvl - prevLvl) > syminfo.mintick * 10
+                array.push(uniqueLvls, lvl)
+                prevLvl := lvl
+        
+        if array.size(uniqueLvls) >= 2
+            for i = 0 to array.size(uniqueLvls) - 2
+                float bot = array.get(uniqueLvls, i)
+                float top = array.get(uniqueLvls, i + 1)
+                int alpha = 90 - (i * 5) % 25
+                box b = box.new(bar_index, top, bar_index + 1, bot, border_color=na, bgcolor=color.new(C_SILVER, alpha), extend=extend.right)
+                array.push(voilaBoxes, b)

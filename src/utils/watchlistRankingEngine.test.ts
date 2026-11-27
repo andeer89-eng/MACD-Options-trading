@@ -215,3 +215,91 @@ test('scoreToConvictionGrade maps grades cleanly without Grade C leaking above t
   assert.equal(scoreToConvictionGrade(67).grade, 'C');
   assert.equal(scoreToConvictionGrade(50).grade, 'D');
 });
+
+test('evaluateDirectionalLeader ignores stopped-out bearish and completed historical bullish divergences (DLTR scenario)', () => {
+  const upCandles = buildUptrendCandles(60, 118); // ends around ~149.8
+  const spot = upCandles[upCandles.length - 1].close;
+
+  const dltrItem = {
+    symbol: 'DLTR',
+    companyName: 'Dollar Tree, Inc.',
+    sector: 'Consumer Staples',
+    currentPrice: spot,
+    atr: 6.03,
+    atrPercent: 3.9,
+    isStagnant: false,
+    relPerfVsSpyPct: 40.6,
+    setups: [
+      {
+        id: 'DLTR-BEAR-STOPPED',
+        symbol: 'DLTR',
+        timeframe: '1d',
+        type: 'BEARISH_DOUBLE',
+        qualityScore: 85,
+        currentPrice: spot,
+        triggerPrice: 138.0,
+        stopLoss: 142.0, // Already breached above SL!
+        targets: { tp1: 132.0, tp2: 126.0, tp3: 118.0 },
+        riskRewardRatio: 1.35,
+        points: [
+          {
+            index: 45,
+            timestamp: upCandles[45].timestamp,
+            price: 140.9,
+            macd: 1.2,
+            histogram: 0.3,
+            rsi: 62,
+            volume: 4_000_000,
+          },
+        ],
+      },
+      {
+        id: 'DLTR-BULL-OLD',
+        symbol: 'DLTR',
+        timeframe: '1d',
+        type: 'BULLISH_DOUBLE',
+        qualityScore: 68,
+        currentPrice: spot,
+        triggerPrice: 112.6, // >18% away and TP2 114.99 already achieved!
+        stopLoss: 110.34,
+        targets: { tp1: 113.51, tp2: 114.99, tp3: 117.39 },
+        riskRewardRatio: 1.06,
+        points: [
+          {
+            index: 5,
+            timestamp: upCandles[5].timestamp,
+            price: 111.12,
+            macd: -0.5,
+            histogram: 0.1,
+            rsi: 35,
+            volume: 3_500_000,
+          },
+        ],
+      },
+    ],
+    tosScans: {
+      symbol: 'DLTR',
+      matchedIds: ['REL_VOL_SURGE', 'VZO_SIGNAL', 'MACD_ZERO_CROSS'],
+      signals: [
+        { id: 'REL_VOL_SURGE', shortLabel: 'RelVol 3.9σ', direction: 'BULLISH', strength: 88 },
+        { id: 'VZO_SIGNAL', shortLabel: 'VZO +45', direction: 'BULLISH', strength: 82 },
+        { id: 'MACD_ZERO_CROSS', shortLabel: 'MACD 0-Cross', direction: 'BULLISH', strength: 80 },
+      ],
+      snapshot: { relVolStDev: 3.9 },
+    },
+    candles: upCandles,
+  };
+
+  const longLeader = evaluateDirectionalLeader(dltrItem, 'long');
+  assert.ok(longLeader);
+  assert.equal(longLeader.hasDivergence, false);
+  assert.equal(longLeader.matchingDivergence, null);
+  assert.ok(!longLeader.primarySetup.includes('BULLISH DOUBLE'));
+  assert.ok(!longLeader.why.some((line) => line.includes('BULLISH DOUBLE')));
+  // Without bogus +13 dualEngineBonus, score reflects pure TOS + SPY alpha + RelVol + Stage 2
+  assert.ok(longLeader.score < 90 && longLeader.score >= 78);
+
+  const shortLeader = evaluateDirectionalLeader(dltrItem, 'short');
+  assert.equal(shortLeader, null, 'Stopped-out bearish setup must not qualify DLTR for short watchlist');
+});
+

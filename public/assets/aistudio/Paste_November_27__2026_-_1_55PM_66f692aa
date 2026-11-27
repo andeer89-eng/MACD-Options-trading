@@ -1,0 +1,407 @@
+//@version=6
+indicator("Volume Spike & Change Detector Pro", overlay=false)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL INPUTS ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+length          = input.int(20,   "MA Length",               minval=1,   group="Core")
+spikeThreshold  = input.float(2.0,"Spike Threshold (σ)",     minval=0.5, step=0.1, group="Core")
+showMA          = input.bool(true, "Show Volume MA",                     group="Core")
+showBuySell     = input.bool(true, "Show Buy/Sell Volume",               group="Core")
+showCVD         = input.bool(true, "Show Cumulative Volume Delta (CVD)", group="Core")
+showTable       = input.bool(true, "Show Dashboard Table",               group="Core")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: FEATURE TOGGLES & CONFIGURATION ─────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Weekly / Monthly
+weekStart   = input.string("Monday", "Week Start Day", options=["Monday", "Sunday"], group="Weekly / Monthly")
+showWMHist  = input.bool(true, "Show Weekly/Monthly Visualization",                   group="Weekly / Monthly")
+wmScaleBars = input.int(5, "W/M Plot Scale (× volMA × bars)", minval=1,               group="Weekly / Monthly",
+     tooltip="Scales weekly/monthly cumulative volumes so they fit on the per-bar volume pane.")
+
+// Sentiment
+sentBgColor  = input.bool(true, "Color Background by Sentiment",             group="Sentiment")
+sentLookback = input.int(20,    "Sentiment Normalization Lookback", minval=5, group="Sentiment")
+
+// Spike analysis
+showSpikeArrows = input.bool(true, "Show Buy/Sell Spike Arrows",          group="Spike Analysis")
+detectChurn     = input.bool(true, "Detect Churn (Volume Exhaustion)",    group="Spike Analysis")
+churnRangeMult  = input.float(0.5, "Churn: Max Bar Range (× ATR)", minval=0.1, step=0.1, group="Spike Analysis")
+atrLength       = input.int(14,    "ATR Length (for Churn)",        minval=1, group="Spike Analysis")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: VOLUME CALCULATIONS ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+totalVol = volume
+volMA    = ta.sma(totalVol, length)
+
+// Consistent bid/ask pressure split — always sums to totalVol, no direction flip
+den     = math.max(high - low, 1e-9)
+buyVol  = totalVol * (close - low)  / den
+sellVol = totalVol * (high - close) / den
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: SPIKE DETECTION (Z-SCORE) ───────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+volStdDev = ta.stdev(totalVol, length)
+zScore    = volStdDev > 0 ? (totalVol - volMA) / volStdDev : 0.0
+isSpike   = zScore > spikeThreshold
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: CUMULATIVE VOLUME DELTA (CVD) ───────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+delta = buyVol - sellVol
+cvd   = ta.cum(delta)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: VOLUME DIVERGENCE ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+priceHigher    = high > high[1]
+priceLower     = low  < low[1]
+volLower       = totalVol < totalVol[1]
+volHigher      = totalVol > totalVol[1]
+bearDivergence = priceHigher and volLower
+bullDivergence = priceLower  and volHigher
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: ENHANCED SPIKE ANALYSIS ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+isBuySpike  = isSpike and delta > 0
+isSellSpike = isSpike and delta < 0
+
+// Churn: high volume but compressed bar range vs ATR → heavy two-way flow.
+atrVal   = ta.atr(atrLength)
+barRange = high - low
+isChurn  = detectChurn and isSpike and barRange < atrVal * churnRangeMult
+
+// 13-space continuation indent (non-multiple of 4).
+spikeType = isChurn      ? "◆ CHURN" :
+             isBuySpike   ? "▲ BUY SPIKE" :
+             isSellSpike  ? "▼ SELL SPIKE" :
+             isSpike      ? "● SPIKE" : "  —"
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: WEEK / MONTH BOUNDARY DETECTION ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+isNewMondayWeek = ta.change(time("W")) != 0
+isNewSundayWeek = dayofweek == dayofweek.sunday and dayofweek[1] != dayofweek.sunday
+newWeek         = weekStart == "Monday" ? isNewMondayWeek : isNewSundayWeek
+newMonth        = ta.change(time("M")) != 0
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: WEEKLY & MONTHLY AGGREGATES ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+var float weeklyVol        = 0.0
+var float weeklyBuy        = 0.0
+var float weeklySell       = 0.0
+var int   weeklyBars       = 0
+var float prevWeeklyVol    = na
+var float prevWeeklyDelta  = na
+
+var float monthlyVol       = 0.0
+var float monthlyBuy       = 0.0
+var float monthlySell      = 0.0
+var int   monthlyBars      = 0
+var float prevMonthlyVol   = na
+var float prevMonthlyDelta = na
+
+if newWeek
+    if weeklyBars > 0
+        prevWeeklyVol   := weeklyVol
+        prevWeeklyDelta := weeklyBuy - weeklySell
+    weeklyVol  := 0.0
+    weeklyBuy  := 0.0
+    weeklySell := 0.0
+    weeklyBars := 0
+
+if newMonth
+    if monthlyBars > 0
+        prevMonthlyVol   := monthlyVol
+        prevMonthlyDelta := monthlyBuy - monthlySell
+    monthlyVol  := 0.0
+    monthlyBuy  := 0.0
+    monthlySell := 0.0
+    monthlyBars := 0
+
+weeklyVol   += totalVol
+weeklyBuy   += buyVol
+weeklySell  += sellVol
+weeklyBars  += 1
+
+monthlyVol  += totalVol
+monthlyBuy  += buyVol
+monthlySell += sellVol
+monthlyBars += 1
+
+weeklyDelta  = weeklyBuy  - weeklySell
+monthlyDelta = monthlyBuy - monthlySell
+
+wowVolPct   = not na(prevWeeklyVol)    and prevWeeklyVol > 0             ? (weeklyVol   - prevWeeklyVol)   / prevWeeklyVol                 * 100 : 0.0
+wowDeltaPct = not na(prevWeeklyDelta)  and math.abs(prevWeeklyDelta) > 0 ? (weeklyDelta - prevWeeklyDelta) / math.abs(prevWeeklyDelta)     * 100 : 0.0
+momVolPct   = not na(prevMonthlyVol)   and prevMonthlyVol > 0            ? (monthlyVol  - prevMonthlyVol)  / prevMonthlyVol                * 100 : 0.0
+momDeltaPct = not na(prevMonthlyDelta) and math.abs(prevMonthlyDelta) > 0 ? (monthlyDelta - prevMonthlyDelta) / math.abs(prevMonthlyDelta) * 100 : 0.0
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: SENTIMENT SCORE (−10 … +10)  [MTF-ALIGNED WEIGHTING] ────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// current ±4, week ±3, month ±3. Extremes require all 3 timeframes to agree.
+avgAbsDelta    = ta.sma(math.abs(delta), sentLookback)
+currentComp    = avgAbsDelta > 0 ? math.max(math.min(delta / avgAbsDelta * 2.0, 4.0), -4.0) : 0.0
+weeklyComp     = weeklyDelta  > 0 ?  3.0 : weeklyDelta  < 0 ? -3.0 : 0.0
+monthlyComp    = monthlyDelta > 0 ?  3.0 : monthlyDelta < 0 ? -3.0 : 0.0
+sentimentScore = math.max(math.min(currentComp + weeklyComp + monthlyComp, 10.0), -10.0)
+
+// 25-space continuation indent (non-multiple of 4).
+sentBg = sentBgColor ? (sentimentScore >  2 ? color.new(color.green, 92) :
+                         sentimentScore < -2 ? color.new(color.red,   92) :
+                                               color.new(color.gray,  95)) : na
+bgcolor(sentBg, title="Sentiment Background")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: SPIKE / DIVERGENCE BACKGROUND ──────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+spikeRatio     = volMA > 0 ? totalVol / volMA : 1.0
+spikeIntensity = math.min(math.max((spikeRatio - 1.0) / math.max(spikeThreshold - 1.0, 0.1), 0.0), 1.0)
+bgcolor(isSpike        ? color.new(color.orange, int(math.round(85 - spikeIntensity * 50))) : na, title="Spike Background")
+bgcolor(bearDivergence ? color.new(color.red,    90) : na, title="Bear Divergence Background")
+bgcolor(bullDivergence ? color.new(color.green,  90) : na, title="Bull Divergence Background")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ORIGINAL: CORE PLOTS ──────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+plot(showBuySell ?  buyVol  : na, title="Buy Volume",  color=color.new(color.green, 0), style=plot.style_columns)
+plot(showBuySell ? -sellVol : na, title="Sell Volume", color=color.new(color.red,   0), style=plot.style_columns)
+plot(showMA      ?  volMA   : na, title="Volume MA",   color=color.gray,                linewidth=2)
+plot(showCVD     ?  cvd     : na, title="CVD",         color=color.new(color.aqua, 0),  linewidth=1)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: SPIKE DIRECTION ARROWS ON CHART ──────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+plotshape(showSpikeArrows and isBuySpike  and not isChurn,
+     title="Buy Spike Arrow",  location=location.bottom, style=shape.triangleup,
+     color=color.new(color.lime,   0), size=size.small)
+plotshape(showSpikeArrows and isSellSpike and not isChurn,
+     title="Sell Spike Arrow", location=location.top,    style=shape.triangledown,
+     color=color.new(color.red,    0), size=size.small)
+plotshape(showSpikeArrows and isChurn ? 0 : na,
+     title="Churn Marker",     location=location.absolute, style=shape.diamond,
+     color=color.new(color.yellow, 0), size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── NEW: WEEKLY / MONTHLY VISUALIZATION ───────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+weeklyScale   = volMA > 0 and showWMHist ? weeklyVol / (volMA * wmScaleBars)   : na
+weeklyHistVal = showWMHist ? (weeklyDelta >= 0 ? weeklyScale : -weeklyScale)   : na
+weeklyHistCol = weeklyDelta >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+plot(weeklyHistVal, title="Weekly Volume (signed)", color=weeklyHistCol, style=plot.style_histogram, linewidth=3)
+
+monthlyScaled = volMA > 0 and showWMHist ? monthlyVol / (volMA * wmScaleBars * 2) : na
+plot(monthlyScaled, title="Monthly Volume (scaled)", color=color.new(color.purple, 0), linewidth=2)
+
+var float w1 = na
+var float w2 = na
+var float w3 = na
+if newWeek and not na(prevWeeklyVol)
+    w3 := w2
+    w2 := w1
+    w1 := prevWeeklyVol
+weekly3MA       = not na(w1) and not na(w2) and not na(w3) ? (w1 + w2 + w3) / 3.0 : na
+weekly3MAScaled = volMA > 0 and showWMHist and not na(weekly3MA) ? weekly3MA / (volMA * wmScaleBars) : na
+plot(weekly3MAScaled, title="Weekly Vol 3W MA", color=color.new(color.yellow, 0), linewidth=1)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── ALERTS ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+alertcondition(isSpike,                     title="Volume Spike",            message="Volume spike detected (Z-score threshold exceeded)")
+alertcondition(bearDivergence,              title="Bearish Vol Divergence",  message="Price up, volume down — possible bearish reversal")
+alertcondition(bullDivergence,              title="Bullish Vol Divergence",  message="Price down, volume up — possible bullish reversal")
+alertcondition(isBuySpike  and not isChurn, title="Buy Spike",               message="Buy-side volume spike — directional demand surge")
+alertcondition(isSellSpike and not isChurn, title="Sell Spike",              message="Sell-side volume spike — directional supply surge")
+alertcondition(isChurn,                     title="Churn (Exhaustion)",      message="High volume, compressed range — potential exhaustion / indecision")
+alertcondition(sentimentScore >=  8,        title="Strong Bullish Sentiment",message="Sentiment score ≥ +8 (MTF-aligned)")
+alertcondition(sentimentScore <= -8,        title="Strong Bearish Sentiment",message="Sentiment score ≤ -8 (MTF-aligned)")
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── HELPERS ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+f_formatVol(float v) =>
+    math.abs(v) >= 1e9 ? str.tostring(v / 1e9, "#.##") + "B" :
+     math.abs(v) >= 1e6 ? str.tostring(v / 1e6, "#.##") + "M" :
+     math.abs(v) >= 1e3 ? str.tostring(v / 1e3, "#.##") + "K" :
+                          str.tostring(v, "#.##")
+
+f_pctStr(float p) =>
+    (p >= 0 ? "+" : "") + str.tostring(p, "#.##") + "%"
+
+f_pctColor(float p) =>
+    p > 0 ? color.new(#a5d6a7, 0) : p < 0 ? color.new(#ef9a9a, 0) : color.new(#78909c, 0)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── TOOLTIP STRINGS (decision-oriented) ───────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+tt_totalVol   = "Current bar's total volume.\nCompare to the Vol/MA % on the right — above 100% means above-average participation on this bar."
+tt_volMA      = "Volume as % of its " + str.tostring(length) + "-bar moving average.\n>150% = notable activity, >200% = strong interest.\nLow % on a range bar = apathy, be cautious of breakouts."
+tt_zScore     = "Volume deviation in standard deviations from the mean.\n>2σ = statistical spike (rare), >3σ = very rare event.\nUse as an objective filter before acting on any spike bar."
+tt_spike      = "Spike classification:\n▲ BUY SPIKE — positive delta (demand surge, often continuation)\n▼ SELL SPIKE — negative delta (supply surge, often capitulation)\n◆ CHURN — high vol + tight range (exhaustion, watch for reversal)\n● SPIKE — direction unclear"
+tt_buyVol     = "Estimated buy-side volume for this bar.\nFormula: volume × (close − low) / (high − low).\nHigh % (>65%) = buyers in control of the bar."
+tt_sellVol    = "Estimated sell-side volume for this bar.\nFormula: volume × (high − close) / (high − low).\nHigh % (>65%) = sellers in control of the bar."
+tt_delta      = "Bar delta = Buy Volume − Sell Volume.\nPositive = net buying pressure, negative = net selling pressure.\nCompare to CVD trend on the chart for confirmation."
+tt_section    = "Multi-timeframe context.\nWeekly and monthly aggregates reset on each new period.\nCHANGE column shows % move vs previous full period."
+tt_weekVol    = "Cumulative volume for the current week.\nCHANGE = Week-over-Week volume %.\nRising WoW vol + rising price = healthy trend.\nRising WoW vol + falling price = distribution risk."
+tt_weekDelta  = "Net weekly buy/sell imbalance (sum of bar deltas this week).\nPositive = accumulation week, negative = distribution week.\nSign flip vs last week = potential regime change."
+tt_monthVol   = "Cumulative volume for the current month.\nCHANGE = Month-over-Month %.\nSlow-moving confirmation — useful for trend validation, not entry timing."
+tt_monthDelta = "Net monthly buy/sell imbalance.\nSustained direction across weeks + months suggests institutional positioning.\nWeek/month direction divergence = momentum loss."
+tt_sentiment  = "Composite score (−10 to +10).\nWeighting: bar ±4, week ±3, month ±3.\n±8 extremes require all 3 timeframes to agree.\nUse >+2 bullish bias, <−2 bearish bias, in between = neutral/chop."
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── CONSOLIDATED DASHBOARD TABLE ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Single 3-column table replacing the two previous tables.
+//   Col 0 : Metric label  (tooltip on hover)
+//   Col 1 : Current value
+//   Col 2 : Context / change
+c_bg        = color.new(#0d0d0d, 10)
+c_row_alt   = color.new(#1a1a2e, 30)
+c_header_bg = color.new(#1565c0, 20)
+c_section   = color.new(#6a1b9a, 30)
+c_border    = color.new(color.gray, 70)
+c_label     = color.new(#b0bec5, 0)
+c_white     = color.new(color.white, 0)
+
+volRatioPct = str.tostring(math.round(totalVol / volMA * 100)) + "%"
+zScoreStr   = str.tostring(zScore, "#.00") + " σ"
+buyPct      = totalVol > 0 ? math.round(buyVol  / totalVol * 100) : 0
+sellPct     = totalVol > 0 ? math.round(sellVol / totalVol * 100) : 0
+
+if showTable and barstate.islast
+    var table t = table.new(position.top_right, 3, 13,
+         bgcolor=c_bg, border_color=c_border, border_width=1,
+         frame_color=color.new(#1565c0, 40), frame_width=2)
+
+    // ── Header row ───────────────────────────────────────────────────────
+    table.cell(t, 0, 0, "  DASHBOARD",
+         bgcolor=c_header_bg, text_color=c_white,             text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 0, "VALUE",
+         bgcolor=c_header_bg, text_color=color.new(#90caf9, 0), text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 0, "CONTEXT  ",
+         bgcolor=c_header_bg, text_color=color.new(#90caf9, 0), text_size=size.small, text_halign=text.align_right)
+
+    // ── Total Vol ────────────────────────────────────────────────────────
+    table.cell(t, 0, 1, "  Total Vol",
+         bgcolor=c_bg, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_totalVol)
+    table.cell(t, 1, 1, f_formatVol(totalVol),
+         bgcolor=c_bg, text_color=c_white, text_size=size.small, text_halign=text.align_center, tooltip=tt_totalVol)
+    ratioColor = totalVol > volMA ? color.new(#ffeb3b, 0) : color.new(#78909c, 0)
+    table.cell(t, 2, 1, volRatioPct + " of MA  ",
+         bgcolor=c_bg, text_color=ratioColor, text_size=size.small, text_halign=text.align_right, tooltip=tt_volMA)
+
+    // ── Z-Score ──────────────────────────────────────────────────────────
+    zColor = isSpike ? color.new(color.orange, 0) : zScore > 1.0 ? color.new(#ffeb3b, 0) : color.new(#78909c, 0)
+    table.cell(t, 0, 2, "  Z-Score",
+         bgcolor=c_row_alt, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_zScore)
+    table.cell(t, 1, 2, zScoreStr,
+         bgcolor=c_row_alt, text_color=zColor, text_size=size.small, text_halign=text.align_center, tooltip=tt_zScore)
+    table.cell(t, 2, 2, (isSpike ? "above thr" : "normal") + "  ",
+         bgcolor=c_row_alt, text_color=zColor, text_size=size.small, text_halign=text.align_right, tooltip=tt_zScore)
+
+    // ── Spike type ───────────────────────────────────────────────────────
+    // 15-space continuation indent (non-multiple of 4).
+    spikeBg = isChurn     ? color.new(color.yellow, 60) :
+               isBuySpike  ? color.new(color.green,  60) :
+               isSellSpike ? color.new(color.red,    60) : c_bg
+    spikeTxtCol = isChurn     ? color.yellow :
+                   isBuySpike  ? color.new(#a5d6a7, 0) :
+                   isSellSpike ? color.new(#ef9a9a, 0) : color.new(#546e7a, 0)
+    table.cell(t, 0, 3, "  Spike",
+         bgcolor=spikeBg, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_spike)
+    table.cell(t, 1, 3, spikeType,
+         bgcolor=spikeBg, text_color=spikeTxtCol, text_size=size.small, text_halign=text.align_center, tooltip=tt_spike)
+    table.cell(t, 2, 3, (isSpike ? "ACTION" : "  —  "),
+         bgcolor=spikeBg, text_color=spikeTxtCol, text_size=size.small, text_halign=text.align_right, tooltip=tt_spike)
+
+    // ── Buy Vol ──────────────────────────────────────────────────────────
+    table.cell(t, 0, 4, "  Buy Vol",
+         bgcolor=color.new(#1b5e20, 40), text_color=color.new(#a5d6a7, 0), text_size=size.small, text_halign=text.align_left, tooltip=tt_buyVol)
+    table.cell(t, 1, 4, f_formatVol(buyVol),
+         bgcolor=color.new(#1b5e20, 40), text_color=color.new(#a5d6a7, 0), text_size=size.small, text_halign=text.align_center, tooltip=tt_buyVol)
+    table.cell(t, 2, 4, str.tostring(buyPct) + "%  ",
+         bgcolor=color.new(#1b5e20, 40), text_color=color.new(#a5d6a7, 0), text_size=size.small, text_halign=text.align_right, tooltip=tt_buyVol)
+
+    // ── Sell Vol ─────────────────────────────────────────────────────────
+    table.cell(t, 0, 5, "  Sell Vol",
+         bgcolor=color.new(#b71c1c, 40), text_color=color.new(#ef9a9a, 0), text_size=size.small, text_halign=text.align_left, tooltip=tt_sellVol)
+    table.cell(t, 1, 5, f_formatVol(sellVol),
+         bgcolor=color.new(#b71c1c, 40), text_color=color.new(#ef9a9a, 0), text_size=size.small, text_halign=text.align_center, tooltip=tt_sellVol)
+    table.cell(t, 2, 5, str.tostring(sellPct) + "%  ",
+         bgcolor=color.new(#b71c1c, 40), text_color=color.new(#ef9a9a, 0), text_size=size.small, text_halign=text.align_right, tooltip=tt_sellVol)
+
+    // ── Bar Delta ────────────────────────────────────────────────────────
+    deltaVal   = buyVol - sellVol
+    deltaColor = deltaVal >= 0 ? color.new(#a5d6a7, 0) : color.new(#ef9a9a, 0)
+    deltaStr   = (deltaVal >= 0 ? "▲ +" : "▼ ") + f_formatVol(math.abs(deltaVal))
+    table.cell(t, 0, 6, "  Bar Delta",
+         bgcolor=c_row_alt, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_delta)
+    table.cell(t, 1, 6, deltaStr,
+         bgcolor=c_row_alt, text_color=deltaColor, text_size=size.small, text_halign=text.align_center, tooltip=tt_delta)
+    table.cell(t, 2, 6, (deltaVal >= 0 ? "buy" : "sell") + " pressure  ",
+         bgcolor=c_row_alt, text_color=deltaColor, text_size=size.small, text_halign=text.align_right, tooltip=tt_delta)
+
+    // ── Section divider ──────────────────────────────────────────────────
+    table.cell(t, 0, 7, "  PERIOD TRENDS",
+         bgcolor=c_section, text_color=c_white, text_size=size.small, text_halign=text.align_left, tooltip=tt_section)
+    table.cell(t, 1, 7, "",
+         bgcolor=c_section, text_color=c_white, text_size=size.small, text_halign=text.align_center, tooltip=tt_section)
+    table.cell(t, 2, 7, "CHANGE  ",
+         bgcolor=c_section, text_color=color.new(#ce93d8, 0), text_size=size.small, text_halign=text.align_right, tooltip=tt_section)
+
+    // ── Week Vol ─────────────────────────────────────────────────────────
+    table.cell(t, 0, 8, "  Week Vol",
+         bgcolor=c_bg, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_weekVol)
+    table.cell(t, 1, 8, f_formatVol(weeklyVol),
+         bgcolor=c_bg, text_color=c_white, text_size=size.small, text_halign=text.align_center, tooltip=tt_weekVol)
+    table.cell(t, 2, 8, f_pctStr(wowVolPct) + "  ",
+         bgcolor=c_bg, text_color=f_pctColor(wowVolPct), text_size=size.small, text_halign=text.align_right, tooltip=tt_weekVol)
+
+    // ── Week Delta ───────────────────────────────────────────────────────
+    wDeltaStr   = (weeklyDelta >= 0 ? "▲ +" : "▼ ") + f_formatVol(math.abs(weeklyDelta))
+    wDeltaColor = weeklyDelta >= 0 ? color.new(#a5d6a7, 0) : color.new(#ef9a9a, 0)
+    table.cell(t, 0, 9, "  Week Delta",
+         bgcolor=c_row_alt, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_weekDelta)
+    table.cell(t, 1, 9, wDeltaStr,
+         bgcolor=c_row_alt, text_color=wDeltaColor, text_size=size.small, text_halign=text.align_center, tooltip=tt_weekDelta)
+    table.cell(t, 2, 9, f_pctStr(wowDeltaPct) + "  ",
+         bgcolor=c_row_alt, text_color=f_pctColor(wowDeltaPct), text_size=size.small, text_halign=text.align_right, tooltip=tt_weekDelta)
+
+    // ── Month Vol ────────────────────────────────────────────────────────
+    table.cell(t, 0, 10, "  Month Vol",
+         bgcolor=c_bg, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_monthVol)
+    table.cell(t, 1, 10, f_formatVol(monthlyVol),
+         bgcolor=c_bg, text_color=c_white, text_size=size.small, text_halign=text.align_center, tooltip=tt_monthVol)
+    table.cell(t, 2, 10, f_pctStr(momVolPct) + "  ",
+         bgcolor=c_bg, text_color=f_pctColor(momVolPct), text_size=size.small, text_halign=text.align_right, tooltip=tt_monthVol)
+
+    // ── Month Delta ──────────────────────────────────────────────────────
+    mDeltaStr   = (monthlyDelta >= 0 ? "▲ +" : "▼ ") + f_formatVol(math.abs(monthlyDelta))
+    mDeltaColor = monthlyDelta >= 0 ? color.new(#a5d6a7, 0) : color.new(#ef9a9a, 0)
+    table.cell(t, 0, 11, "  Month Delta",
+         bgcolor=c_row_alt, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_monthDelta)
+    table.cell(t, 1, 11, mDeltaStr,
+         bgcolor=c_row_alt, text_color=mDeltaColor, text_size=size.small, text_halign=text.align_center, tooltip=tt_monthDelta)
+    table.cell(t, 2, 11, f_pctStr(momDeltaPct) + "  ",
+         bgcolor=c_row_alt, text_color=f_pctColor(momDeltaPct), text_size=size.small, text_halign=text.align_right, tooltip=tt_monthDelta)
+
+    // ── Sentiment ────────────────────────────────────────────────────────
+    // 13-space continuation indent inside the if-block.
+    sColor = sentimentScore >  2 ? color.new(#a5d6a7, 0) :
+              sentimentScore < -2 ? color.new(#ef9a9a, 0) : color.new(#b0bec5, 0)
+    sLabel = sentimentScore >  2 ? "▲ BULL" :
+              sentimentScore < -2 ? "▼ BEAR" : "● NEUTRAL"
+    sBg = sentimentScore >  2 ? color.new(#1b5e20, 60) :
+           sentimentScore < -2 ? color.new(#b71c1c, 60) : c_bg
+    table.cell(t, 0, 12, "  Sentiment",
+         bgcolor=sBg, text_color=c_label, text_size=size.small, text_halign=text.align_left, tooltip=tt_sentiment)
+    table.cell(t, 1, 12, str.tostring(sentimentScore, "#.0") + " / 10",
+         bgcolor=sBg, text_color=sColor, text_size=size.small, text_halign=text.align_center, tooltip=tt_sentiment)
+    table.cell(t, 2, 12, sLabel + "  ",
+         bgcolor=sBg, text_color=sColor, text_size=size.small, text_halign=text.align_right, tooltip=tt_sentiment)

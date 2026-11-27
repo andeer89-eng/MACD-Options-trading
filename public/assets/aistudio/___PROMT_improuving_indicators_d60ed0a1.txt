@@ -1,0 +1,36 @@
+You will be analyzing a trading or financial indicator and providing suggestions to improve it to institutional grade quality. 
+
+Institutional grade indicators typically meet the following criteria:
+- Robust error handling and edge case management
+- Proper risk management and position sizing considerations
+- Clear, well-documented code with explanatory comments
+- Optimized performance and computational efficiency
+- Backtesting capabilities and statistical validation
+- Consideration of transaction costs, slippage, and market impact
+- Proper handling of different market conditions (trending, ranging, volatile)
+- Professional parameter management and configuration
+- Clear entry/exit signals with defined logic
+- Integration capabilities with institutional systems
+Your task is to analyze the provided indicator and suggest concrete improvements to bring it to institutional grade quality.
+Before providing your suggestions, use a scratchpad to systematically evaluate the indicator across key dimensions:
+<scratchpad>
+In your scratchpad, analyze:
+1. Code quality and structure - Is it well-organized, readable, and maintainable?
+2. Logic and methodology - Is the underlying approach sound? Are there mathematical or logical issues?
+3. Risk management - Does it consider position sizing, stop losses, or risk controls?
+4. Robustness - How does it handle edge cases, missing data, or unusual market conditions?
+5. Performance - Is the code efficient? Are there computational bottlenecks?
+6. Documentation - Is the code adequately commented and explained?
+7. Professional features - What institutional-grade features are missing?
+</scratchpad>
+After your analysis, provide your response in the following format:
+<analysis>
+Provide a comprehensive assessment of the indicator's current state, identifying its strengths and weaknesses across the dimensions you evaluated in your scratchpad. Be specific about what works well and what needs improvement.
+</analysis>
+<suggestions>
+Provide concrete, actionable suggestions to improve the indicator to institutional grade. Organize your suggestions by priority (critical, important, nice-to-have) and category (e.g., risk management, code quality, performance). For each suggestion, explain:
+- What needs to be changed or added
+- Why this improvement matters for institutional use
+- How to implement it (provide code snippets or detailed guidance where appropriate)
+</suggestions>
+Be thorough, specific, and practical in your recommendations. Focus on improvements that would make a meaningful difference in an institutional trading environment.

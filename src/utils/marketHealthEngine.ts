@@ -14,6 +14,11 @@ import {
   type MarketStructuralSummary,
 } from './marketStructuralContext.ts';
 import type { ExternalFearGreedSeries } from './fearGreedProvider.ts';
+import type { PublicBreadthSnapshot } from './publicBreadthFeed.ts';
+import {
+  analyzeMarketTiming,
+  type MarketTimingReport,
+} from './marketTimingEngine.ts';
 
 export type SentimentLabel =
   | 'Extreme Fear'
@@ -133,6 +138,8 @@ export interface MarketHealthReport {
   externalBenchmarks?: {
     cnnFearGreed?: MarketHealthCnnBenchmark | null;
   };
+  publicBreadth?: PublicBreadthSnapshot | null;
+  marketTiming?: MarketTimingReport | null;
 }
 
 export interface MarketHealthInputs {
@@ -150,6 +157,7 @@ export interface MarketHealthInputs {
   qqqWeeklyCandles?: Candle[];
   externalFearGreed?: ExternalFearGreedSeries | null;
   externalCnnBenchmark?: MarketHealthCnnBenchmark | null;
+  publicBreadth?: PublicBreadthSnapshot | null;
 }
 
 function clamp(val: number, min: number, max: number): number {
@@ -670,12 +678,58 @@ export function computeMarketHealthReport(inputs: MarketHealthInputs): MarketHea
         })
       : null;
 
+  const marketTiming = analyzeMarketTiming({
+    spyCandles: spy,
+    qqqCandles: qqqDaily,
+  });
+
+  if (marketTiming) {
+    if (marketTiming.overallRisk === 'SEVERE') {
+      if (safety.safetyStatus === 'SAFE_RISK_ON') {
+        safety.safetyStatus = 'CAUTIOUS';
+      }
+      if (safety.allowNewEntries) {
+        safety.sizeMultiplier = Math.min(safety.sizeMultiplier, 0.5);
+      }
+      safety.reasons.push(
+        `IBD Distribution Risk SEVERE (SPY ${marketTiming.spyDistribution?.activeCount25 ?? 0}d / QQQ ${marketTiming.qqqDistribution?.activeCount25 ?? 0}d — 0.5x max sizing)`
+      );
+    } else if (marketTiming.overallRisk === 'HIGH') {
+      if (safety.allowNewEntries) {
+        safety.sizeMultiplier = Math.min(safety.sizeMultiplier, 0.75);
+      }
+      safety.reasons.push(
+        `IBD Distribution Risk HIGH (SPY ${marketTiming.spyDistribution?.activeCount25 ?? 0}d / QQQ ${marketTiming.qqqDistribution?.activeCount25 ?? 0}d — 0.75x cap)`
+      );
+    }
+  }
+
+  const spBreadth = inputs.publicBreadth?.sp500Breadth;
+  if (spBreadth) {
+    if (spBreadth.regimeLabel === 'BEAR_DIVERGENCE') {
+      if (safety.allowNewEntries) {
+        safety.sizeMultiplier = Math.min(safety.sizeMultiplier, 0.75);
+      }
+      safety.reasons.push(
+        `S&P 500 Breadth Bear Divergence (${spBreadth.pctAbove200Ma.toFixed(1)}% >200MA, capped 0.75x)`
+      );
+    } else if (
+      spBreadth.isTroughBelow40 &&
+      marketTiming?.ftdStatus?.marketRegimeLabel === 'FTD_CONFIRMED'
+    ) {
+      safety.reasons.push(
+        `FTD Confirmed + Breadth Oversold Trough (${spBreadth.pctAbove200Ma.toFixed(1)}% >200MA)`
+      );
+    }
+  }
+
   const feedTags = ['^VIX', '^VIX3M', 'TLT'];
   if ((inputs.vvixCandles || []).length > 0) feedTags.push('^VVIX');
   if ((inputs.hygCandles || []).length > 0 && (inputs.iefCandles || []).length > 0) {
     feedTags.push('HYG/IEF');
   }
   if ((inputs.rspCandles || []).length > 0) feedTags.push('RSP');
+  if (inputs.publicBreadth) feedTags.push('Public Breadth CSV');
 
   const syncedBenchmark: MarketHealthCnnBenchmark | null =
     inputs.externalCnnBenchmark ??
@@ -754,5 +808,7 @@ export function computeMarketHealthReport(inputs: MarketHealthInputs): MarketHea
           },
         }
       : {}),
+    publicBreadth: inputs.publicBreadth ?? null,
+    marketTiming,
   };
 }

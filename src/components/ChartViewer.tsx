@@ -2432,7 +2432,9 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
             const symUpper = symbol.trim().toUpperCase();
             const isQueued = queuedBotSymbols.includes(symUpper);
             const eligible = isAlpacaEquityEligibleSymbol(symUpper) && Boolean(currentCandle?.close && currentCandle.close > 0);
-            const isBear = Boolean(activeSetup?.type?.includes('BEARISH'));
+            const isBear = activeSetup
+              ? activeSetup.type.includes('BEARISH')
+              : chartPocReading?.bias === 'BEARISH';
             return (
               <button
                 type="button"
@@ -2448,7 +2450,7 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({
                     symbol: symUpper,
                     direction: isBear ? 'BEARISH' : 'BULLISH',
                     source: 'CHART',
-                    setupType: activeSetup?.type || 'CHART_SIGNAL',
+                    setupType: activeSetup?.type || (chartPocReading ? `CHART_${chartPocReading.bias}` : 'CHART_SIGNAL'),
                     qualityScore: activeSetup?.qualityScore ?? 75,
                     currentPrice: currentCandle.close,
                     atr: activeSetup

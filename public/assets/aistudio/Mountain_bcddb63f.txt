@@ -1,0 +1,61 @@
+// © Startup Suite — Mountain
+//@version=6
+indicator("Startup Mountain", "Mountain", overlay=false, format=format.percent, precision=2)
+
+// Spec: Blue = bull, Pink = bear. No mountain = bearish (price below base EMA).
+// Enter when slope turns up; exit when slope turns down. Watch 4H/1D/1W.
+
+color C_BLUE  = #2196F3
+color C_PINK  = #FF4081
+color C_GREY  = #424242
+color C_DARK  = #0D0D1A
+color C_WHITE = #FFFFFF
+
+int    baseLen   = input.int(50, "Mountain Base EMA", minval=2, group="Mountain")
+string htfMode   = input.string("Chart", "Source Timeframe", options=["Chart","4H","Daily","Weekly","Custom"], group="Mountain")
+string htfCustom = input.timeframe("D", "Custom Timeframe", group="Mountain")
+bool   i_showFill= input.bool(true, "Fill Mountain", group="Display")
+
+string tf = switch htfMode
+    "Chart"  => timeframe.period
+    "4H"     => "240"
+    "Daily"  => "D"
+    "Weekly" => "W"
+    => htfCustom
+
+[mtnClose, mtnBase] = request.security(syminfo.tickerid, tf, [close, ta.ema(close, baseLen)], lookahead=barmerge.lookahead_off)
+
+// Mountain altitude = % distance from base. Positive = mountain exists; negative = no mountain (bearish).
+float altitude = mtnBase != 0 ? ((mtnClose - mtnBase) / mtnBase) * 100 : 0
+bool  exists   = altitude > 0
+bool  bull     = exists and mtnBase > mtnBase[1]
+bool  bear     = not exists or mtnBase < mtnBase[1]
+
+color altCol = bull ? C_BLUE : bear ? C_PINK : C_GREY
+
+plot(altitude, "Altitude", color=altCol, linewidth=2, style=plot.style_areabr)
+hline(0, "Sea Level", color=C_GREY, linewidth=1)
+
+// Slope of the base — tells you whether the mountain is forming or eroding
+bool slopeUp   = mtnBase > mtnBase[1]
+bool slopeDown = mtnBase < mtnBase[1]
+bool turnUp    = slopeUp   and not slopeUp[1]
+bool turnDown  = slopeDown and not slopeDown[1]
+
+plotshape(turnUp   and exists, "Slope Up (Entry)",   shape.triangleup,   location.bottom, C_BLUE, size=size.small, text="ENTRY", textcolor=C_WHITE)
+plotshape(turnDown,            "Slope Down (Exit)",  shape.triangledown, location.top,    C_PINK, size=size.small, text="EXIT",  textcolor=C_WHITE)
+
+// "No mountain" warning — explicitly per spec, this is 1 bearish confirmation
+plotshape(not exists and exists[1], "No Mountain", shape.xcross, location.top, C_PINK, size=size.small, text="NO MTN", textcolor=C_WHITE)
+
+// State row
+var table state = table.new(position.top_right, 1, 2, bgcolor=C_DARK, border_width=1, border_color=C_GREY)
+if barstate.islast
+    string s = bull ? "MOUNTAIN ↑" : bear ? "ERODING ↓" : "FLAT"
+    color  c = bull ? C_BLUE : bear ? C_PINK : C_GREY
+    table.cell(state, 0, 0, "TF: " + tf, text_color=C_WHITE)
+    table.cell(state, 0, 1, s, text_color=c)
+
+alertcondition(turnUp and exists, "Mountain Entry", "Mountain slope turned up")
+alertcondition(turnDown,          "Mountain Exit",  "Mountain slope turned down")
+alertcondition(not exists and exists[1], "No Mountain", "Mountain disappeared (bearish)")

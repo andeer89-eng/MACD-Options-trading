@@ -373,3 +373,91 @@ test('computeMarketHealthReport synchronizes score and snapshots with externalFe
   assert.equal(report.snapshots.oneWeekAgo?.score, 31);
   assert.equal(report.current.safetyStatus, 'CRASH_DEFENSE');
 });
+
+test('computeMarketHealthReport throttles SAFE_RISK_ON sizeMultiplier on publicBreadth BEAR_DIVERGENCE and SEVERE IBD distribution days', () => {
+  const data = generateDailySeries({
+    days: 80,
+    startPrice: 520,
+    dailyReturnPct: 0.12,
+    vixStart: 17,
+    vixEnd: 14.5,
+    vix3mOffset: 2.0,
+    bullishBars: true,
+  });
+
+  // 1) Healthy uptrend + BEAR_DIVERGENCE breadth caps sizeMultiplier <= 0.75
+  const divReport = computeMarketHealthReport({
+    spyCandles: data.spy,
+    vixCandles: data.vix,
+    vix3mCandles: data.vix3m,
+    tltCandles: data.tlt,
+    flowBenchmarkCandles: {
+      SPY: data.spy,
+      QQQ: data.qqq,
+      XLK: data.xlk,
+    },
+    publicBreadth: {
+      source: 'tradermonty-public-csv',
+      asOf: data.spy[data.spy.length - 1].dateStr,
+      sp500Breadth: {
+        pctAbove200Ma: 41.5,
+        pctAbove200MaDelta1D: -1.4,
+        pctAbove200Ma8Ma: 44.0,
+        trend200Ma: 'DOWN',
+        bearishSignal200: true,
+        isTroughBelow40: false,
+        pctAbove50Ma: 34.0,
+        pctAbove50MaDelta1D: -2.0,
+        pctAbove50Ma8Ma: 38.0,
+        trend50Ma: 'DOWN',
+        bearishSignal50: true,
+        aboveCount200: 208,
+        eligibleCount200: 500,
+        aboveCount50: 170,
+        eligibleCount50: 500,
+        regimeLabel: 'BEAR_DIVERGENCE',
+      },
+      sectorUptrend: null,
+    },
+  });
+
+  assert.ok(divReport.current.sizeMultiplier <= 0.75);
+  assert.ok(divReport.current.reasons.some((r) => r.includes('Bear Divergence')));
+
+  // 2) Inject 6 high-volume distribution days in the last 12 sessions without crashing trend score < 32
+  const distSpy = data.spy.map((c) => ({ ...c }));
+  const distQqq = data.qqq.map((c) => ({ ...c }));
+  for (let offset = 14; offset >= 4; offset -= 2) {
+    const idx = distSpy.length - offset;
+    const prevSpy = distSpy[idx - 1];
+    distSpy[idx] = {
+      ...distSpy[idx],
+      close: Number((prevSpy.close * 0.996).toFixed(2)),
+      volume: prevSpy.volume * 1.45,
+    };
+    const prevQqq = distQqq[idx - 1];
+    distQqq[idx] = {
+      ...distQqq[idx],
+      close: Number((prevQqq.close * 0.995).toFixed(2)),
+      volume: prevQqq.volume * 1.5,
+    };
+  }
+
+  const distReport = computeMarketHealthReport({
+    spyCandles: distSpy,
+    vixCandles: data.vix,
+    vix3mCandles: data.vix3m,
+    tltCandles: data.tlt,
+    flowBenchmarkCandles: {
+      SPY: distSpy,
+      QQQ: distQqq,
+      XLK: data.xlk,
+    },
+  });
+
+  assert.equal(distReport.marketTiming?.overallRisk, 'SEVERE');
+  assert.notEqual(distReport.current.safetyStatus, 'SAFE_RISK_ON');
+  assert.ok(distReport.current.sizeMultiplier <= 0.5);
+  assert.ok(distReport.current.reasons.some((r) => r.includes('IBD Distribution Risk SEVERE')));
+});
+

@@ -7,9 +7,12 @@ import {
   findSwingPoints,
   computeFibonacci,
   detectDivergences,
+  isDivergenceActiveNow,
+  filterActiveDivergences,
   calculateATR,
   getLatestVolatilityMetrics,
   Candle,
+  DivergenceSetup,
 } from './trullasStrategy.ts';
 
 test('calculateEMA correctly processes array', () => {
@@ -174,3 +177,97 @@ test('detectDivergences returns setups sorted newest-first and computes dynamic 
     assert.ok(s.riskRewardRatio > 0 && Number.isFinite(s.riskRewardRatio));
   }
 });
+
+test('filterActiveDivergences excludes stopped-out bearish, TP2-completed bullish, and stale setups while keeping live setups', () => {
+  const baseTime = Date.UTC(2026, 9, 1);
+  const bars: Candle[] = Array.from({ length: 40 }, (_, i) => {
+    const close = i < 10 ? 112 + i : i < 30 ? 122 + (i - 10) * 1.4 : 150 + (i - 30) * 0.5;
+    return {
+      timestamp: baseTime + i * 86_400_000,
+      dateStr: new Date(baseTime + i * 86_400_000).toISOString().slice(0, 10),
+      open: close - 0.5,
+      high: close + 1.2,
+      low: close - 1.2,
+      close,
+      volume: 2_000_000,
+    };
+  });
+  const lastBar = bars[bars.length - 1]; // close = 154.5
+
+  const makeMockSetup = (partial: Partial<DivergenceSetup> & { confirmIdx: number }): DivergenceSetup => ({
+    id: partial.id || 'MOCK',
+    symbol: 'DLTR',
+    timeframe: '1d',
+    type: partial.type || 'BULLISH_DOUBLE',
+    qualityScore: partial.qualityScore ?? 78,
+    points: [
+      {
+        index: partial.confirmIdx,
+        timestamp: bars[partial.confirmIdx].timestamp,
+        dateStr: bars[partial.confirmIdx].dateStr,
+        type: (partial.type || 'BULLISH_DOUBLE').startsWith('BEARISH') ? 'peak' : 'trough',
+        price: partial.stopLoss ?? 100,
+        macd: 0,
+        histogram: 0,
+        rsi: 50,
+        volume: 1_000_000,
+      },
+    ],
+    currentPrice: lastBar.close,
+    triggerPrice: partial.triggerPrice ?? 150,
+    stopLoss: partial.stopLoss ?? 142,
+    fibLevels: { fib0: 142, fib236: 150, fib382: 155, fib500: 158, fib618: 162, fib1000: 170 },
+    targets: partial.targets ?? { tp1: 158, tp2: 164, tp3: 172 },
+    riskRewardRatio: 1.75,
+    confluenceChecks: {
+      priceDivergence: true,
+      macdDivergence: true,
+      rsiDivergence: true,
+      volumeExhaustion: true,
+      macdCrossConfirmed: true,
+    },
+    scalingTranches: { tranche1: 't1', tranche2: 't2', tranche3: 't3' },
+    detectedAt: bars[partial.confirmIdx].timestamp,
+  });
+
+  // 1. Stopped-out bearish setup (stopLoss 149.58 < current close 154.5)
+  const stoppedBearish = makeMockSetup({
+    id: 'DLTR-BEAR-STOPPED',
+    type: 'BEARISH_DOUBLE',
+    confirmIdx: 25,
+    triggerPrice: 142.4,
+    stopLoss: 149.58,
+    targets: { tp1: 137.0, tp2: 132.46, tp3: 124.0 },
+  });
+
+  // 2. Old completed Oct bullish setup (TP2 = 114.99 already blown past at 154.5, >18% from trigger)
+  const completedBullish = makeMockSetup({
+    id: 'DLTR-BULL-COMPLETED',
+    type: 'BULLISH_DOUBLE',
+    confirmIdx: 1,
+    triggerPrice: 112.6,
+    stopLoss: 110.34,
+    targets: { tp1: 113.51, tp2: 114.99, tp3: 117.39 },
+  });
+
+  // 3. Truly active recent bullish setup (confirmed 4 bars ago, SL unbroken, TP2 above current spot)
+  const liveBullish = makeMockSetup({
+    id: 'DLTR-BULL-ACTIVE',
+    type: 'BULLISH_TRIPLE',
+    confirmIdx: 35,
+    triggerPrice: 151.0,
+    stopLoss: 144.0,
+    targets: { tp1: 158.0, tp2: 165.0, tp3: 174.0 },
+  });
+
+  assert.equal(isDivergenceActiveNow(stoppedBearish, bars), false);
+  assert.equal(isDivergenceActiveNow(completedBullish, bars), false);
+  assert.equal(isDivergenceActiveNow(liveBullish, bars), true);
+
+  const filtered = filterActiveDivergences([stoppedBearish, completedBullish, liveBullish], bars);
+  assert.deepEqual(
+    filtered.map((s) => s.id),
+    ['DLTR-BULL-ACTIVE']
+  );
+});
+

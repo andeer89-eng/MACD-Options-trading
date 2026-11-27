@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
   calculateIndicators,
   detectDivergences,
+  filterActiveDivergences,
   getLatestVolatilityMetrics,
   Candle,
 } from '../../src/utils/trullasStrategy.ts';
@@ -81,8 +82,9 @@ export function createMarketRouter(marketData: MarketDataService): Router {
       marketData.fetchSECFilings(symbol),
     ]);
     const indicatorPoints = candles.length > 0 ? calculateIndicators(candles) : [];
-    const divergences =
+    const historicalDivergences =
       indicatorPoints.length > 0 ? detectDivergences(symbol, timeframe, indicatorPoints) : [];
+    const divergences = filterActiveDivergences(historicalDivergences, candles);
 
     const feedMeta = marketData.lastFeedMetaMap.get(symbol.toUpperCase()) || {
       isLiveFeed: candles.length > 0,
@@ -100,6 +102,7 @@ export function createMarketRouter(marketData: MarketDataService): Router {
       candles,
       indicatorPoints,
       divergences,
+      historicalDivergences,
       sec,
       feedMeta,
     });
@@ -414,7 +417,10 @@ export function createMarketRouter(marketData: MarketDataService): Router {
 
               if (candles.length >= 20) {
                 const indicators = calculateIndicators(candles);
-                const setups = detectDivergences(sym, timeframe, indicators);
+                const setups = filterActiveDivergences(
+                  detectDivergences(sym, timeframe, indicators),
+                  candles
+                );
                 const spItem = SP500_UNIVERSE.find((c) => c.symbol === sym);
                 const activeSetup = setups[0] || null;
 
@@ -843,7 +849,10 @@ export function createMarketRouter(marketData: MarketDataService): Router {
 
             if (candles.length >= 20) {
               const indicators = calculateIndicators(candles);
-              const setups = detectDivergences(sym, timeframe, indicators);
+              const setups = filterActiveDivergences(
+                detectDivergences(sym, timeframe, indicators),
+                candles
+              );
               const tosScans = evaluateTosScans(sym, candles);
               const relPerf =
                 sym === 'SPY'

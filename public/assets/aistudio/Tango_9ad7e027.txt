@@ -1,0 +1,62 @@
+// © Startup Suite — Tango
+//@version=6
+indicator("Startup Tango", "Tango", overlay=false, format=format.price, precision=2)
+
+// Spec: Slower than other diamonds. First pane checked. 1 or 2 confirmations.
+// Strong = directional momentum (rising in bull state / falling in bear state).
+// Weekly TF is "amazing" per the guide — use HTF input to lock to weekly.
+
+color C_BLUE  = #2196F3
+color C_PINK  = #FF4081
+color C_GREY  = #424242
+color C_DARK  = #0D0D1A
+color C_WHITE = #FFFFFF
+
+int    rsiLen     = input.int(28, "Tango RSI Length", minval=2, group="Tango")
+int    smoLen     = input.int(10, "Smoothing",        minval=1, group="Tango")
+string htfMode    = input.string("Chart", "Source Timeframe", options=["Chart","Daily","Weekly","Custom"], group="Tango")
+string htfCustom  = input.timeframe("W", "Custom Timeframe", group="Tango")
+bool   i_showHills= input.bool(true, "Fill Hills (above/below 50)", group="Display")
+string tf = switch htfMode
+    "Chart"  => timeframe.period
+    "Daily"  => "D"
+    "Weekly" => "W"
+    => htfCustom
+
+f_tango() =>
+    float rsiRaw = ta.rsi(close, rsiLen)
+    ta.sma(rsiRaw, smoLen)
+
+float tango = request.security(syminfo.tickerid, tf, f_tango(), lookahead=barmerge.lookahead_off)
+
+bool bull         = tango > 50
+bool bear         = tango < 50
+bool bullStrong   = bull and tango > tango[1]
+bool bearStrong   = bear and tango < tango[1]
+bool stateChangeUp = bull and not bull[1]
+bool stateChangeDn = bear and not bear[1]
+
+float baseline = 50
+plot(tango, "Tango", color=bull ? C_BLUE : C_PINK, linewidth=2)
+plot(baseline, "Midline", color=C_GREY, linewidth=1)
+
+p_t = plot(i_showHills ? tango : na, color=na, display=display.none)
+p_b = plot(i_showHills ? baseline : na, color=na, display=display.none)
+fill(p_t, p_b, color=bull ? color.new(C_BLUE, 75) : color.new(C_PINK, 75))
+
+// Diamonds — 1 confirmation on state, 2 on strong-state
+plotshape(stateChangeUp, "Tango Bull (1)", shape.diamond, location.bottom, C_BLUE, size=size.tiny)
+plotshape(stateChangeDn, "Tango Bear (1)", shape.diamond, location.top,    C_PINK, size=size.tiny)
+plotshape(bullStrong and not bullStrong[1], "Tango Bull (2)", shape.diamond, location.bottom, C_BLUE, size=size.small)
+plotshape(bearStrong and not bearStrong[1], "Tango Bear (2)", shape.diamond, location.top,    C_PINK, size=size.small)
+
+// Source-TF banner
+var label tfLabel = na
+if barstate.islast
+    label.delete(tfLabel)
+    tfLabel := label.new(bar_index, 95, "TF: " + tf, color=color.new(C_DARK, 30), textcolor=C_WHITE, style=label.style_label_left, size=size.small)
+
+alertcondition(stateChangeUp, "Tango Bull",        "Tango crossed above 50")
+alertcondition(stateChangeDn, "Tango Bear",        "Tango crossed below 50")
+alertcondition(bullStrong and not bullStrong[1], "Tango Bull Strong", "Tango bull + rising")
+alertcondition(bearStrong and not bearStrong[1], "Tango Bear Strong", "Tango bear + falling")

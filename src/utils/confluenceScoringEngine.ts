@@ -10,6 +10,7 @@ import {
   calculateIndicators,
   Candle,
   detectDivergences,
+  filterActiveDivergences,
   getLatestVolatilityMetrics,
 } from './trullasStrategy';
 import { calculateNadarayaWatsonEnvelope, calculateSmartMoneyConcepts } from './luxalgoIndicators';
@@ -38,6 +39,25 @@ export interface ConfluenceContext {
   tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>;
   cboeSummary?: TickerOptionsSummary | null;
   recordedStats?: { wins: number; total: number };
+  isStagnant?: boolean;
+  opposingSetupCount?: number;
+  opposingTosCount?: number;
+}
+
+export const HIGH_CONVICTION_MIN_SCORE = 68; // Grade B or higher (excludes Grade C <68 & Grade D <55)
+
+export type UnifiedConvictionGrade = 'A+' | 'A' | 'B' | 'C' | 'D';
+
+export function scoreToUnifiedConvictionGrade(score: number): {
+  grade: UnifiedConvictionGrade;
+  tier: 'ELITE' | 'HIGH CONVICTION' | 'STRONG' | 'SPECULATIVE' | 'WEAK';
+  confluenceTier: 'ELITE CONFLUENCE' | 'HIGH CONVICTION' | 'QUALIFIED SETUP' | 'SPECULATIVE' | 'REJECT';
+} {
+  if (score >= 88) return { grade: 'A+', tier: 'ELITE', confluenceTier: 'ELITE CONFLUENCE' };
+  if (score >= 78) return { grade: 'A', tier: 'HIGH CONVICTION', confluenceTier: 'HIGH CONVICTION' };
+  if (score >= 68) return { grade: 'B', tier: 'STRONG', confluenceTier: 'QUALIFIED SETUP' };
+  if (score >= 55) return { grade: 'C', tier: 'SPECULATIVE', confluenceTier: 'SPECULATIVE' };
+  return { grade: 'D', tier: 'WEAK', confluenceTier: 'REJECT' };
 }
 
 export interface Candidate360Confluence {
@@ -89,7 +109,10 @@ function evaluateTrullasPillarsAngle(
   const hist = lastPoint?.histogram ?? 0;
   const prevHist = prevPoint?.histogram ?? 0;
 
-  const detectedSetups = detectDivergences(symbol, '1d', indicatorPoints);
+  const detectedSetups = filterActiveDivergences(
+    detectDivergences(symbol, '1d', indicatorPoints),
+    candles
+  );
   const matchingSetups = detectedSetups.filter((s) =>
     isBull ? s.type.startsWith('BULLISH') : s.type.startsWith('BEARISH')
   );
@@ -140,11 +163,11 @@ function evaluateTrullasPillarsAngle(
   let divLabel = 'No Active Divergence';
   const qualityDisplay = latestSetup?.qualityScore ?? context?.matchingSetup?.qualityScore ?? 75;
   if (hasTriple) {
-    score += 24;
+    score += matchingTos.length >= 2 ? 27 : 24;
     divLabel = 'Triple Divergence';
     evidence.push(`Confirmed Triple MACD Divergence (${qualityDisplay}% quality) in OHLCV structure`);
   } else if (hasDouble) {
-    score += 18;
+    score += matchingTos.length >= 2 ? 21 : 18;
     divLabel = 'Double Divergence';
     evidence.push(`Confirmed Double MACD Divergence (${qualityDisplay}% quality) in OHLCV structure`);
   } else if (matchingTos.length >= 2) {
@@ -662,28 +685,36 @@ export function evaluateCandidate360Confluence(
   const activeEngines = [angle1, angle2, angle3, ...(cboeAvailable ? [angle4] : []), angle5, angle6];
   const activeWeightSum = activeEngines.reduce((sum, a) => sum + a.weightPct, 0) || 100;
   const weightedSum = activeEngines.reduce((sum, a) => sum + a.score * a.weightPct, 0);
-  const compositeScore = Math.min(100, Math.max(20, Math.round(weightedSum / activeWeightSum)));
 
-  let grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F' = 'B';
-  let tier: Candidate360Confluence['confidenceTier'] = 'QUALIFIED SETUP';
-
-  // Unified thresholds matching Watchlist Ranking Engine (A+ >= 88, A >= 78, B >= 68, C >= 55)
-  if (compositeScore >= 88) {
-    grade = 'A+';
-    tier = 'ELITE CONFLUENCE';
-  } else if (compositeScore >= 78) {
-    grade = 'A';
-    tier = 'HIGH CONVICTION';
-  } else if (compositeScore >= 68) {
-    grade = 'B';
-    tier = 'QUALIFIED SETUP';
-  } else if (compositeScore >= 55) {
-    grade = 'C';
-    tier = 'SPECULATIVE';
-  } else {
-    grade = 'D';
-    tier = 'REJECT';
+  // Unified liquidity & conflict adjustments shared across Watchlist + Confluence 360°
+  const matchingTosCount = Array.isArray(context?.tosSignals)
+    ? context.tosSignals.filter((s) => s.direction === forcedDirection).length
+    : 0;
+  const hasMatchingSetup = Boolean(context?.matchingSetup) || angle1.metrics['Divergence Type'] !== 'No Active Divergence';
+  const hasTripleMatch = angle1.metrics['Divergence Type'] === 'Triple Divergence';
+  const stagnationPenalty =
+    context?.isStagnant === true || (context?.isStagnant !== false && volMetrics.atrPercent > 0 && volMetrics.atrPercent < 0.75)
+      ? -10
+      : 0;
+  let conflictPenalty = 0;
+  if ((context?.opposingSetupCount ?? 0) > 0 && !hasMatchingSetup) {
+    conflictPenalty -= 8;
+  } else if (
+    (context?.opposingTosCount ?? 0) >= 2 &&
+    (context?.opposingTosCount ?? 0) > matchingTosCount &&
+    !hasTripleMatch
+  ) {
+    conflictPenalty -= 5;
   }
+
+  const compositeScore = Math.min(
+    100,
+    Math.max(20, Math.round(weightedSum / activeWeightSum) + stagnationPenalty + conflictPenalty)
+  );
+
+  const mapped = scoreToUnifiedConvictionGrade(compositeScore);
+  const grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F' = mapped.grade;
+  const tier: Candidate360Confluence['confidenceTier'] = mapped.confluenceTier;
 
   const allBadges: string[] = [];
   if (angle1.metrics['Divergence Type'] === 'Triple Divergence') allBadges.push('MACD Triple Divergence');

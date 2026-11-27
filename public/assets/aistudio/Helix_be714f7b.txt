@@ -1,0 +1,96 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LuxAlgo
+
+//@version=6
+indicator("Startup Helix", "Helix", overlay = false, format = format.price, precision = 4)
+
+// --- Colors ---
+color C_GREEN      = #00e676
+color C_PURPLE     = #9c27b0
+color C_GREY       = #434651
+color C_WHITE      = #ffffff
+color C_INDECISION = color.new(#787b86, 85)
+
+// --- Inputs ---
+int   fastLen      = input.int(8, "Fast EMA", minval = 1, group = "Helix Logic")
+int   slowLen      = input.int(21, "Slow EMA", minval = 1, group = "Helix Logic")
+int   smoothLen    = input.int(5, "Smoothing", minval = 1, group = "Helix Logic")
+int   slopeLen     = input.int(3, "Slope Lookback", minval = 1, group = "Helix Logic")
+float steepMult    = input.float(1.5, "Steepness Threshold", minval = 0.1, step = 0.1, group = "Helix Logic", tooltip = "Sensitivity for 'STEEP' signals.")
+
+// Indecision & Grid Inputs
+float flatThres    = input.float(0.25, "Indecision Threshold", minval = 0.05, maxval = 1.0, step = 0.05, group = "Visuals", tooltip = "Defines 'Flat' helix based on a fraction of average width.")
+bool  showGrid     = input.bool(true, "Show Internal Grid", group = "Visuals")
+
+// --- Core Calculations ---
+float fast         = ta.ema(close, fastLen)
+float slow         = ta.ema(close, slowLen)
+float diff         = fast - slow
+float helix        = ta.ema(diff, smoothLen)
+
+bool isBull        = helix > 0
+bool isBear        = helix < 0
+color mainCol      = isBull ? C_GREEN : C_PURPLE
+
+// Mirrored Envelope
+float upper        = math.abs(helix)
+float lower        = -math.abs(helix)
+
+// Steepness & Crossovers
+float slope        = helix - helix[slopeLen]
+float slopeSd      = ta.stdev(slope, 50)
+bool crossUp       = ta.crossover(helix, 0)
+bool crossDn       = ta.crossunder(helix, 0)
+bool isSteep       = math.abs(slope) > (slopeSd * steepMult)
+
+// Indecision Logic (Flat Helix)
+float avgWidth     = ta.sma(upper, 200)
+bool  isFlat       = upper < (avgWidth * flatThres)
+
+// --- Visual Representation ---
+// Indecision Background
+bgcolor(isFlat ? C_INDECISION : na, title = "Indecision Highlight")
+
+// Zero Line
+hline(0, "Zero Line", color = C_GREY, linestyle = hline.style_dotted)
+
+// Exterior Lines
+p1 = plot(upper, "Upper Helix", color = mainCol, linewidth = 2)
+p2 = plot(lower, "Lower Helix", color = mainCol, linewidth = 2)
+
+// Interior Fill
+fill(p1, p2, color.new(mainCol, 85), "Helix Body Fill")
+
+// High-Density '+' Grid Fill (11-Row Grid)
+color gridCol = showGrid ? (isBull ? color.new(C_GREEN, 50) : color.new(C_PURPLE, 50)) : na
+
+plotchar(isBull ? upper * 0.15 : na, "B1", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBull ? upper * 0.35 : na, "B2", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBull ? upper * 0.55 : na, "B3", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBull ? upper * 0.75 : na, "B4", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBull ? upper * 0.90 : na, "B5", "+", location.absolute, gridCol, size = size.tiny)
+
+plotchar(isBear ? lower * 0.15 : na, "P1", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? lower * 0.35 : na, "P2", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? lower * 0.55 : na, "P3", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? lower * 0.75 : na, "P4", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? lower * 0.90 : na, "P5", "+", location.absolute, gridCol, size = size.tiny)
+
+// Mirrored/Zero Grid
+plotchar(isBull ? lower * 0.25 : na, "B6", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBull ? lower * 0.65 : na, "B7", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? upper * 0.25 : na, "P6", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(isBear ? upper * 0.65 : na, "P7", "+", location.absolute, gridCol, size = size.tiny)
+plotchar(0, "ZeroGrid", "+", location.absolute, gridCol, size = size.tiny)
+
+// Signal Icons (Diamonds)
+plotshape(crossUp and isSteep ? 0 : na, "Steep Bull", shape.diamond, location.absolute, C_GREEN,  size = size.small, text = "STEEP", textcolor = C_WHITE)
+plotshape(crossDn and isSteep ? 0 : na, "Steep Bear", shape.diamond, location.absolute, C_PURPLE, size = size.small, text = "STEEP", textcolor = C_WHITE)
+
+plotshape(crossUp and not isSteep ? 0 : na, "Flat Bull", shape.diamond, location.absolute, color.new(C_GREEN, 50),  size = size.tiny)
+plotshape(crossDn and not isSteep ? 0 : na, "Flat Bear", shape.diamond, location.absolute, color.new(C_PURPLE, 50), size = size.tiny)
+
+// --- Alert System ---
+alertcondition(isFlat, "Indecision Detected", "Helix is flat, market indecision")
+alertcondition(crossUp and isSteep, "Steep Bullish Signal", "Helix STEEP bullish crossover")
+alertcondition(crossDn and isSteep, "Steep Bearish Signal", "Helix STEEP bearish crossunder")

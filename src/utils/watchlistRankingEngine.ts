@@ -2,21 +2,30 @@
    StageLedger — Unified Top-50 Market Leaders & Conviction Ranking Engine
    Single source of truth for:
    - Live Daily Watchlist (TodayView)
-   - Confluence 360° Matrix candidate selection
+   - Confluence 360° Matrix candidate selection & scoring
    - Trade Action Zones high-conviction pipeline
+   - Live Scanner badges
 
-   Strictly uses real scan data (divergences, TOS multi-scan hits,
-   30-bar SPY Alpha, ATR/RelVol, and SMA Stage structure).
+   Uses `evaluateCandidate360Confluence` (Confluence 360° 6-angle engine)
+   as the canonical scoring function whenever OHLCV candles (>= 30 bars)
+   are present, eliminating A+98 vs A82 divergence across views.
    Never emits signal-less baseline fallbacks or Grade C/D noise by default.
    ===================================================================== */
 
-import { Candle, DivergenceSetup } from './trullasStrategy';
+import { Candle, DivergenceSetup, filterActiveDivergences } from './trullasStrategy';
 import { TosScanReport, TosScanSignal } from './tosScansEngine';
 import { SP500_UNIVERSE } from '../data/sp500Universe';
+import {
+  Candidate360Confluence,
+  evaluateCandidate360Confluence,
+  HIGH_CONVICTION_MIN_SCORE,
+  scoreToUnifiedConvictionGrade,
+  UnifiedConvictionGrade,
+} from './confluenceScoringEngine';
 
-export type ConvictionGrade = 'A+' | 'A' | 'B' | 'C' | 'D';
+export { HIGH_CONVICTION_MIN_SCORE };
+export type ConvictionGrade = UnifiedConvictionGrade;
 
-export const HIGH_CONVICTION_MIN_SCORE = 68; // Grade B or higher (excludes Grade C <68 & Grade D <55)
 export const MAX_WATCHLIST_LEADERS = 50;
 
 export interface RankedMarketLeader {
@@ -29,6 +38,9 @@ export interface RankedMarketLeader {
   score: number;
   grade: ConvictionGrade;
   tier: 'ELITE' | 'HIGH CONVICTION' | 'STRONG' | 'SPECULATIVE' | 'WEAK';
+  scoringSource: 'UNIFIED_360' | 'HEURISTIC_FALLBACK';
+  legacyHeuristicScore: number;
+  confluence360: Candidate360Confluence | null;
   primarySetup: string;
   hasDivergence: boolean;
   hasTripleDivergence: boolean;
@@ -59,6 +71,11 @@ export interface DualLeaderboardResult {
 export interface LeaderboardBuildOptions {
   minScore?: number; // Default 68 (Grade B+). Pass 55 to include Grade C.
   maxItems?: number; // Default 50
+  sectorAlphaBySector?: Record<string, number> | Map<string, number>;
+}
+
+export interface DirectionalEvalOptions {
+  sectorAlphaPct?: number | null;
 }
 
 export const NDX_CORE_SET = new Set([
@@ -74,11 +91,8 @@ export function scoreToConvictionGrade(score: number): {
   grade: ConvictionGrade;
   tier: RankedMarketLeader['tier'];
 } {
-  if (score >= 88) return { grade: 'A+', tier: 'ELITE' };
-  if (score >= 78) return { grade: 'A', tier: 'HIGH CONVICTION' };
-  if (score >= 68) return { grade: 'B', tier: 'STRONG' };
-  if (score >= 55) return { grade: 'C', tier: 'SPECULATIVE' };
-  return { grade: 'D', tier: 'WEAK' };
+  const mapped = scoreToUnifiedConvictionGrade(score);
+  return { grade: mapped.grade, tier: mapped.tier };
 }
 
 function computeSimpleStageFromCandles(
@@ -102,13 +116,145 @@ function computeSimpleStageFromCandles(
   return { stage: 3, label: 'Stage 3 Topping' };
 }
 
+export interface LegacyHeuristicInput {
+  isLong: boolean;
+  bestSetup: DivergenceSetup | null;
+  hasTriple: boolean;
+  hasDouble: boolean;
+  matchingSetupCount: number;
+  matchingTos: TosScanSignal[];
+  opposingSetupCount: number;
+  opposingTosCount: number;
+  relAlpha: number | null;
+  relVolStDev: number | null;
+  atrPercent: number;
+  isStagnant: boolean;
+  stage: 1 | 2 | 3 | 4 | null;
+}
+
+/**
+ * Legacy additive Watchlist heuristic (kept strictly for <30-candle fallback and
+ * for Scoring Audit diagnostics to quantify legacy inflation vs Confluence 360°).
+ */
+export function computeLegacyWatchlistHeuristicScore(input: LegacyHeuristicInput): number {
+  const {
+    isLong,
+    bestSetup,
+    hasTriple,
+    hasDouble,
+    matchingSetupCount,
+    matchingTos,
+    opposingSetupCount,
+    opposingTosCount,
+    relAlpha,
+    relVolStDev,
+    atrPercent,
+    isStagnant,
+    stage,
+  } = input;
+
+  let divPatternPts = 0;
+  if (bestSetup) {
+    const q = Math.max(40, Math.min(100, Number(bestSetup.qualityScore) || 65));
+    if (hasTriple) {
+      divPatternPts = 34 + Math.round(Math.max(0, q - 50) * 0.22);
+    } else if (hasDouble) {
+      divPatternPts = 26 + Math.round(Math.max(0, q - 50) * 0.2);
+    } else {
+      divPatternPts = 22 + Math.round(Math.max(0, q - 50) * 0.18);
+    }
+  }
+
+  let tosClusterPts = 0;
+  if (matchingTos.length > 0) {
+    const maxStrength = Math.max(40, Math.min(100, Number(matchingTos[0].strength) || 65));
+    if (matchingTos.length >= 3) {
+      tosClusterPts = 32 + Math.round(maxStrength * 0.13);
+    } else if (matchingTos.length === 2) {
+      tosClusterPts = 26 + Math.round(maxStrength * 0.13);
+    } else {
+      tosClusterPts = 17 + Math.round(maxStrength * 0.12);
+    }
+  }
+
+  const basePatternPts = Math.max(divPatternPts, tosClusterPts);
+  const dualEngineBonus =
+    matchingSetupCount > 0 && matchingTos.length > 0
+      ? matchingTos.length >= 2
+        ? 13
+        : 9
+      : 0;
+
+  let alphaPts = 0;
+  if (relAlpha !== null) {
+    const directionalAlpha = isLong ? relAlpha : -relAlpha;
+    if (directionalAlpha >= 15) alphaPts = 19;
+    else if (directionalAlpha >= 8) alphaPts = 15;
+    else if (directionalAlpha >= 3) alphaPts = 11;
+    else if (directionalAlpha > 0) alphaPts = 6;
+    else if (directionalAlpha >= -5) alphaPts = 2;
+    else alphaPts = hasTriple ? -3 : -7;
+  }
+
+  let volLiquidityPts = 0;
+  if (relVolStDev !== null) {
+    if (relVolStDev >= 2.0) volLiquidityPts += 8;
+    else if (relVolStDev >= 1.25) volLiquidityPts += 4;
+  }
+  if (!isStagnant && atrPercent >= 1.0) {
+    volLiquidityPts += 6;
+  } else if (isStagnant) {
+    volLiquidityPts -= 10;
+  }
+
+  let stagePts = 0;
+  if (stage !== null) {
+    if (isLong) {
+      if (stage === 2) stagePts = 8;
+      else if (stage === 1) stagePts = hasTriple || hasDouble ? 6 : 3;
+      else if (stage === 4 && !hasTriple) stagePts = -9;
+    } else {
+      if (stage === 4) stagePts = 8;
+      else if (stage === 3) stagePts = hasTriple || hasDouble ? 6 : 3;
+      else if (stage === 2 && !hasTriple) stagePts = -9;
+    }
+  }
+
+  let conflictPenalty = 0;
+  if (opposingSetupCount > 0 && matchingSetupCount === 0) {
+    conflictPenalty -= 8;
+  } else if (opposingTosCount >= 2 && opposingTosCount > matchingTos.length && !hasTriple) {
+    conflictPenalty -= 5;
+  }
+
+  const rawTotal =
+    basePatternPts + dualEngineBonus + alphaPts + volLiquidityPts + stagePts + conflictPenalty;
+  return Math.max(20, Math.min(100, Math.round(rawTotal)));
+}
+
+function resolveSectorAlpha(
+  sector: string,
+  sectorAlphaBySector?: Record<string, number> | Map<string, number>
+): number | null {
+  if (!sectorAlphaBySector || !sector) return null;
+  if (sectorAlphaBySector instanceof Map) {
+    const val = sectorAlphaBySector.get(sector);
+    return typeof val === 'number' && Number.isFinite(val) ? val : null;
+  }
+  const val = sectorAlphaBySector[sector];
+  return typeof val === 'number' && Number.isFinite(val) ? val : null;
+}
+
 /**
  * Evaluates a scanned ticker strictly for ONE direction ('long' = BULLISH or 'short' = BEARISH).
  * Returns null when the ticker has ZERO directional signals (prevents signal-less Grade C/D leakage).
+ *
+ * Uses `evaluateCandidate360Confluence` as canonical single source of truth whenever >= 30 bars exist.
  */
 export function evaluateDirectionalLeader(
   rawItem: any,
-  direction: 'long' | 'short'
+  direction: 'long' | 'short',
+  options?: DirectionalEvalOptions
 ): RankedMarketLeader | null {
   if (!rawItem) return null;
   const symbol = String(rawItem.symbol || '').toUpperCase().trim();
@@ -118,10 +264,14 @@ export function evaluateDirectionalLeader(
   if (!Number.isFinite(currentPrice) || currentPrice <= 0) return null;
 
   const isLong = direction === 'long';
-  const dirUpper = isLong ? 'BULLISH' : 'BEARISH';
-  const oppUpper = isLong ? 'BEARISH' : 'BULLISH';
+  const dirUpper: 'BULLISH' | 'BEARISH' = isLong ? 'BULLISH' : 'BEARISH';
+  const oppUpper: 'BULLISH' | 'BEARISH' = isLong ? 'BEARISH' : 'BULLISH';
 
-  const setups: DivergenceSetup[] = Array.isArray(rawItem.setups) ? rawItem.setups : [];
+  const candles: Candle[] | undefined = Array.isArray(rawItem.candles) ? rawItem.candles : undefined;
+  const rawSetups: DivergenceSetup[] = Array.isArray(rawItem.setups) ? rawItem.setups : [];
+  const setups: DivergenceSetup[] = filterActiveDivergences(rawSetups, candles, {
+    spotPrice: currentPrice,
+  });
   const matchingSetups = setups
     .filter((s) => typeof s?.type === 'string' && s.type.toUpperCase().includes(dirUpper))
     .sort((a, b) => (b.qualityScore || 0) - (a.qualityScore || 0));
@@ -145,56 +295,11 @@ export function evaluateDirectionalLeader(
   const hasTriple = matchingSetups.some((s) => s.type.toUpperCase().includes('TRIPLE'));
   const hasDouble = matchingSetups.some((s) => s.type.toUpperCase().includes('DOUBLE'));
 
-  // 1. Base Pattern Score (max 45)
-  let divPatternPts = 0;
-  if (bestSetup) {
-    const q = Math.max(40, Math.min(100, Number(bestSetup.qualityScore) || 65));
-    if (hasTriple) {
-      divPatternPts = 34 + Math.round(Math.max(0, q - 50) * 0.22); // 34..45
-    } else if (hasDouble) {
-      divPatternPts = 26 + Math.round(Math.max(0, q - 50) * 0.2); // 26..36
-    } else {
-      divPatternPts = 22 + Math.round(Math.max(0, q - 50) * 0.18);
-    }
-  }
-
-  let tosClusterPts = 0;
-  if (matchingTos.length > 0) {
-    const maxStrength = Math.max(40, Math.min(100, Number(matchingTos[0].strength) || 65));
-    if (matchingTos.length >= 3) {
-      tosClusterPts = 32 + Math.round(maxStrength * 0.13); // ~40..45
-    } else if (matchingTos.length === 2) {
-      tosClusterPts = 26 + Math.round(maxStrength * 0.13); // ~34..39
-    } else {
-      tosClusterPts = 17 + Math.round(maxStrength * 0.12); // ~24..29
-    }
-  }
-
-  const basePatternPts = Math.max(divPatternPts, tosClusterPts);
-  const dualEngineBonus =
-    matchingSetups.length > 0 && matchingTos.length > 0
-      ? matchingTos.length >= 2
-        ? 13
-        : 9
-      : 0;
-
-  // 2. Relative 30-Bar Alpha vs SPY (max 19)
   const relAlpha =
     typeof rawItem.relPerfVsSpyPct === 'number' && Number.isFinite(rawItem.relPerfVsSpyPct)
       ? rawItem.relPerfVsSpyPct
       : null;
-  let alphaPts = 0;
-  if (relAlpha !== null) {
-    const directionalAlpha = isLong ? relAlpha : -relAlpha;
-    if (directionalAlpha >= 15) alphaPts = 19;
-    else if (directionalAlpha >= 8) alphaPts = 15;
-    else if (directionalAlpha >= 3) alphaPts = 11;
-    else if (directionalAlpha > 0) alphaPts = 6;
-    else if (directionalAlpha >= -5) alphaPts = 2;
-    else alphaPts = hasTriple ? -3 : -7;
-  }
 
-  // 3. Volume Surge & ATR Liquidity Quality (max 14)
   const atr = Number(rawItem.atr ?? 0) || Number((currentPrice * 0.018).toFixed(2));
   const atrPercent =
     Number(rawItem.atrPercent ?? 0) ||
@@ -206,45 +311,23 @@ export function evaluateDirectionalLeader(
       ? tosReport.snapshot.relVolStDev
       : null;
 
-  let volLiquidityPts = 0;
-  if (relVolStDev !== null) {
-    if (relVolStDev >= 2.0) volLiquidityPts += 8;
-    else if (relVolStDev >= 1.25) volLiquidityPts += 4;
-  }
-  if (!isStagnant && atrPercent >= 1.0) {
-    volLiquidityPts += 6;
-  } else if (isStagnant) {
-    volLiquidityPts -= 10;
-  }
-
-  // 4. Trend Stage Alignment (max 8)
-  const candles: Candle[] | undefined = Array.isArray(rawItem.candles) ? rawItem.candles : undefined;
   const { stage, label: stageLabel } = computeSimpleStageFromCandles(candles, currentPrice);
-  let stagePts = 0;
-  if (stage !== null) {
-    if (isLong) {
-      if (stage === 2) stagePts = 8;
-      else if (stage === 1) stagePts = hasTriple || hasDouble ? 6 : 3;
-      else if (stage === 4 && !hasTriple) stagePts = -9;
-    } else {
-      if (stage === 4) stagePts = 8;
-      else if (stage === 3) stagePts = hasTriple || hasDouble ? 6 : 3;
-      else if (stage === 2 && !hasTriple) stagePts = -9;
-    }
-  }
 
-  // 5. Opposing Signal Conflict Penalty
-  let conflictPenalty = 0;
-  if (opposingSetups.length > 0 && matchingSetups.length === 0) {
-    conflictPenalty -= 8;
-  } else if (opposingTos.length >= 2 && opposingTos.length > matchingTos.length && !hasTriple) {
-    conflictPenalty -= 5;
-  }
-
-  const rawTotal =
-    basePatternPts + dualEngineBonus + alphaPts + volLiquidityPts + stagePts + conflictPenalty;
-  const score = Math.max(20, Math.min(100, Math.round(rawTotal)));
-  const { grade, tier } = scoreToConvictionGrade(score);
+  const legacyHeuristicScore = computeLegacyWatchlistHeuristicScore({
+    isLong,
+    bestSetup,
+    hasTriple,
+    hasDouble,
+    matchingSetupCount: matchingSetups.length,
+    matchingTos,
+    opposingSetupCount: opposingSetups.length,
+    opposingTosCount: opposingTos.length,
+    relAlpha,
+    relVolStDev,
+    atrPercent,
+    isStagnant,
+    stage,
+  });
 
   const spMeta = SP500_MAP.get(symbol);
   const sector = rawItem.sector || spMeta?.sector || 'Equities';
@@ -254,8 +337,58 @@ export function evaluateDirectionalLeader(
   if (NDX_CORE_SET.has(symbol)) universe.push('ndx100');
   if (universe.length === 0) universe.push('sp500');
 
-  // Primary Setup label
   const getTosLabel = (sig: TosScanSignal) => sig.shortLabel || sig.name || sig.id;
+
+  // Canonical 360° Confluence scoring whenever >= 30 real OHLCV bars exist
+  const normalizedCandles: Candle[] | undefined =
+    candles && candles.length >= 30
+      ? candles
+          .filter((c) => c && typeof c.close === 'number' && Number.isFinite(c.close) && c.close > 0)
+          .map((c) => {
+            const ts = Number(c.timestamp) || (c.dateStr ? Date.parse(c.dateStr) : Date.now());
+            return {
+              timestamp: ts,
+              dateStr: c.dateStr || new Date(ts).toISOString().split('T')[0],
+              open: Number(c.open ?? c.close),
+              high: Number(c.high ?? c.close),
+              low: Number(c.low ?? c.close),
+              close: Number(c.close),
+              volume: Number(c.volume) || 0,
+            };
+          })
+      : undefined;
+
+  const confluence360 =
+    normalizedCandles && normalizedCandles.length >= 30
+      ? evaluateCandidate360Confluence(symbol, normalizedCandles, dirUpper, {
+          sectorAlphaPct: options?.sectorAlphaPct ?? null,
+          relPerfVsSpyPct: relAlpha,
+          relVolStDev,
+          matchingSetup: bestSetup
+            ? {
+                type: bestSetup.type,
+                qualityScore: bestSetup.qualityScore,
+                timeframe: bestSetup.timeframe,
+              }
+            : null,
+          tosSignals: matchingTos.map((s) => ({
+            id: s.id,
+            label: getTosLabel(s),
+            direction: dirUpper,
+            strength: s.strength,
+          })),
+          isStagnant,
+          opposingSetupCount: opposingSetups.length,
+          opposingTosCount: opposingTos.length,
+        })
+      : null;
+
+  const score = confluence360 ? confluence360.overallScore : legacyHeuristicScore;
+  const { grade, tier } = scoreToConvictionGrade(score);
+  const scoringSource: RankedMarketLeader['scoringSource'] = confluence360
+    ? 'UNIFIED_360'
+    : 'HEURISTIC_FALLBACK';
+
   const primarySetup = bestSetup
     ? `${bestSetup.type.replace(/_/g, ' ')}${matchingTos.length > 0 ? ` + ${getTosLabel(matchingTos[0])}` : ''}`
     : matchingTos
@@ -297,6 +430,9 @@ export function evaluateDirectionalLeader(
     score,
     grade,
     tier,
+    scoringSource,
+    legacyHeuristicScore,
+    confluence360,
     primarySetup,
     hasDivergence: matchingSetups.length > 0,
     hasTripleDivergence: hasTriple,
@@ -365,13 +501,18 @@ export function buildDualMarketLeaderboards(
   let excludedWeakBearish = 0;
 
   for (const rawItem of dedupedBySym.values()) {
-    const bull = evaluateDirectionalLeader(rawItem, 'long');
+    const sym = String(rawItem?.symbol || '').toUpperCase().trim();
+    const spMeta = SP500_MAP.get(sym);
+    const sector = rawItem?.sector || spMeta?.sector || 'Equities';
+    const sectorAlphaPct = resolveSectorAlpha(sector, options.sectorAlphaBySector);
+
+    const bull = evaluateDirectionalLeader(rawItem, 'long', { sectorAlphaPct });
     if (bull) {
       if (bull.score >= minScore) bullishQualified.push(bull);
       else excludedWeakBullish++;
     }
 
-    const bear = evaluateDirectionalLeader(rawItem, 'short');
+    const bear = evaluateDirectionalLeader(rawItem, 'short', { sectorAlphaPct });
     if (bear) {
       if (bear.score >= minScore) bearishQualified.push(bear);
       else excludedWeakBearish++;

@@ -28,7 +28,7 @@ import {
   Candidate360Confluence,
   AngleEvaluation,
 } from '../utils/confluenceScoringEngine';
-import { Candle } from '../utils/trullasStrategy';
+import { Candle, filterActiveDivergences } from '../utils/trullasStrategy';
 import { SP500_TOP_50 } from '../data/sp500Universe';
 import { TickerOptionsSummary } from '../utils/cboeOptionsEngine';
 import { GicsSectorPerformance } from '../utils/sectorMetrics';
@@ -42,6 +42,10 @@ import {
   recordTop50PresenceSnapshot,
   PresenceAnnotation,
 } from '../utils/watchlistPersistenceTracker';
+import {
+  auditUnifiedScoringConsistency,
+  BatchScoringAuditReport,
+} from '../utils/scoringAuditEngine';
 
 function getCurrencyPrefix(currency?: string, symbol?: string): string {
   if (currency === 'SEK' || symbol?.endsWith('.ST')) return 'SEK ';
@@ -80,7 +84,23 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   const [directionFilter, setDirectionFilter] = useState<'BULLISH' | 'BEARISH' | 'ALL'>('BULLISH');
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate360Confluence | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
   const [presenceMap, setPresenceMap] = useState<Map<string, PresenceAnnotation>>(new Map());
+  const [sectorsMap, setSectorsMap] = useState<Map<string, GicsSectorPerformance>>(new Map());
+
+  const sectorAlphaBySector = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const [name, sec] of sectorsMap.entries()) {
+      const alpha =
+        typeof sec?.rsVsSpy === 'number' && Number.isFinite(sec.rsVsSpy)
+          ? sec.rsVsSpy
+          : typeof sec?.changePercent === 'number' && Number.isFinite(sec.changePercent)
+          ? sec.changePercent
+          : null;
+      if (alpha !== null) map.set(name, alpha);
+    }
+    return map;
+  }, [sectorsMap]);
 
   // Build unified Top-50 Bullish and Top-50 Bearish leaderboards from real scanner results
   const leaderboards = useMemo(() => {
@@ -88,15 +108,24 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
     return buildDualMarketLeaderboards(scannerResults, {
       minScore,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults, gradeFilter]);
+  }, [scannerResults, gradeFilter, sectorAlphaBySector]);
 
   const strictLeaderboards = useMemo(() => {
     return buildDualMarketLeaderboards(scannerResults, {
       minScore: HIGH_CONVICTION_MIN_SCORE,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults]);
+  }, [scannerResults, sectorAlphaBySector]);
+
+  const scoringAuditReport = useMemo<BatchScoringAuditReport>(() => {
+    return auditUnifiedScoringConsistency(scannerResults, {
+      sectorAlphaBySector,
+      maxItems: 50,
+    });
+  }, [scannerResults, sectorAlphaBySector]);
 
   // Persist Top-50 watchlist streaks strictly from high-conviction leaders (never polluted by C/ALL views)
   useEffect(() => {
@@ -147,7 +176,6 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
   // Evaluated candidates (populated strictly from real OHLCV candles)
   const [candidates, setCandidates] = useState<Candidate360Confluence[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [sectorsMap, setSectorsMap] = useState<Map<string, GicsSectorPerformance>>(new Map());
 
   const evaluateAllCandidates = useCallback(async (symbolsToEval: string[]) => {
     if (symbolsToEval.length === 0) {
@@ -185,8 +213,9 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         // Optional macro benchmark
       }
 
-      // Reuse scanner candles when available, otherwise fetch live 1d/6mo candles
-      const entries: Array<{
+      // Reuse canonical 360° evaluation already computed on RankedMarketLeader when available
+      const precomputedResults: Candidate360Confluence[] = [];
+      const fallbackEntries: Array<{
         symbol: string;
         candles: Candle[];
         direction?: 'BULLISH' | 'BEARISH';
@@ -196,10 +225,15 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
           relVolStDev?: number | null;
           matchingSetup?: { type: string; qualityScore: number; timeframe?: string } | null;
           tosSignals?: Array<{ id: string; label: string; direction: 'BULLISH' | 'BEARISH'; strength: number }>;
+          isStagnant?: boolean;
+          opposingSetupCount?: number;
+          opposingTosCount?: number;
         };
       }> = [];
 
       const toFetch = symbolsToEval.filter((sym) => {
+        const leader = leaderBySymbol.get(sym.toUpperCase());
+        if (leader?.confluence360) return false;
         const existing = scanBySymbol.get(sym.toUpperCase());
         return !existing || !Array.isArray(existing.candles) || existing.candles.length < 30;
       });
@@ -230,6 +264,12 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         const upper = sym.toUpperCase();
         const scanItem = scanBySymbol.get(upper);
         const leader = leaderBySymbol.get(upper);
+
+        if (leader?.confluence360) {
+          precomputedResults.push(leader.confluence360);
+          continue;
+        }
+
         const candles =
           scanItem && Array.isArray(scanItem.candles) && scanItem.candles.length >= 30
             ? normalizeCandles(scanItem.candles)
@@ -237,7 +277,10 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
 
         if (candles.length < 30) continue;
 
-        const firstSetupType: string = scanItem?.setups?.[0]?.type || '';
+        const activeSetups = filterActiveDivergences(scanItem?.setups || [], candles, {
+          spotPrice: Number(scanItem?.currentPrice ?? candles[candles.length - 1]?.close ?? 0),
+        });
+        const firstSetupType: string = activeSetups[0]?.type || '';
         const direction: 'BULLISH' | 'BEARISH' = leader
           ? leader.direction === 'short'
             ? 'BEARISH'
@@ -262,6 +305,10 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
             ? scanItem.relPerfVsSpyPct
             : leader?.relPerfVsSpyPct ?? null;
 
+        const oppDir = direction === 'BULLISH' ? 'BEARISH' : 'BULLISH';
+        const matchingActive = activeSetups.filter((s) => s.type?.toUpperCase().includes(direction));
+        const opposingActive = activeSetups.filter((s) => s.type?.toUpperCase().includes(oppDir));
+
         const tosSignals = Array.isArray(scanItem?.tosScans?.signals)
           ? scanItem.tosScans.signals.map((s: any) => ({
               id: s.id,
@@ -270,8 +317,14 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
               strength: s.strength,
             }))
           : undefined;
+        const opposingTosCount = Array.isArray(scanItem?.tosScans?.signals)
+          ? scanItem.tosScans.signals.filter((s: any) => s.direction === oppDir).length
+          : 0;
+        const isStagnant =
+          Boolean(scanItem?.isStagnant) ||
+          (typeof scanItem?.atrPercent === 'number' && scanItem.atrPercent > 0 && scanItem.atrPercent < 0.75);
 
-        entries.push({
+        fallbackEntries.push({
           symbol: upper,
           candles,
           direction,
@@ -279,15 +332,20 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
             sectorAlphaPct,
             relPerfVsSpyPct,
             relVolStDev: leader?.relVolStDev ?? scanItem?.tosScans?.snapshot?.relVolStDev ?? null,
-            matchingSetup: leader?.matchingDivergence ?? scanItem?.setups?.[0] ?? null,
+            matchingSetup: leader?.matchingDivergence ?? matchingActive[0] ?? null,
             tosSignals,
+            isStagnant,
+            opposingSetupCount: opposingActive.length,
+            opposingTosCount,
           },
         });
       }
 
-      const ranked = rankCandidatesByConfluence(entries);
+      const ranked = [...precomputedResults, ...rankCandidatesByConfluence(fallbackEntries)].sort(
+        (a, b) => b.overallScore - a.overallScore
+      );
       setCandidates(ranked);
-      if (ranked.length === 0 && entries.length === 0 && symbolsToEval.length > 0) {
+      if (ranked.length === 0 && symbolsToEval.length > 0) {
         setErrorMessage('Live market feeds did not return enough OHLCV history (>= 30 daily bars) for matrix evaluation.');
       }
     } catch (err: any) {
@@ -342,7 +400,12 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         cboeSummary = cboeRes.value.data.optionsSummary || null;
       }
 
-      const secName = companyMetaOverride?.sector || '';
+      const upperClean = clean.toUpperCase();
+      const matchedScan = scannerResults.find(
+        (r) => String(r?.symbol || '').toUpperCase() === upperClean
+      );
+      const matchedLeader = activeLeaderQueue.find((l) => l.symbol === upperClean);
+      const secName = companyMetaOverride?.sector || matchedLeader?.sector || matchedScan?.sector || '';
       const secPerf = secName ? sectorsMap.get(secName) : undefined;
       const sectorAlphaPct =
         typeof secPerf?.rsVsSpy === 'number'
@@ -351,12 +414,10 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
           ? secPerf.changePercent
           : null;
 
-      const upperClean = clean.toUpperCase();
-      const matchedScan = scannerResults.find(
-        (r) => String(r?.symbol || '').toUpperCase() === upperClean
-      );
-      const matchedLeader = activeLeaderQueue.find((l) => l.symbol === upperClean);
-      const scanSetupType: string = matchedScan?.setups?.[0]?.type || '';
+      const activeScanSetups = filterActiveDivergences(matchedScan?.setups || [], realCandles, {
+        spotPrice: Number(matchedScan?.currentPrice ?? realCandles[realCandles.length - 1]?.close ?? 0),
+      });
+      const scanSetupType: string = activeScanSetups[0]?.type || '';
       const scanPrimaryDir: string = matchedScan?.tosScans?.primarySignal?.direction || '';
       const auditDirection: 'BULLISH' | 'BEARISH' =
         matchedLeader
@@ -370,12 +431,22 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
           : scanSetupType.includes('BEAR') || scanPrimaryDir === 'BEARISH'
           ? 'BEARISH'
           : 'BULLISH';
+      const oppAuditDir = auditDirection === 'BULLISH' ? 'BEARISH' : 'BULLISH';
+      const matchingActive = activeScanSetups.filter((s) => s.type?.toUpperCase().includes(auditDirection));
+      const opposingActive = activeScanSetups.filter((s) => s.type?.toUpperCase().includes(oppAuditDir));
+      const opposingTosCount = Array.isArray(matchedScan?.tosScans?.signals)
+        ? matchedScan.tosScans.signals.filter((s: any) => s.direction === oppAuditDir).length
+        : 0;
+      const isStagnant =
+        Boolean(matchedScan?.isStagnant) ||
+        (typeof matchedScan?.atrPercent === 'number' && matchedScan.atrPercent > 0 && matchedScan.atrPercent < 0.75);
+
       const evaluated = evaluateCandidate360Confluence(clean, realCandles, auditDirection, {
         cboeSummary,
         sectorAlphaPct,
         relPerfVsSpyPct: matchedLeader?.relPerfVsSpyPct ?? matchedScan?.relPerfVsSpyPct ?? null,
         relVolStDev: matchedLeader?.relVolStDev ?? matchedScan?.tosScans?.snapshot?.relVolStDev ?? null,
-        matchingSetup: matchedLeader?.matchingDivergence ?? matchedScan?.setups?.[0] ?? null,
+        matchingSetup: matchedLeader?.matchingDivergence ?? matchingActive[0] ?? null,
         tosSignals: Array.isArray(matchedScan?.tosScans?.signals)
           ? matchedScan.tosScans.signals.map((s: any) => ({
               id: s.id,
@@ -384,6 +455,9 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
               strength: s.strength,
             }))
           : undefined,
+        isStagnant,
+        opposingSetupCount: opposingActive.length,
+        opposingTosCount,
       });
 
       if (!evaluated) {
@@ -475,6 +549,18 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
         </div>
 
         <div className="flex items-center space-x-2 z-10">
+          <button
+            type="button"
+            data-testid="open-scoring-audit-btn"
+            onClick={() => setShowAuditModal(true)}
+            className="flex items-center space-x-2 px-3.5 py-2 text-xs font-semibold bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 rounded-lg transition shadow-sm"
+            title="Inspect unified scoring reconciliation across Watchlist, Confluence 360°, Live Scanner, and Action Zones"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>
+              Scoring Audit ({scoringAuditReport.maxReconciledGapPts === 0 ? '0Δ Reconciled' : `${scoringAuditReport.divergentCount}Δ`})
+            </span>
+          </button>
           <button
             onClick={handleRefreshMatrix}
             disabled={isAuditing}
@@ -1096,6 +1182,176 @@ export const ConfluenceMatrixView: React.FC<ConfluenceMatrixViewProps> = ({
               >
                 Close Audit
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Unified Scoring Reconciliation Audit Modal */}
+      {showAuditModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 overflow-y-auto"
+          onClick={() => setShowAuditModal(false)}
+        >
+          <div
+            data-testid="scoring-audit-modal"
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-5 border-b border-zinc-800 bg-zinc-950/90">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-bold text-white tracking-tight">
+                      Unified Scoring Reconciliation Audit
+                    </h3>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      {scoringAuditReport.divergentCount === 0
+                        ? `100% RECONCILED (0Δ MAX GAP)`
+                        : `${scoringAuditReport.divergentCount} DIVERGENT`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Compares Confluence 360°, Live Daily Watchlist, Live Scanner, Action Zones, and Legacy Watchlist Heuristic.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close scoring audit modal"
+                onClick={() => setShowAuditModal(false)}
+                className="p-1.5 text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+                  <span className="text-[10px] uppercase text-zinc-500 font-semibold block">Active Leaders Audited</span>
+                  <span className="text-xl font-bold text-white font-mono mt-1 block">
+                    {scoringAuditReport.totalAudited}
+                  </span>
+                  <span className="text-[10px] text-emerald-400">
+                    {scoringAuditReport.reconciledCount} / {scoringAuditReport.totalAudited} exact match
+                  </span>
+                </div>
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+                  <span className="text-[10px] uppercase text-zinc-500 font-semibold block">Current Cross-Module Gap</span>
+                  <span className="text-xl font-bold text-emerald-400 font-mono mt-1 block">
+                    {scoringAuditReport.maxReconciledGapPts} pts
+                  </span>
+                  <span className="text-[10px] text-zinc-400">Watchlist ≡ 360° ≡ Scanner ≡ Action</span>
+                </div>
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+                  <span className="text-[10px] uppercase text-zinc-500 font-semibold block">Legacy Watchlist Gap (Avg)</span>
+                  <span className="text-xl font-bold text-amber-400 font-mono mt-1 block">
+                    {scoringAuditReport.avgLegacyInflationPts >= 0 ? '+' : ''}
+                    {scoringAuditReport.avgLegacyInflationPts} pts
+                  </span>
+                  <span className="text-[10px] text-zinc-400">Old additive sum vs 360° weighted avg</span>
+                </div>
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+                  <span className="text-[10px] uppercase text-zinc-500 font-semibold block">Largest Legacy Divergence</span>
+                  <span className="text-xl font-bold text-white font-mono mt-1 block">
+                    {scoringAuditReport.maxLegacyGapCase
+                      ? `${scoringAuditReport.maxLegacyGapCase.symbol} (${scoringAuditReport.maxLegacyGapCase.legacyWatchlistScore} vs ${scoringAuditReport.maxLegacyGapCase.unifiedScore})`
+                      : '—'}
+                  </span>
+                  <span className="text-[10px] text-zinc-400">Now unified at {scoringAuditReport.maxLegacyGapCase?.unifiedScore ?? '—'}%</span>
+                </div>
+              </div>
+
+              <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-4 space-y-2">
+                <div className="font-bold text-zinc-200 flex items-center space-x-1.5">
+                  <Info className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Root Cause Diagnosis &amp; Refactor Summary</span>
+                </div>
+                <ul className="space-y-1 text-[11px] text-zinc-400 list-disc pl-4">
+                  {scoringAuditReport.rootCauseSummary.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-zinc-900/90 border-b border-zinc-800 text-zinc-400 uppercase font-mono text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Symbol</th>
+                        <th className="py-2.5 px-3">Side</th>
+                        <th className="py-2.5 px-3 text-center">Confluence 360°</th>
+                        <th className="py-2.5 px-3 text-center">Watchlist</th>
+                        <th className="py-2.5 px-3 text-center">Scanner</th>
+                        <th className="py-2.5 px-3 text-center">Action Zone</th>
+                        <th className="py-2.5 px-3 text-center">Legacy Heuristic</th>
+                        <th className="py-2.5 px-3 text-center">Legacy Δ</th>
+                        <th className="py-2.5 px-3">Audit Drivers</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60 font-mono">
+                      {scoringAuditReport.entries.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="py-8 text-center text-zinc-500">
+                            Run Live S&amp;P 500 scan to populate reconciliation audit rows.
+                          </td>
+                        </tr>
+                      ) : (
+                        scoringAuditReport.entries.slice(0, 25).map((entry) => (
+                          <tr key={`${entry.direction}-${entry.symbol}`} className="hover:bg-zinc-900/50">
+                            <td className="py-2 px-3 font-bold text-white">{entry.symbol}</td>
+                            <td className="py-2 px-3">
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                  entry.direction === 'BULLISH'
+                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                    : 'bg-rose-500/20 text-rose-400'
+                                }`}
+                              >
+                                {entry.direction}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-center text-emerald-300 font-bold">
+                              {entry.confluence360Grade} {entry.confluence360Score}%
+                            </td>
+                            <td className="py-2 px-3 text-center text-emerald-300 font-bold">
+                              {entry.watchlistGrade} {entry.watchlistScore}%
+                            </td>
+                            <td className="py-2 px-3 text-center text-cyan-300">
+                              {entry.scannerGrade} {entry.scannerScore}%
+                            </td>
+                            <td className="py-2 px-3 text-center text-indigo-300">
+                              {entry.actionZoneGrade} {entry.actionZoneScore}%
+                            </td>
+                            <td className="py-2 px-3 text-center text-zinc-400">
+                              {entry.legacyWatchlistGrade} {entry.legacyWatchlistScore}%
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <span
+                                className={
+                                  Math.abs(entry.legacyVsConfluenceGapPts) >= 5
+                                    ? 'text-amber-400 font-bold'
+                                    : 'text-zinc-500'
+                                }
+                              >
+                                {entry.legacyVsConfluenceGapPts >= 0 ? '+' : ''}
+                                {entry.legacyVsConfluenceGapPts}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-sans text-[10px] text-zinc-400 max-w-[260px]">
+                              {entry.diagnosis[0]}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>

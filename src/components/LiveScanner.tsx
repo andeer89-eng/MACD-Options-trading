@@ -37,8 +37,9 @@ import {
 } from '../data/sp500Universe';
 import { SectorFiltering } from './SectorFiltering';
 import { MarketOverview } from './MarketOverview';
-import { Candle, DivergenceSetup } from '../utils/trullasStrategy';
+import { Candle, DivergenceSetup, filterActiveDivergences } from '../utils/trullasStrategy';
 import { evaluateCandidate360Confluence } from '../utils/confluenceScoringEngine';
+import { fetchJsonSafe } from '../utils/safeFetchJson';
 import { computeStageSummaryFromCandles } from '../utils/trendSpiderUniverse';
 import { CandleData } from '../utils/trendSpiderEngine';
 import { evaluateSignalWeighting } from '../utils/signalWeightingEngine';
@@ -98,6 +99,10 @@ type ScanStrategyFilter =
   | 'ALL'
   | 'ANY_SIGNAL'
   | 'TRULLAS_DIV'
+  | 'VCP_BREAKOUT'
+  | 'STOCKBEE_BURST'
+  | 'EXHAUSTION_HAMMER'
+  | 'PARABOLIC_SHORT'
   | 'TTM_SQUEEZE'
   | 'FALSE_BREAKOUT'
   | 'STACKED_EMA'
@@ -163,6 +168,31 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       .filter((q) => q.status === 'QUEUED')
       .map((q) => q.symbol.toUpperCase())
   );
+
+  const [sectorAlphaBySector, setSectorAlphaBySector] = useState<Record<string, number>>({});
+
+  React.useEffect(() => {
+    let active = true;
+    fetchJsonSafe<{ sectors?: Array<{ name?: string; rsVsSpy?: number; changePercent?: number }> }>('/api/sectors')
+      .then((res) => {
+        if (!active || !res.ok || !Array.isArray(res.data?.sectors)) return;
+        const map: Record<string, number> = {};
+        for (const s of res.data.sectors) {
+          const alpha =
+            typeof s?.rsVsSpy === 'number' && Number.isFinite(s.rsVsSpy)
+              ? s.rsVsSpy
+              : typeof s?.changePercent === 'number' && Number.isFinite(s.changePercent)
+              ? s.changePercent
+              : null;
+          if (alpha !== null && s?.name) map[s.name] = alpha;
+        }
+        setSectorAlphaBySector(map);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     const syncQueue = () => {
@@ -303,30 +333,58 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     >();
     for (const item of results) {
       if (!item || !item.symbol || map.has(item.symbol)) continue;
-      const mainSetup = item.setups[0];
+      const activeSetups = filterActiveDivergences(item.setups || [], item.candles, {
+        spotPrice: item.currentPrice,
+      });
       const tosScans = item.tosScans ?? evaluateTosScans(item.symbol, item.candles || []);
-      const isBull = mainSetup
-        ? mainSetup.type.includes('BULLISH')
-        : tosScans.primarySignal?.direction !== 'BEARISH';
+      const bullSetups = activeSetups.filter((s) => s.type?.toUpperCase().includes('BULLISH'));
+      const bearSetups = activeSetups.filter((s) => s.type?.toUpperCase().includes('BEARISH'));
+      const bullTos = tosScans.signals.filter((s) => s.direction === 'BULLISH');
+      const bearTos = tosScans.signals.filter((s) => s.direction === 'BEARISH');
+
+      const isBull =
+        bullSetups.length > 0 && bearSetups.length === 0
+          ? true
+          : bearSetups.length > 0 && bullSetups.length === 0
+          ? false
+          : bullSetups.length > 0 && bearSetups.length > 0
+          ? (bullSetups[0]?.qualityScore ?? 0) >= (bearSetups[0]?.qualityScore ?? 0)
+          : tosScans.primarySignal?.direction !== 'BEARISH';
+
+      const dirUpper: 'BULLISH' | 'BEARISH' = isBull ? 'BULLISH' : 'BEARISH';
+      const matchingSetups = isBull ? bullSetups : bearSetups;
+      const opposingSetups = isBull ? bearSetups : bullSetups;
+      const matchingTos = isBull ? bullTos : bearTos;
+      const opposingTos = isBull ? bearTos : bullTos;
+      const mainSetup = matchingSetups[0] ?? activeSetups[0];
+
       const stageSummary = computeStageSummaryFromCandles(item.symbol, toStageCandles(item.candles));
+      const sectorAlphaPct =
+        item.sector && typeof sectorAlphaBySector[item.sector] === 'number'
+          ? sectorAlphaBySector[item.sector]
+          : null;
+      const isStagnant =
+        Boolean(item.isStagnant) ||
+        (typeof item.atrPercent === 'number' && item.atrPercent > 0 && item.atrPercent < 0.75);
+
       const conf = evaluateCandidate360Confluence(
         item.symbol,
         item.candles,
-        isBull ? 'BULLISH' : 'BEARISH',
+        dirUpper,
         {
+          sectorAlphaPct,
           relPerfVsSpyPct: typeof item.relPerfVsSpyPct === 'number' ? item.relPerfVsSpyPct : null,
           relVolStDev: tosScans.snapshot?.relVolStDev ?? null,
           matchingSetup: mainSetup ?? null,
-          tosSignals: tosScans.signals
-            .filter((s): s is typeof s & { direction: 'BULLISH' | 'BEARISH' } =>
-              s.direction === 'BULLISH' || s.direction === 'BEARISH'
-            )
-            .map((s) => ({
-              id: s.id,
-              label: s.shortLabel || s.name || s.id,
-              direction: s.direction,
-              strength: s.strength,
-            })),
+          tosSignals: matchingTos.map((s) => ({
+            id: s.id,
+            label: s.shortLabel || s.name || s.id,
+            direction: dirUpper,
+            strength: s.strength,
+          })),
+          isStagnant,
+          opposingSetupCount: opposingSetups.length,
+          opposingTosCount: opposingTos.length,
         }
       );
       const weighting =
@@ -346,13 +404,17 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       map.set(item.symbol, { conf, stageSummary, weighting, tosScans, tosPlanSetup });
     }
     return map;
-  }, [results, timeframe]);
+  }, [results, timeframe, sectorAlphaBySector]);
 
   const strategyCounts = useMemo(() => {
     const counts: Record<ScanStrategyFilter, number> = {
       ALL: 0,
       ANY_SIGNAL: 0,
       TRULLAS_DIV: 0,
+      VCP_BREAKOUT: 0,
+      STOCKBEE_BURST: 0,
+      EXHAUSTION_HAMMER: 0,
+      PARABOLIC_SHORT: 0,
       TTM_SQUEEZE: 0,
       FALSE_BREAKOUT: 0,
       STACKED_EMA: 0,
@@ -373,6 +435,10 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       const ids = tos?.matchedIds || [];
       if (hasDiv) counts.TRULLAS_DIV++;
       if (hasDiv || ids.length > 0) counts.ANY_SIGNAL++;
+      if (ids.includes('VCP_BREAKOUT')) counts.VCP_BREAKOUT++;
+      if (ids.includes('STOCKBEE_BURST')) counts.STOCKBEE_BURST++;
+      if (ids.includes('EXHAUSTION_HAMMER')) counts.EXHAUSTION_HAMMER++;
+      if (ids.includes('PARABOLIC_SHORT')) counts.PARABOLIC_SHORT++;
       if (ids.includes('TTM_SQUEEZE')) counts.TTM_SQUEEZE++;
       if (ids.includes('FALSE_BREAKOUT')) counts.FALSE_BREAKOUT++;
       if (ids.includes('STACKED_EMA')) counts.STACKED_EMA++;
@@ -932,7 +998,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
             <span className="font-semibold text-white">Scan Strategy Modes</span>
             <span className="text-zinc-500 hidden sm:inline">
-              &middot; Trullàs Divergences + 11 TOS Indicators Stock Hacker Setups
+              &middot; Trullàs Divergences + 15 Institutional &amp; TOS Scanners
             </span>
           </div>
 
@@ -942,7 +1008,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             className="text-xs font-medium text-zinc-300 hover:text-white px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center gap-1.5 transition whitespace-nowrap shrink-0"
           >
             <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{showTosRulesCatalog ? 'Hide Scan Specs' : 'TOS Scan Rules (11)'}</span>
+            <span>{showTosRulesCatalog ? 'Hide Scan Specs' : `TOS & Institutional Rules (${TOS_SCAN_DEFINITIONS.length})`}</span>
           </button>
         </div>
 
@@ -952,6 +1018,10 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               { id: 'ALL', label: 'All Scanned' },
               { id: 'ANY_SIGNAL', label: 'Any Active Setup' },
               { id: 'TRULLAS_DIV', label: 'Trullàs Div' },
+              { id: 'VCP_BREAKOUT', label: 'VCP Breakout' },
+              { id: 'STOCKBEE_BURST', label: 'Stockbee Burst' },
+              { id: 'EXHAUSTION_HAMMER', label: 'Exh. Hammer' },
+              { id: 'PARABOLIC_SHORT', label: 'Parabolic Short' },
               { id: 'TTM_SQUEEZE', label: 'TTM Squeeze' },
               { id: 'FALSE_BREAKOUT', label: 'False Breakout' },
               { id: 'STACKED_EMA', label: 'Stacked EMAs' },

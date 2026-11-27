@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Candle, IndicatorPoint, DivergenceSetup } from '../utils/trullasStrategy';
+import { Candle, IndicatorPoint, DivergenceSetup, filterActiveDivergences } from '../utils/trullasStrategy';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 
 export interface FeedMetadata {
@@ -96,16 +96,14 @@ export function useChartData({
         if (reqId !== chartReqIdRef.current) return;
         if (resp.ok && resp.data) {
           const data = resp.data;
-          setCandles(data.candles || []);
+          const nextCandles = data.candles || [];
+          const activeDivergences = filterActiveDivergences(data.divergences || [], nextCandles);
+          setCandles(nextCandles);
           setIndicatorPoints(data.indicatorPoints || []);
-          setDivergences(data.divergences || []);
+          setDivergences(activeDivergences);
           setSecData(data.sec || null);
           setFeedMeta(data.feedMeta || null);
-          if (data.divergences && data.divergences.length > 0) {
-            setActiveSetup(data.divergences[0]);
-          } else {
-            setActiveSetup(null);
-          }
+          setActiveSetup(activeDivergences.length > 0 ? activeDivergences[0] : null);
         }
         if (isBackground) {
           void fetchLtfData();

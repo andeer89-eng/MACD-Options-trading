@@ -659,3 +659,115 @@ export function detectDivergences(
 
   return setups;
 }
+
+export interface ActiveDivergenceOptions {
+  /** Override current spot price (defaults to last bar's close if bars provided, else setup.currentPrice). */
+  spotPrice?: number;
+  /** Maximum fractional distance allowed between triggerPrice and spotPrice (default 0.18 = 18%). */
+  maxTriggerDistancePct?: number;
+  /** Maximum number of bars elapsed since final pivot confirmation before setup expires (default 45). */
+  maxBarsSinceConfirm?: number;
+}
+
+/**
+ * Evaluates whether a detected DivergenceSetup is STILL ACTIVE right now:
+ * - Stop loss has not been breached by current spot or any bar strictly after final pivot confirmation.
+ * - Full target (TP2 = 61.8% retracement) has not already been achieved/runaway-exceeded.
+ * - Setup is within actionable price proximity (<= 18% from trigger) and bar age (<= 45 bars).
+ *
+ * Historical engines (backtestEngine, shadowAudit, empirical MFE/MAE) continue to use unfiltered
+ * detectDivergences(), while all live UI, Chart Studio, Scanner, Watchlist, and Confluence engines
+ * consume filterActiveDivergences().
+ */
+export function isDivergenceActiveNow(
+  setup: DivergenceSetup | null | undefined,
+  bars?: Array<Pick<Candle, 'timestamp' | 'high' | 'low' | 'close'>>,
+  options: ActiveDivergenceOptions = {}
+): boolean {
+  if (!setup || typeof setup.type !== 'string') return false;
+
+  const hasBars = Array.isArray(bars) && bars.length > 0;
+  const spotPrice =
+    typeof options.spotPrice === 'number' && Number.isFinite(options.spotPrice) && options.spotPrice > 0
+      ? options.spotPrice
+      : hasBars
+      ? Number(bars![bars!.length - 1].close)
+      : Number(setup.currentPrice);
+
+  if (!Number.isFinite(spotPrice) || spotPrice <= 0) return false;
+
+  const isBull = setup.type.toUpperCase().startsWith('BULLISH');
+  const isBear = setup.type.toUpperCase().startsWith('BEARISH');
+  if (!isBull && !isBear) return false;
+
+  // 1. Immediate spot stop-loss invalidation
+  if (typeof setup.stopLoss === 'number' && Number.isFinite(setup.stopLoss) && setup.stopLoss > 0) {
+    if (isBull && spotPrice <= setup.stopLoss) return false;
+    if (isBear && spotPrice >= setup.stopLoss) return false;
+  }
+
+  // 2. Price proximity gate (must be within maxTriggerDistancePct of trigger)
+  const maxTriggerDist = options.maxTriggerDistancePct ?? 0.18;
+  if (typeof setup.triggerPrice === 'number' && Number.isFinite(setup.triggerPrice) && setup.triggerPrice > 0) {
+    const distanceRatio = Math.abs(setup.triggerPrice - spotPrice) / spotPrice;
+    if (distanceRatio > maxTriggerDist) return false;
+  }
+
+  // 3. Immediate spot runaway past TP2 target
+  const tp2 = setup.targets?.tp2;
+  if (typeof tp2 === 'number' && Number.isFinite(tp2) && tp2 > 0) {
+    if (isBull && spotPrice > tp2 * 1.03) return false;
+    if (isBear && spotPrice < tp2 * 0.97) return false;
+  }
+
+  // 4. Post-confirmation OHLCV bar audit (intraday stop-out, TP2 completion, and bar-age expiry)
+  const points = Array.isArray(setup.points) ? setup.points : [];
+  const lastPoint = points[points.length - 1];
+  if (hasBars && lastPoint) {
+    let confirmIdx = typeof lastPoint.index === 'number' ? lastPoint.index : -1;
+    if (
+      confirmIdx < 0 ||
+      confirmIdx >= bars!.length ||
+      (lastPoint.timestamp && bars![confirmIdx]?.timestamp !== lastPoint.timestamp)
+    ) {
+      confirmIdx = lastPoint.timestamp
+        ? bars!.findIndex((b) => b.timestamp >= lastPoint.timestamp)
+        : -1;
+    }
+
+    if (confirmIdx >= 0 && confirmIdx < bars!.length) {
+      const maxAge = options.maxBarsSinceConfirm ?? 45;
+      const barsSinceConfirm = bars!.length - 1 - confirmIdx;
+      if (barsSinceConfirm > maxAge) return false;
+
+      for (let k = confirmIdx + 1; k < bars!.length; k++) {
+        const bar = bars![k];
+        if (!bar) continue;
+
+        if (isBull) {
+          if (setup.stopLoss > 0 && bar.low < setup.stopLoss) return false;
+          if (typeof tp2 === 'number' && tp2 > 0 && bar.high >= tp2) return false;
+        } else {
+          if (setup.stopLoss > 0 && bar.high > setup.stopLoss) return false;
+          if (typeof tp2 === 'number' && tp2 > 0 && bar.low <= tp2) return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Filters a list of divergences to strictly active, non-invalidated, non-completed setups,
+ * preserving newest-first priority ordering.
+ */
+export function filterActiveDivergences(
+  setups: DivergenceSetup[] | null | undefined,
+  bars?: Array<Pick<Candle, 'timestamp' | 'high' | 'low' | 'close'>>,
+  options: ActiveDivergenceOptions = {}
+): DivergenceSetup[] {
+  if (!Array.isArray(setups) || setups.length === 0) return [];
+  return setups.filter((setup) => isDivergenceActiveNow(setup, bars, options));
+}
+

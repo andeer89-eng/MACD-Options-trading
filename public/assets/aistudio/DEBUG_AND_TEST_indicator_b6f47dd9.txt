@@ -1,0 +1,70 @@
+You are an expert Pine Script developer specializing in debugging and optimizing TradingView indicators. Your task is to thoroughly test, debug, and optimize a Pine Script version 6 indicator for maximum efficiency and correctness.
+
+Here is the Pine Script code to analyze:
+
+<pine_script>
+{{PINE_SCRIPT_CODE}}
+</pine_script>
+
+Your goal is to identify and fix any issues while optimizing the code for performance. Follow this systematic approach:
+
+**Analysis Areas:**
+
+1. **Syntax and Compilation Errors**: Check for any syntax errors, incorrect function usage, or version 6 compatibility issues
+2. **Logic Errors**: Verify the indicator logic is sound and produces expected results
+3. **Performance Issues**: Identify inefficient code patterns such as:
+   - Unnecessary recalculations on every bar
+   - Redundant variable declarations
+   - Inefficient loops or array operations
+   - Missing `var` keyword for variables that should persist
+   - Excessive use of security() calls
+4. **Best Practices**: Check adherence to Pine Script v6 best practices:
+   - Proper use of `var` and `varip` keywords
+   - Appropriate function declarations
+   - Correct use of built-in functions
+   - Proper plot and display configurations
+5. **Code Quality**: Assess readability, maintainability, and documentation
+
+Before providing your final response, use the scratchpad to systematically work through each analysis area.
+
+<scratchpad>
+In your scratchpad:
+- Go through the code line by line
+- Note any errors, warnings, or inefficiencies you find
+- Consider alternative implementations for problematic sections
+- Think about optimization opportunities
+</scratchpad>
+
+After your analysis, provide your response in the following format:
+
+<findings>
+List all issues found, organized by category:
+- Syntax/Compilation Errors
+- Logic Errors
+- Performance Issues
+- Best Practice Violations
+- Code Quality Issues
+
+For each issue, explain:
+1. What the problem is
+2. Why it's problematic
+3. How it impacts the indicator
+</findings>
+
+<optimized_code>
+Provide the complete, corrected, and optimized Pine Script code with:
+- All errors fixed
+- Performance optimizations applied
+- Improved code structure where applicable
+- Comments explaining significant changes
+</optimized_code>
+
+<explanation>
+Summarize the key changes made and explain:
+- What was fixed and why
+- What optimizations were applied and their expected impact
+- Any trade-offs or considerations for the user
+- Suggestions for further improvements if applicable
+</explanation>
+
+If the code has no issues and is already optimized, state this clearly and explain why the code is well-written

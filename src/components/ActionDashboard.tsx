@@ -137,21 +137,48 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
     setVisibleCount(PAGE_SIZE);
   }, [filters, selectedSector, actionDirection]);
 
+  const [sectorAlphaBySector, setSectorAlphaBySector] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let active = true;
+    fetchJsonSafe<{ sectors?: Array<{ name?: string; rsVsSpy?: number; changePercent?: number }> }>('/api/sectors')
+      .then((res) => {
+        if (!active || !res.ok || !Array.isArray(res.data?.sectors)) return;
+        const map: Record<string, number> = {};
+        for (const s of res.data.sectors) {
+          const alpha =
+            typeof s?.rsVsSpy === 'number' && Number.isFinite(s.rsVsSpy)
+              ? s.rsVsSpy
+              : typeof s?.changePercent === 'number' && Number.isFinite(s.changePercent)
+              ? s.changePercent
+              : null;
+          if (alpha !== null && s?.name) map[s.name] = alpha;
+        }
+        setSectorAlphaBySector(map);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Unified Top-50 Bullish & Bearish leaderboards from live Scanner
   const leaderboards = useMemo(() => {
     const minScore = filters.minConfidence < HIGH_CONVICTION_MIN_SCORE ? Math.max(55, filters.minConfidence) : HIGH_CONVICTION_MIN_SCORE;
     return buildDualMarketLeaderboards(scannerResults, {
       minScore,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults, filters.minConfidence]);
+  }, [scannerResults, filters.minConfidence, sectorAlphaBySector]);
 
   const strictLeaderboards = useMemo(() => {
     return buildDualMarketLeaderboards(scannerResults, {
       minScore: HIGH_CONVICTION_MIN_SCORE,
       maxItems: 50,
+      sectorAlphaBySector,
     });
-  }, [scannerResults]);
+  }, [scannerResults, sectorAlphaBySector]);
 
   useEffect(() => {
     const nextMap = new Map<string, PresenceAnnotation>();
@@ -214,7 +241,7 @@ export const ActionDashboard: React.FC<ActionDashboardProps> = ({
         }
 
         if (!baseAdvice) continue;
-        const unifiedConfidence = Math.max(baseAdvice.confidenceScore, leader.score);
+        const unifiedConfidence = leader.score;
         const tosLabels = leader.matchingTosSignals.slice(0, 2).map((s) => s.shortLabel || s.name || s.id);
         let resolvedAdvice = baseAdvice;
 

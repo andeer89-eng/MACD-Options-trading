@@ -280,5 +280,93 @@ describe('TOS Indicators Multi-Scan Engine', () => {
       null
     );
   });
+
+  it('detects VCP_BREAKOUT (tightening 3-wave base in Stage 2) and rejects wide loose bases', () => {
+    const closes: number[] = [];
+    // 25 bars rising from 75 -> 100
+    for (let i = 0; i < 25; i++) closes.push(75 + i * 1.0);
+    // 18 bars Wave 1 pullback/recovery (~10% depth: 100 -> 90 -> 99)
+    for (let i = 0; i < 18; i++) closes.push(95 + Math.sin(i * 0.4) * 4.5);
+    // 13 bars Wave 2 tighter (~5% depth: 96..100)
+    for (let i = 0; i < 13; i++) closes.push(98 + Math.sin(i * 0.5) * 2.1);
+    // 7 bars Wave 3 super tight (~2.2% depth: 99..101), final bar breaks out above 101.5 on volume
+    for (let i = 0; i < 6; i++) closes.push(100 + (i % 2 === 0 ? 0.4 : -0.4));
+    closes.push(103.2);
+
+    const vcpCandles = makeSeries(closes, {
+      spread: (i) => (i >= 56 ? 0.5 : i >= 43 ? 0.8 : 1.3),
+      volume: (i) => (i === closes.length - 1 ? 2_400_000 : i >= 55 ? 650_000 : 1_200_000),
+    });
+
+    const rep = evaluateTosScans('NVDA', vcpCandles);
+    const vcp = rep.signals.find((s) => s.id === 'VCP_BREAKOUT');
+    assert.ok(vcp, 'Expected VCP_BREAKOUT signal on contracting Stage 2 coil');
+    assert.equal(vcp?.direction, 'BULLISH');
+
+    // Negative: downtrend below 55 EMA should not trigger VCP
+    const downCloses = Array.from({ length: 65 }, (_, i) => 120 - i * 0.4);
+    const downRep = evaluateTosScans('X', makeSeries(downCloses));
+    assert.equal(downRep.matchedIds.includes('VCP_BREAKOUT'), false);
+  });
+
+  it('detects STOCKBEE_BURST, EXHAUSTION_HAMMER, and PARABOLIC_SHORT cleanly', () => {
+    // Stockbee Momentum Burst: quiet 25 bars then +5.5% high-range high-volume expansion closing near highs
+    const burstCloses = Array.from({ length: 26 }, () => 50);
+    burstCloses[25] = 52.8;
+    const burstCandles = makeSeries(burstCloses, {
+      spread: (i) => (i === 25 ? 0.25 : 0.3),
+      volume: (i) => (i === 25 ? 3_500_000 : 1_000_000),
+      openOffset: (i) => (i === 25 ? -2.6 : -0.1),
+    });
+    const burstRep = evaluateTosScans('AMD', burstCandles);
+    const burstSig = burstRep.signals.find((s) => s.id === 'STOCKBEE_BURST');
+    assert.ok(burstSig, 'Expected STOCKBEE_BURST on +5.6% wide-range volume surge');
+    assert.equal(burstSig?.direction, 'BULLISH');
+
+    // Exhaustion Hammer: 15 stable bars, 6-bar drop (-10%), final bar capitulation hammer with long lower wick closing at highs
+    const hamCloses = [
+      ...Array.from({ length: 14 }, () => 100),
+      98, 96, 94, 92, 90, 93.2,
+    ];
+    const hamCandles = makeSeries(hamCloses, {
+      spread: 0.4,
+      volume: (i) => (i === hamCloses.length - 1 ? 2_200_000 : 1_000_000),
+    });
+    hamCandles[hamCandles.length - 1] = {
+      ...hamCandles[hamCandles.length - 1],
+      open: 92.2,
+      high: 93.4,
+      low: 86.0,
+      close: 93.2,
+      volume: 2_200_000,
+    };
+    const hamRep = evaluateTosScans('META', hamCandles);
+    const hamSig = hamRep.signals.find((s) => s.id === 'EXHAUSTION_HAMMER');
+    assert.ok(hamSig, 'Expected EXHAUSTION_HAMMER on capitulation lower wick');
+    assert.equal(hamSig?.direction, 'BULLISH');
+
+    // Parabolic Short: 50 bars flat around 50, then 6-bar surge to 70 (+40% vs 50SMA, +15%+ 5D) with red climax stall bar
+    const paraCloses = [
+      ...Array.from({ length: 50 }, () => 50),
+      53, 57, 62, 66, 69, 67.5,
+    ];
+    const paraCandles = makeSeries(paraCloses, {
+      spread: 0.5,
+      volume: (i) => (i === paraCloses.length - 1 ? 3_500_000 : 1_000_000),
+    });
+    paraCandles[paraCandles.length - 1] = {
+      ...paraCandles[paraCandles.length - 1],
+      open: 70.5,
+      high: 73.0,
+      low: 67.0,
+      close: 67.5,
+      volume: 3_500_000,
+    };
+    const paraRep = evaluateTosScans('SMCI', paraCandles);
+    const paraSig = paraRep.signals.find((s) => s.id === 'PARABOLIC_SHORT');
+    assert.ok(paraSig, 'Expected PARABOLIC_SHORT on +35% parabolic climax stall');
+    assert.equal(paraSig?.direction, 'BEARISH');
+  });
 });
+
 

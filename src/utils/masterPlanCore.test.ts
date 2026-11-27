@@ -225,5 +225,50 @@ describe('TRULLAS Master Plan v3 Core Tests', () => {
     assert.strictEqual(merged.botStatus, 'paused');
     assert.strictEqual(merged.dataQuality, 'cached');
   });
+
+  it('canTrade blocks new entries when DrawdownCircuitBreakerReport is COOLDOWN or HALTED', () => {
+    const levels = calculateLevels({
+      symbol: 'NVDA',
+      direction: 'long',
+      currentPrice: 100,
+      atr14: 2.0,
+      recentBars: [{ o: 100, h: 101, l: 99, c: 100 }],
+    });
+    const gate = canTrade({
+      symbol: 'NVDA',
+      direction: 'long',
+      setupScore: 90,
+      levels,
+      currentPrice: 100,
+      marketOpenOverride: true,
+      regimeScore: 75,
+      customSettings: { ...DEFAULT_SETTINGS, simCapitalUsd: 10000, dataQuality: 'live', botStatus: 'armed' },
+      circuitBreaker: {
+        status: 'COOLDOWN',
+        allowNewTrades: false,
+        sizeMultiplier: 0,
+        etDateKey: '2026-11-25',
+        etWeekStartKey: '2026-11-23',
+        etMonthKey: '2026-11',
+        dailyPnlUsd: -40,
+        dailyDrawdownPct: 0.4,
+        weeklyPnlUsd: -80,
+        weeklyDrawdownPct: 0.8,
+        monthlyPnlUsd: -80,
+        monthlyDrawdownPct: 0.8,
+        consecutiveLosses: 2,
+        cooldownActive: true,
+        cooldownRemainingHours: 18.5,
+        triggers: ['2 consecutive losses — 18.5h cooldown active'],
+        summary: '2 consecutive losses — 18.5h cooldown active',
+      },
+    });
+    assert.strictEqual(gate.allow, false);
+    assert.strictEqual(gate.suggestedQty, 0);
+    const cbFail = gate.fails.find((f) => f.number === 4);
+    assert.ok(cbFail);
+    assert.ok(cbFail.detail.includes('COOLDOWN'));
+  });
 });
+
 

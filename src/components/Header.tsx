@@ -108,7 +108,7 @@ export const ALL_TABS: TabDefinition[] = [
     label: 'Quant Lab',
     icon: Sparkles,
     color: 'text-indigo-400',
-    description: 'Orderflow & SMC Lab, Stage & AVWAP Lab, Indicator Library & 4-Pillars Playbook',
+    description: 'Orderflow & SMC Lab, Stage & AVWAP Lab, Factor IC & ML Lab, Indicator Library & Playbook',
   },
   {
     id: 'ops',
@@ -277,6 +277,16 @@ export const QUICK_JUMP_TARGETS: JumpDestination[] = [
     icon: Compass,
     color: 'text-rose-400',
     description: 'Stan Weinstein Stage 1–4 analysis, Raindrop volume & Auto-AVWAP',
+  },
+  {
+    id: 'quant-ml4t',
+    tab: 'quant',
+    subTab: 'ml4t',
+    label: 'Factor IC & ML Lab',
+    group: 'Quant Lab',
+    icon: Activity,
+    color: 'text-emerald-400',
+    description: 'ML4T Spearman Rank IC, Quintile Spread & Walk-Forward Ridge audit',
   },
   {
     id: 'quant-indicators',

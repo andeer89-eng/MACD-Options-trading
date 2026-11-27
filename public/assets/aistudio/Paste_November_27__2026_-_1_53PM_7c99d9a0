@@ -1,0 +1,499 @@
+//@version=6
+// =============================================================================
+// SUPERTREND v10 🍀 — Auto Fib Targets LONG ONLY                      (v10.1)
+// =============================================================================
+// CHANGELOG v10.1:
+//   1. S/R FIX — cluster selection now NEAREST-first. v10.0 inherited the v9
+//      sort order (resistance descending, support ascending), which built
+//      clusters from the extremes; with Max Bands = 1 it displayed the
+//      FARTHEST zone per side instead of the nearest. Sort directions are
+//      now flipped so band #1 is always the zone closest to price.
+//   2. EMAs dashboard row is now 3-state:
+//      • "20 > 50 > 200 ✓" (green)  = stack bullish AND close above EMA 20
+//      • "20 > 50 > 200 ⚠" (orange) = stack still bullish but price is UNDER
+//        EMA 20 — EMAs lag sharp moves (post-crash caution state)
+//      • "Mixed" (gray)             = EMA order broken
+// -----------------------------------------------------------------------------
+// v10.0 feature set:
+//   • Compact blue-frame dashboard: Trend / RSI / Volume / EMAs + EMA values
+//   • Signals legend table (bottom-right) documenting every marker
+//   • Scored long entries: ▲ Buy (ST flip up) with ● ● / ● ● ● confluence dots
+//   • ★ PRIME  = 3/3 confluence + volume spike OR fresh liquidity sweep
+//   • ✚ Sweep  = liquidity grab (takes prior N-bar low, closes back above)
+//   • ◆ Early  = buy forming (pivot low + oversold RSI, vol-confirmable)
+//   • ▼ Weak   = top reversal (pivot high + hot RSI, vol-confirmable)
+//   • MTF tags under entries: which of 1D / 2D / 1W / 1M SuperTrends are UP
+//   • Auto Fib LONG targets T1/T2/T3 (recent up-leg anchor, v2.6.1 logic)
+//   • Single RESISTANCE / SUPPORT cluster bands (nearest zone per side)
+//   • Big "Buy Signal" callout on the latest ★ PRIME setup
+// =============================================================================
+
+indicator("SuperTrend v10 🍀 — Auto Fib Targets LONG ONLY", "ST v10", overlay = true,
+     max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// ---------- Color constants ----------
+color UP_COLOR    = #089981
+color DN_COLOR    = #f23645
+color ACCUM_COLOR = #ff9800
+color WEAK_COLOR  = #f06292
+color BLUE_COLOR  = #5b9cf6
+color YEL_COLOR   = #ffb74d
+color SUP_COLOR   = #ffeb3b
+color GOLD_COLOR  = #ffd54f
+color TAG_COLOR   = #7e57c2
+color FRAME_COL   = #2962ff
+color FIB_T1_COL  = #00bcd4
+color FIB_T2_COL  = #ffa726
+color FIB_T3_COL  = #e040fb
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+g_st = "SuperTrend Cloud"
+stFac         = input.float(3.0, "ST Factor", step = 0.1, group = g_st, tooltip = "ATR multiplier for SuperTrend band. Higher = wider cloud, fewer flips.")
+stLen         = input.int(10, "ST ATR Period", minval = 1, group = g_st)
+stBand        = input.float(0.5, "Cloud Band (xATR)", step = 0.1, group = g_st)
+showTrendFill = input.bool(true, "Trend Fill (price ↔ ST line)", group = g_st, tooltip = "Large green/red shading between price and the SuperTrend line, like the reference chart.")
+fillTransp    = input.int(85, "Trend Fill Transparency", minval = 50, maxval = 98, group = g_st)
+
+g_ema = "Moving Averages"
+e1Len = input.int(20,  "EMA 20",  group = g_ema)
+e2Len = input.int(50,  "EMA 50",  group = g_ema)
+e3Len = input.int(200, "EMA 200", group = g_ema)
+
+g_sig = "Signal Engine"
+showSignals = input.bool(true, "Show Signal Markers", group = g_sig)
+rsiLen      = input.int(14, "RSI Length", group = g_sig)
+pivLR       = input.int(2,  "Pivot Left/Right", group = g_sig)
+earlyThr    = input.int(45, "Early RSI Threshold (buy forming)", group = g_sig)
+weakThr     = input.int(55, "Weak RSI Threshold (top reversal)", group = g_sig)
+useVolConf  = input.bool(true, "Volume-Confirm Early / Weak Pivots", group = g_sig)
+sweepLook   = input.int(10, "Sweep Lookback (bars)", minval = 2, group = g_sig, tooltip = "✚ Sweep = bar takes out the prior N-bar low and closes back above it (stop hunt / liquidity grab).")
+sweepRecall = input.int(5, "PRIME: Sweep Recall (bars)", minval = 0, group = g_sig, tooltip = "A sweep within this many bars of a 3/3 entry upgrades it to ★ PRIME.")
+showCallout = input.bool(true, "Big 'Buy Signal' Callout on PRIME", group = g_sig)
+
+g_vol = "Volume Engine"
+volLen   = input.int(50,    "Volume Z-Score Window", group = g_vol)
+zSpike   = input.float(2.0, "Spike Z-Score",   step = 0.1, group = g_vol)
+zExtreme = input.float(3.0, "Extreme Z-Score", step = 0.1, group = g_vol)
+pressLen = input.int(5,     "B/S Pressure Smoothing", group = g_vol)
+
+g_mtf = "MTF Tags"
+showTags = input.bool(true, "Show MTF Tags on Entries (1D 2D 1W 1M)", group = g_mtf, tooltip = "Confirmed higher-timeframe SuperTrend direction (security with [1] + lookahead_on — no repaint). Only timeframes ≥ the chart timeframe are tagged.")
+
+g_fib = "Auto Fib Targets (Long)"
+showFib     = input.bool(true,  "Show Auto Fib Targets (Long)", group = g_fib, tooltip = "Projects upside fib-extension targets above the most recent confirmed up-leg (recent swing low → swing high after it). Long-only.")
+fibPivLR    = input.int(10,    "Fib Swing Strength", minval = 2, group = g_fib, tooltip = "Left/right bars to confirm swing anchors. Higher = larger legs.")
+fibT1       = input.float(1.272, "Target 1 Level", step = 0.001, group = g_fib)
+fibT2       = input.float(1.618, "Target 2 Level", step = 0.001, group = g_fib)
+fibT3       = input.float(2.0,   "Target 3 Level", step = 0.001, group = g_fib)
+fibRightExt = input.int(30,    "Line Right Extent (bars)", minval = 5, group = g_fib)
+
+g_visual = "Chart Visuals"
+showDash     = input.bool(true, "Show Dashboard", group = g_visual)
+showLegend   = input.bool(true, "Show Signals Legend", group = g_visual)
+showSR       = input.bool(true, "Show S/R Bands", group = g_visual)
+srPivLR      = input.int(5,    "S/R Pivot Strength", group = g_visual)
+srMaxPivots  = input.int(30,   "Max Pivots Tracked", group = g_visual)
+srClusterAtr = input.float(0.6,"Cluster Width (xATR)", step = 0.1, group = g_visual)
+srMaxBands   = input.int(1,    "Max Bands per Side", minval = 1, group = g_visual)
+srLeftLook   = input.int(100,  "Box Left Extent (bars)", group = g_visual)
+
+// =============================================================================
+// CORE CALCULATIONS
+// =============================================================================
+[stLine, stDir] = ta.supertrend(stFac, stLen)
+atrBand  = ta.atr(stLen) * stBand
+isUp     = close > stLine
+cloudTop = isUp ? stLine + atrBand : stLine
+cloudBot = isUp ? stLine : stLine - atrBand
+flipUp   = isUp and not isUp[1]
+flipDn   = not isUp and isUp[1]
+
+ema20  = ta.ema(close, e1Len)
+ema50  = ta.ema(close, e2Len)
+ema200 = ta.ema(close, e3Len)
+rsi    = ta.rsi(close, rsiLen)
+atr14  = ta.atr(14)
+
+volMean   = ta.sma(volume, volLen)
+volStd    = ta.stdev(volume, volLen)
+volZ      = volStd > 0 ? (volume - volMean) / volStd : 0.0
+range_    = high - low
+bodyLoc   = range_ > 0 ? (close - low) / range_ : 0.5
+volDelta  = volume * (2 * bodyLoc - 1)
+pressure  = ta.ema(volDelta, pressLen)
+pressNorm = volMean > 0 ? pressure / volMean : 0.0
+
+isSpike   = volZ >=  zSpike
+isExtreme = volZ >=  zExtreme
+isLowVol  = volZ <= -1.0
+volStatus = isExtreme ? "EXTREME ▲" : isSpike ? "SPIKE ▲" : isLowVol ? "LOW ▼" : "normal"
+volColor  = isExtreme ? ACCUM_COLOR : isSpike ? ACCUM_COLOR : isLowVol ? color.gray : color.white
+
+emaStack   = ema20 > ema50 and ema50 > ema200
+priceAbove = close > ema20
+
+// =============================================================================
+// PIVOT SIGNALS — ◆ Early (buy forming) / ▼ Weak (top reversal)
+// =============================================================================
+ph = ta.pivothigh(high, pivLR, pivLR)
+pl = ta.pivotlow(low,   pivLR, pivLR)
+
+rsiAtPiv   = rsi[pivLR]
+spikeAtPiv = isSpike[pivLR]
+pressAtPiv = pressNorm[pivLR]
+
+earlyCore  = not na(pl) and rsiAtPiv < earlyThr
+weakCore   = not na(ph) and rsiAtPiv > weakThr
+earlyVolOk = spikeAtPiv or pressAtPiv >  0.10
+weakVolOk  = spikeAtPiv or pressAtPiv < -0.10
+earlySig   = earlyCore and (not useVolConf or earlyVolOk)
+weakSig    = weakCore  and (not useVolConf or weakVolOk)
+
+// =============================================================================
+// ✚ SWEEP — liquidity grab
+// =============================================================================
+priorLow  = ta.lowest(low, sweepLook)[1]
+sweepSig  = low < priorLow and close > priorLow and close > open
+sweepBars = ta.barssince(sweepSig)
+sweepNear = not na(sweepBars) and sweepBars <= sweepRecall
+
+// =============================================================================
+// ▲ BUY ENTRY + CONFLUENCE SCORE (0–3) + ★ PRIME
+//   ① Structure: close > EMA 200
+//   ② Momentum:  RSI > 50
+//   ③ Volume:    Z ≥ 1σ  OR  buy pressure > +10%
+// =============================================================================
+c1 = close > ema200
+c2 = rsi > 50.0
+c3 = volZ >= 1.0 or pressNorm > 0.10
+score = (c1 ? 1 : 0) + (c2 ? 1 : 0) + (c3 ? 1 : 0)
+
+buySig   = flipUp
+score2   = buySig and score == 2
+score3   = buySig and score >= 3
+primeSig = score3 and (isSpike or sweepNear)
+
+// =============================================================================
+// MTF SUPERTREND DIRECTION — confirmed HTF bar, no repaint
+// =============================================================================
+f_up(string tf) =>
+    request.security(syminfo.tickerid, tf, isUp[1], lookahead = barmerge.lookahead_on)
+
+up1D = f_up("D")
+up2D = f_up("2D")
+up1W = f_up("W")
+up1M = f_up("M")
+
+f_tfOk(string tf) =>
+    timeframe.in_seconds(tf) >= timeframe.in_seconds()
+
+// =============================================================================
+// SIGNAL LABELS — score dots, ★ PRIME, MTF tags
+// =============================================================================
+if showSignals and buySig
+    if score >= 2 and not primeSig
+        label.new(bar_index, na, score >= 3 ? "● ● ●" : "● ●",
+             yloc = yloc.abovebar, style = label.style_none,
+             textcolor = color.white, size = size.small)
+    if primeSig
+        label.new(bar_index, na, "★ PRIME",
+             yloc = yloc.abovebar, style = label.style_label_down,
+             color = color.new(GOLD_COLOR, 0), textcolor = color.black, size = size.small)
+    if showTags
+        string tags = ""
+        if f_tfOk("D") and up1D
+            tags += "1D "
+        if f_tfOk("2D") and up2D
+            tags += "2D "
+        if f_tfOk("W") and up1W
+            tags += "1W "
+        if f_tfOk("M") and up1M
+            tags += "1M "
+        if str.length(tags) > 0
+            label.new(bar_index, na, str.substring(tags, 0, str.length(tags) - 1),
+                 yloc = yloc.belowbar, style = label.style_label_up,
+                 color = color.new(TAG_COLOR, 15), textcolor = color.white, size = size.tiny)
+
+// Big "Buy Signal" callout — latest PRIME only
+var label buyCallout = na
+if showCallout and primeSig
+    label.delete(buyCallout)
+    buyCallout := label.new(bar_index, low, "Buy Signal",
+         color = color.new(UP_COLOR, 0), textcolor = color.white,
+         style = label.style_label_lower_right, size = size.large)
+
+// =============================================================================
+// AUTO FIB ANCHOR TRACKING — recent up-leg (v2.6.1 logic)
+// =============================================================================
+fph = ta.pivothigh(high, fibPivLR, fibPivLR)
+fpl = ta.pivotlow(low,   fibPivLR, fibPivLR)
+
+var float fibLow    = na
+var float fibHigh   = na
+var int   fibLowBar = na
+
+if not na(fpl)
+    fibLow    := fpl
+    fibLowBar := bar_index - fibPivLR
+    fibHigh   := na
+if not na(fph) and not na(fibLow) and (bar_index - fibPivLR) > fibLowBar
+    if na(fibHigh) or fph >= fibHigh
+        fibHigh := fph
+
+fibValid = showFib and not na(fibLow) and not na(fibHigh) and fibHigh > fibLow
+fibRange = fibValid ? fibHigh - fibLow : na
+fibP1    = fibValid ? fibLow + fibRange * fibT1 : na
+fibP2    = fibValid ? fibLow + fibRange * fibT2 : na
+fibP3    = fibValid ? fibLow + fibRange * fibT3 : na
+
+// =============================================================================
+// AUTO FIB TARGET DRAWING — short flags near price, extend right
+// =============================================================================
+var line  fibLn1 = na
+var line  fibLn2 = na
+var line  fibLn3 = na
+var label fibLb1 = na
+var label fibLb2 = na
+var label fibLb3 = na
+
+if barstate.islast
+    line.delete(fibLn1)
+    line.delete(fibLn2)
+    line.delete(fibLn3)
+    label.delete(fibLb1)
+    label.delete(fibLb2)
+    label.delete(fibLb3)
+    if fibValid
+        leftX  = bar_index
+        rightX = bar_index + fibRightExt
+        fibLn1 := line.new(leftX, fibP1, rightX, fibP1, color = color.new(FIB_T1_COL, 0), width = 1, style = line.style_dashed)
+        fibLn2 := line.new(leftX, fibP2, rightX, fibP2, color = color.new(FIB_T2_COL, 0), width = 1, style = line.style_dashed)
+        fibLn3 := line.new(leftX, fibP3, rightX, fibP3, color = color.new(FIB_T3_COL, 0), width = 1, style = line.style_dashed)
+        fibLb1 := label.new(leftX, fibP1, "LONG T1  " + str.tostring(fibP1, format.mintick), color = color.new(FIB_T1_COL, 0), textcolor = color.white, style = label.style_label_right, size = size.small)
+        fibLb2 := label.new(leftX, fibP2, "LONG T2  " + str.tostring(fibP2, format.mintick), color = color.new(FIB_T2_COL, 0), textcolor = color.white, style = label.style_label_right, size = size.small)
+        fibLb3 := label.new(leftX, fibP3, "LONG T3  " + str.tostring(fibP3, format.mintick), color = color.new(FIB_T3_COL, 0), textcolor = color.white, style = label.style_label_right, size = size.small)
+
+// =============================================================================
+// PLOTS
+// =============================================================================
+p1 = plot(cloudTop, "Cloud Top", color.new(isUp ? UP_COLOR : DN_COLOR, 70), 1)
+p2 = plot(cloudBot, "Cloud Bot", color.new(isUp ? UP_COLOR : DN_COLOR, 70), 1)
+fill(p1, p2, color.new(isUp ? UP_COLOR : DN_COLOR, 55), "Cloud Fill")
+
+// Big trend shading between price and the SuperTrend line (reference look)
+pPriceRef = plot(close,  "Price Fill Ref", color.new(color.white, 100), editable = false)
+pStRef    = plot(stLine, "ST Fill Ref",    color.new(color.white, 100), editable = false)
+fill(pPriceRef, pStRef, showTrendFill ? color.new(isUp ? UP_COLOR : DN_COLOR, fillTransp) : na, "Trend Fill")
+
+plot(ema20,  "EMA 20",  BLUE_COLOR,  2)
+plot(ema50,  "EMA 50",  YEL_COLOR,   2)
+plot(ema200, "EMA 200", color.white, 2, plot.style_circles)
+
+plotshape(showSignals and buySig,   "Buy Entry (▲)", shape.triangleup,   location.belowbar, UP_COLOR,    size = size.small)
+plotshape(showSignals and sweepSig, "Sweep (✚)",     shape.cross,        location.belowbar, BLUE_COLOR,  size = size.tiny)
+plotshape(showSignals and earlySig, "Early (◆)",     shape.diamond,      location.belowbar, ACCUM_COLOR, offset = -pivLR, size = size.small)
+plotshape(showSignals and weakSig,  "Weak (▼)",      shape.triangledown, location.abovebar, WEAK_COLOR,  offset = -pivLR, size = size.small)
+
+// =============================================================================
+// S/R CLUSTER BANDS — v10.1: NEAREST-first selection
+//   Resistance sorted ASCENDING  (from just above price upward)
+//   Support   sorted DESCENDING  (from just below price downward)
+//   → cluster index 0 is always the zone closest to price.
+// =============================================================================
+srPh = ta.pivothigh(high, srPivLR, srPivLR)
+srPl = ta.pivotlow(low,   srPivLR, srPivLR)
+
+var array<float> resPivots = array.new<float>()
+var array<float> supPivots = array.new<float>()
+
+if not na(srPh)
+    array.push(resPivots, srPh)
+    if array.size(resPivots) > srMaxPivots
+        array.shift(resPivots)
+if not na(srPl)
+    array.push(supPivots, srPl)
+    if array.size(supPivots) > srMaxPivots
+        array.shift(supPivots)
+
+var array<box> resBoxes = array.new<box>()
+var array<box> supBoxes = array.new<box>()
+
+if showSR and barstate.islast
+    if array.size(resBoxes) > 0
+        for i = 0 to array.size(resBoxes) - 1
+            box.delete(array.get(resBoxes, i))
+        array.clear(resBoxes)
+    if array.size(supBoxes) > 0
+        for i = 0 to array.size(supBoxes) - 1
+            box.delete(array.get(supBoxes, i))
+        array.clear(supBoxes)
+
+    cWidth = atr14 * srClusterAtr
+    pad    = atr14 * 0.15
+    leftX  = math.max(0, bar_index - srLeftLook)
+
+    // ---- Resistance: nearest cluster first ----
+    if array.size(resPivots) > 0
+        sortR = array.copy(resPivots)
+        array.sort(sortR, order.ascending)
+        clusterTopsR = array.new<float>()
+        clusterBotsR = array.new<float>()
+        float curTopR = na
+        float curBotR = na
+
+        for i = 0 to array.size(sortR) - 1
+            v = array.get(sortR, i)
+            if v >= close
+                if na(curTopR)
+                    curBotR := v
+                    curTopR := v
+                else if v - curTopR <= cWidth
+                    curTopR := v
+                else
+                    array.push(clusterTopsR, curTopR)
+                    array.push(clusterBotsR, curBotR)
+                    curBotR := v
+                    curTopR := v
+        if not na(curTopR)
+            array.push(clusterTopsR, curTopR)
+            array.push(clusterBotsR, curBotR)
+
+        nR = math.min(array.size(clusterTopsR), srMaxBands)
+        if nR > 0
+            for i = 0 to nR - 1
+                top = array.get(clusterTopsR, i)
+                bot = array.get(clusterBotsR, i)
+                b = box.new(leftX, top + pad, bar_index + 5, bot - pad,
+                     border_color = DN_COLOR, bgcolor = color.new(DN_COLOR, 85),
+                     text = i == 0 ? "RESISTANCE" : "", text_color = DN_COLOR,
+                     text_halign = text.align_right, text_size = size.small)
+                array.push(resBoxes, b)
+
+    // ---- Support: nearest cluster first ----
+    if array.size(supPivots) > 0
+        sortS = array.copy(supPivots)
+        array.sort(sortS, order.descending)
+        clusterTopsS = array.new<float>()
+        clusterBotsS = array.new<float>()
+        float curTopS = na
+        float curBotS = na
+
+        for i = 0 to array.size(sortS) - 1
+            v = array.get(sortS, i)
+            if v <= close
+                if na(curBotS)
+                    curTopS := v
+                    curBotS := v
+                else if curBotS - v <= cWidth
+                    curBotS := v
+                else
+                    array.push(clusterTopsS, curTopS)
+                    array.push(clusterBotsS, curBotS)
+                    curTopS := v
+                    curBotS := v
+        if not na(curBotS)
+            array.push(clusterTopsS, curTopS)
+            array.push(clusterBotsS, curBotS)
+
+        nS = math.min(array.size(clusterTopsS), srMaxBands)
+        if nS > 0
+            for i = 0 to nS - 1
+                top = array.get(clusterTopsS, i)
+                bot = array.get(clusterBotsS, i)
+                b = box.new(leftX, top + pad, bar_index + 5, bot - pad,
+                     border_color = SUP_COLOR, bgcolor = color.new(SUP_COLOR, 85),
+                     text = i == 0 ? "SUPPORT" : "", text_color = SUP_COLOR,
+                     text_halign = text.align_right, text_size = size.small)
+                array.push(supBoxes, b)
+
+// =============================================================================
+// DASHBOARD — compact, blue frame (reference layout)
+// =============================================================================
+var table panel = table.new(position.top_right, 2, 9, bgcolor = #131722,
+     frame_color = FRAME_COL, frame_width = 1, border_color = #1c2333, border_width = 1)
+
+if barstate.islast and showDash
+    tt_trend  = "SuperTrend cloud direction.\n• ▲ UPTREND: price above the line — favor longs.\n• ▼ DOWNTREND: price below — stand aside / manage risk."
+    tt_rsi    = "RSI(" + str.tostring(rsiLen) + ").\nDrives ◆ Early (< " + str.tostring(earlyThr) + " at pivot low) and ▼ Weak (> " + str.tostring(weakThr) + " at pivot high)."
+    tt_volume = "Volume Z-score status over " + str.tostring(volLen) + " bars.\nSPIKE/EXTREME confirm entries; also feeds confluence component ③."
+    tt_emas   = "EMA alignment + price location.\n• 20 > 50 > 200 ✓ (green): stack bullish AND close above EMA 20.\n• 20 > 50 > 200 ⚠ (orange): stack still bullish but price is UNDER EMA 20 — EMAs lag sharp moves, caution.\n• Mixed (gray): EMA order broken."
+
+    emaTxt = emaStack and priceAbove ? "20 > 50 > 200 ✓" : emaStack ? "20 > 50 > 200 ⚠" : "Mixed"
+    emaCol = emaStack and priceAbove ? UP_COLOR : emaStack ? ACCUM_COLOR : color.gray
+
+    table.cell(panel, 0, 0, "SuperTrend v10", bgcolor = #0e1a2f, text_color = FIB_T1_COL, text_size = size.small)
+    table.cell(panel, 1, 0, syminfo.ticker,   bgcolor = #0e1a2f, text_color = color.white, text_size = size.small)
+
+    table.cell(panel, 0, 1, "Trend", text_color = color.gray, text_size = size.small, tooltip = tt_trend)
+    table.cell(panel, 1, 1, isUp ? "▲ UPTREND" : "▼ DOWNTREND", text_color = isUp ? UP_COLOR : DN_COLOR, text_size = size.small, tooltip = tt_trend)
+
+    table.cell(panel, 0, 2, "RSI", text_color = color.gray, text_size = size.small, tooltip = tt_rsi)
+    table.cell(panel, 1, 2, str.tostring(rsi, "0.0"), text_color = color.white, text_size = size.small, tooltip = tt_rsi)
+
+    table.cell(panel, 0, 3, "Volume", text_color = color.gray, text_size = size.small, tooltip = tt_volume)
+    table.cell(panel, 1, 3, volStatus, text_color = volColor, text_size = size.small, tooltip = tt_volume)
+
+    table.cell(panel, 0, 4, "EMAs", text_color = color.gray, text_size = size.small, tooltip = tt_emas)
+    table.cell(panel, 1, 4, emaTxt, text_color = emaCol, text_size = size.small, tooltip = tt_emas)
+
+    table.cell(panel, 0, 5, "", text_size = size.tiny)
+    table.cell(panel, 1, 5, "", text_size = size.tiny)
+
+    table.cell(panel, 0, 6, "EMA 20", text_color = color.gray, text_size = size.small)
+    table.cell(panel, 1, 6, str.tostring(ema20, "#.##"), text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 7, "EMA 50", text_color = color.gray, text_size = size.small)
+    table.cell(panel, 1, 7, str.tostring(ema50, "#.##"), text_color = color.white, text_size = size.small)
+    table.cell(panel, 0, 8, "EMA 200", text_color = color.gray, text_size = size.small)
+    table.cell(panel, 1, 8, str.tostring(ema200, "#.##"), text_color = color.white, text_size = size.small)
+
+// =============================================================================
+// SIGNALS LEGEND — bottom-right (reference layout)
+// =============================================================================
+var table legend = table.new(position.bottom_right, 2, 9, bgcolor = #131722,
+     frame_color = FRAME_COL, frame_width = 1, border_color = #1c2333, border_width = 1)
+
+if barstate.islast and showLegend
+    tt_buy   = "▲ Buy = SuperTrend flip to UP (close crosses above the line)."
+    tt_score = "Confluence at entry:\n① close > EMA 200\n② RSI > 50\n③ volume Z ≥ 1σ or buy pressure > +10%"
+    tt_prime = "★ PRIME = 3/3 confluence + volume spike (Z ≥ " + str.tostring(zSpike, "0.0") + ") OR a liquidity sweep within " + str.tostring(sweepRecall) + " bars."
+    tt_sweep = "✚ Sweep = low takes out the prior " + str.tostring(sweepLook) + "-bar low, then closes back above it (stop hunt)."
+    tt_early = "◆ Early = pivot low with RSI < " + str.tostring(earlyThr) + (useVolConf ? " + volume confirmation" : "") + ". Accumulation forming."
+    tt_weak  = "▼ Weak = pivot high with RSI > " + str.tostring(weakThr) + (useVolConf ? " + volume confirmation" : "") + ". Top reversal risk."
+    tt_tags  = "Higher-timeframe SuperTrends currently UP (confirmed HTF bar — no repaint)."
+
+    table.cell(legend, 0, 0, "Signals", bgcolor = #0e1a2f, text_color = FIB_T1_COL, text_size = size.small, text_halign = text.align_left)
+    table.cell(legend, 1, 0, "", bgcolor = #0e1a2f, text_size = size.small)
+
+    table.cell(legend, 0, 1, "▲ Buy",   text_color = UP_COLOR,    text_size = size.tiny, text_halign = text.align_left, tooltip = tt_buy)
+    table.cell(legend, 1, 1, "entry",   text_color = color.gray,  text_size = size.tiny, text_halign = text.align_right, tooltip = tt_buy)
+    table.cell(legend, 0, 2, "● ●",     text_color = color.white, text_size = size.tiny, text_halign = text.align_left, tooltip = tt_score)
+    table.cell(legend, 1, 2, "score 2 (2/3)", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_score)
+    table.cell(legend, 0, 3, "● ● ●",   text_color = color.white, text_size = size.tiny, text_halign = text.align_left, tooltip = tt_score)
+    table.cell(legend, 1, 3, "score 3 (3/3)", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_score)
+    table.cell(legend, 0, 4, "★ PRIME", text_color = GOLD_COLOR,  text_size = size.tiny, text_halign = text.align_left, tooltip = tt_prime)
+    table.cell(legend, 1, 4, "A+ confluence", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_prime)
+    table.cell(legend, 0, 5, "✚ Sweep", text_color = BLUE_COLOR,  text_size = size.tiny, text_halign = text.align_left, tooltip = tt_sweep)
+    table.cell(legend, 1, 5, "liquidity grab", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_sweep)
+    table.cell(legend, 0, 6, "◆ Early", text_color = ACCUM_COLOR, text_size = size.tiny, text_halign = text.align_left, tooltip = tt_early)
+    table.cell(legend, 1, 6, "buy forming", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_early)
+    table.cell(legend, 0, 7, "▼ Weak",  text_color = WEAK_COLOR,  text_size = size.tiny, text_halign = text.align_left, tooltip = tt_weak)
+    table.cell(legend, 1, 7, "top reversal", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_weak)
+    table.cell(legend, 0, 8, "tags",    text_color = color.new(TAG_COLOR, 0), text_size = size.tiny, text_halign = text.align_left, tooltip = tt_tags)
+    table.cell(legend, 1, 8, "MTF 1D 2D 1W 1M", text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, tooltip = tt_tags)
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+alertcondition(flipUp,   "SuperTrend Flip UP",     "SuperTrend flipped UP")
+alertcondition(flipDn,   "SuperTrend Flip DOWN",   "SuperTrend flipped DOWN")
+alertcondition(buySig,   "Buy Entry",              "▲ Buy entry (SuperTrend flip up)")
+alertcondition(score3,   "Buy 3/3 Confluence",     "Buy entry with 3/3 confluence score")
+alertcondition(primeSig, "PRIME A+ Setup",         "★ PRIME long setup (3/3 + spike/sweep)")
+alertcondition(sweepSig, "Liquidity Sweep",        "✚ Prior low swept and reclaimed")
+alertcondition(earlySig, "Early — Buy Forming",    "◆ Pivot low with oversold RSI")
+alertcondition(weakSig,  "Weak — Top Reversal",    "▼ Pivot high with hot RSI")
+alertcondition(fibValid and ta.cross(close, fibP1), "Fib T1 Cross", "Price crossed LONG T1")
+alertcondition(fibValid and ta.cross(close, fibP2), "Fib T2 Cross", "Price crossed LONG T2")
+alertcondition(fibValid and ta.cross(close, fibP3), "Fib T3 Cross", "Price crossed LONG T3")

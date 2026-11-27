@@ -408,6 +408,422 @@ plot(auto_avwap, "Auto-Anchored VWAP", color=color.yellow, linewidth=2)
 plot(auto_avwap + std_dev, "AVWAP +1σ Band", color=color.aqua, linewidth=1)
 plot(auto_avwap - std_dev, "AVWAP -1σ Band", color=color.aqua, linewidth=1)`,
   },
+  {
+    id: 'b-xtrender-puppytherapy',
+    name: 'B-Xtrender @Puppytherapy',
+    author: 'Puppytherapy (ML4T Port)',
+    description:
+      'Dual-horizon momentum oscillator combining RSI(EMA5 - EMA20, 15) - 50, Tillson T3(5) smoothing, and long-term RSI(EMA20, 15) - 50 trend histogram.',
+    category: 'Oscillator',
+    version: 'v4',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 290000,
+    syntaxValid: true,
+    pineCode: `//@version=4
+study("B-Xtrender @Puppytherapy", overlay=false)
+shortTermXtrender = rsi(ema(close, 5) - ema(close, 20), 15) - 50
+longTermXtrender = rsi(ema(close, 20), 15) - 50
+plot(shortTermXtrender, "B-Xtrender Short", color=shortTermXtrender > 0 ? color.lime : color.red, style=plot.style_columns)
+plot(longTermXtrender, "B-Xtrender Long Trend", color=longTermXtrender > longTermXtrender[1] ? color.lime : color.red, linewidth=2)`,
+  },
+  {
+    id: 'williams-vix-fix-theehoganator',
+    name: 'Williams Vix Fix Bottoms & Tops',
+    author: 'TheeHoganator (ML4T Port)',
+    description:
+      'Synthetic bottom panic gauge ((Highest(Close,22) - Low) / Highest(Close,22) * 100) with Bollinger Band(20, 2.0) and 85th-percentile volatility exhaustion spikes.',
+    category: 'Volatility',
+    version: 'v5',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 280000,
+    syntaxValid: true,
+    pineCode: `//@version=5
+indicator("Williams Vix Fix Bottoms and Tops", shorttitle="WVF", overlay=false, precision=2)
+pd = input.int(22, "LookBack Period Standard Deviation High")
+bbl = input.int(20, "Bollinger Band Length")
+mult = input.float(2.0, "Bollinger Band Standard Deviation Up")
+lb = input.int(50, "Look Back Period Percentile High")
+ph = input.float(0.85, "Highest Percentile")
+wvf = ((ta.highest(close, pd) - low) / ta.highest(close, pd)) * 100
+sDev = mult * ta.stdev(wvf, bbl)
+midLine = ta.sma(wvf, bbl)
+upperBand = midLine + sDev
+rangeHigh = ta.highest(wvf, lb) * ph
+plot(wvf, "Williams Vix Fix", style=plot.style_columns, color=wvf >= upperBand or wvf >= rangeHigh ? color.lime : color.gray)`,
+  },
+  {
+    id: 'whalefusion-institutional-v6',
+    name: 'WhaleFusion Institutional v6',
+    author: 'WhaleFusion Core (ML4T Port)',
+    description:
+      'Institutional volume imbalance detector (7-bar vs 50-bar Z-score), linear-regression momentum f_momentum(20,5), CCI(21), and blended ADX/BBWidth pTrend regime score.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 270000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("WhaleFusion Institutional v6", overlay=true)
+volSma = ta.sma(volume, 50)
+volStd = ta.stdev(volume, 50)
+volZ = volStd > 0 ? (volume - volSma) / volStd : 0.0
+basis = ta.sma(close, 20)
+linMom = ta.linreg(close - math.avg(math.avg(ta.highest(high, 20), ta.lowest(low, 20)), basis), 20, 0)
+plot(basis, "WhaleFusion Centerline", color=linMom >= 0 ? color.teal : color.red, linewidth=2)`,
+  },
+  {
+    id: 'algoalpha-trend-flow-trail',
+    name: 'Trend Flow Trail [AlgoAlpha]',
+    author: 'AlgoAlpha (ML4T Port)',
+    description:
+      'Hull-MA(33) ratcheting AlphaTrail volatility stop (3.3x EMA range) fused with HMA(7)-smoothed Money Flow Index(14) regime coloring.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 260000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Trend Flow Trail [AlgoAlpha]", overlay=true)
+alphaBasis = ta.hma(close, 33)
+alphaSpread = ta.ema(high - low, 33) * 3.3
+mfiSmooth = ta.hma(ta.mfi(hlc3, 14), 7)
+plot(alphaBasis, "AlgoAlpha HMA(33)", color=mfiSmooth >= 50 ? color.teal : color.orange, linewidth=2)
+plot(alphaBasis - alphaSpread, "Lower Flow Bound", color=color.green, linewidth=1)
+plot(alphaBasis + alphaSpread, "Upper Flow Bound", color=color.red, linewidth=1)`,
+  },
+  {
+    id: 'mfi-v9-pro-centered',
+    name: 'Money Flow Index (v9 PRO)',
+    author: 'StageLedger Quant (ML4T Port)',
+    description:
+      'Zero-centered Money Flow Index (MFI(14) - 50) with SMA(9) signal crossover spread highlighting institutional money-flow shifts.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 250000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Money Flow Index (v9 PRO)", shorttitle="MFI v9", overlay=false)
+mfiVal = ta.mfi(hlc3, 14) - 50.0
+sigVal = ta.sma(mfiVal, 9)
+plot(mfiVal, "MFI Centered", color=mfiVal >= 0 ? color.teal : color.red, linewidth=2)
+plot(sigVal, "MFI Signal (9)", color=color.yellow, linewidth=1)
+hline(0, "Zero Equilibrium", color=color.gray)`,
+  },
+  {
+    id: 'ha-institutional-v21',
+    name: 'HA Institutional Suite v2.1 [PRO]',
+    author: 'Attached Pine v6 Suite',
+    description:
+      'Heiken Ashi trend & uncertain-candle filter combined with ADX(14) regime gate, 5-SMA alignment ribbon (8-16), and SMA 8/20 cloud.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 245000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("HA Institutional Suite v2.1 [PRO]", overlay=true)
+cloudLo = ta.sma(close, 8)
+cloudHi = ta.sma(close, 20)
+plot(cloudLo, "HA Cloud Fast (8)", color=close > cloudLo ? color.green : color.red, linewidth=2)
+plot(cloudHi, "HA Cloud Slow (20)", color=color.orange, linewidth=2)`,
+  },
+  {
+    id: 'tradingwarz-auto-fib-v16',
+    name: 'TradingWie - Auto Fibonacci (V3.0)',
+    author: 'TradingWie (1D Weekly Range Upgrade)',
+    description:
+      'Upgraded V3.0 (supersedes V1.6 & V2.3): Previous-period High/Low Fibonacci retracements (50%, 61.8%, 78.6% Golden Zone) with zero-range guard, EMA(50) regime gate, 0.3xATR wick filter, R:R >= 2.0 validation, and signal cooldown.',
+    category: 'Reversal',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 240000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("TradingWie - Auto Fibonacci (V3.0)", overlay=true)
+wHi = ta.highest(high, 5)
+wLo = ta.lowest(low, 5)
+rng = math.max(wHi - wLo, 0.0001)
+ema50 = ta.ema(close, 50)
+atr14 = ta.atr(14)
+fib50 = wLo + rng * 0.50
+fib618 = wHi - rng * 0.618
+fib786 = wHi - rng * 0.786
+plot(fib50, "Fib 50%", color=color.yellow)
+plot(fib618, "Bull 61.8%", color=close > ema50 ? color.teal : color.gray)
+plot(fib786, "Bull 78.6%", color=color.green)`,
+  },
+  {
+    id: 'startup-bravo-voila',
+    name: 'Startup Suite (Bravo+Voila)',
+    author: 'Startup Suite (Complete Port)',
+    description:
+      'Bravo EMA(12) + 1σ/2σ/3σ ATR volatility bands fused with Voila multi-pivot support/resistance stratification levels.',
+    category: 'Volatility',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 235000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Suite", "SS Suite", overlay=true)
+bravoEma = ta.ema(close, 12)
+atrVal = ta.atr(14)
+plot(bravoEma, "Bravo EMA(12)", color=color.yellow, linewidth=2)
+plot(bravoEma + atrVal * 2.0, "Upper 2σ Band", color=color.gray)
+plot(bravoEma - atrVal * 2.0, "Lower 2σ Band", color=color.gray)`,
+  },
+  {
+    id: 'startup-arch',
+    name: 'Startup Arch (LinReg Detrended Z)',
+    author: 'Startup Suite',
+    description:
+      'Linear regression of detrended close (SMA 20) with 100-bar Z-score (±2σ) identifying Early accumulation vs Late extended phases.',
+    category: 'Oscillator',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 230000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Arch", "Arch", overlay=false)
+arch = ta.linreg(close - ta.sma(close, 20), 20, 0)
+plot(arch, "Arch", color=arch > 0 ? color.green : color.purple, style=plot.style_columns)
+hline(0, "Zero", color=color.gray)`,
+  },
+  {
+    id: 'startup-echo',
+    name: 'Startup Echo (Fast RSI 7)',
+    author: 'Startup Suite',
+    description:
+      'Fast 2-bar SMA-smoothed RSI(7) hill oscillator around 50 midline with OB/OS levels (70/30) for rapid 1D swing timing.',
+    category: 'Oscillator',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 225000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Echo", "Echo", overlay=false)
+echo = ta.sma(ta.rsi(close, 7), 2)
+plot(echo, "Echo", color=echo > 50 ? color.blue : color.fuchsia, linewidth=2)
+hline(50, "Midline", color=color.gray)`,
+  },
+  {
+    id: 'startup-helix',
+    name: 'Startup Helix (8/21/5)',
+    author: 'Startup Suite',
+    description:
+      'Smoothed EMA(8) - EMA(21) impulse envelope with 50-bar slope steepness detection and flat-helix indecision chop flagging.',
+    category: 'Oscillator',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 220000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Helix", "Helix", overlay=false)
+helix = ta.ema(ta.ema(close, 8) - ta.ema(close, 21), 5)
+plot(math.abs(helix), "Upper Helix", color=helix > 0 ? color.green : color.purple, linewidth=2)
+plot(-math.abs(helix), "Lower Helix", color=helix > 0 ? color.green : color.purple, linewidth=2)`,
+  },
+  {
+    id: 'startup-mountain',
+    name: 'Startup Mountain (EMA 50 Altitude)',
+    author: 'Startup Suite',
+    description:
+      'Percentage altitude above/below 50-period EMA ((Close - EMA50)/EMA50 * 100) with base-slope entry/exit inflection markers.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 215000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Mountain", "Mountain", overlay=false)
+mtnBase = ta.ema(close, 50)
+altitude = ((close - mtnBase) / mtnBase) * 100
+plot(altitude, "Altitude %", color=altitude > 0 ? color.blue : color.fuchsia, style=plot.style_areabr)
+hline(0, "Sea Level", color=color.gray)`,
+  },
+  {
+    id: 'startup-tango',
+    name: 'Startup Tango (Slow RSI 28)',
+    author: 'Startup Suite',
+    description:
+      'Slow 10-bar SMA-smoothed RSI(28) macro momentum oscillator filtering short-term noise on Daily/Weekly swing trends.',
+    category: 'Oscillator',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 210000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup Tango", "Tango", overlay=false)
+tango = ta.sma(ta.rsi(close, 28), 10)
+plot(tango, "Tango", color=tango > 50 ? color.blue : color.fuchsia, linewidth=2)
+hline(50, "Midline", color=color.gray)`,
+  },
+  {
+    id: 'shannon-auto-avwap-v6',
+    name: 'Auto Anchored VWAP [Shannon Method]',
+    author: 'Brian Shannon Style (Pine v6)',
+    description:
+      'Multi-anchor YTD / Gap / Major Swing High & Low Anchored VWAPs with +/-1σ and +/-2σ standard deviation institutional bands and 3-bar slope confirmation.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 208000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Auto Anchored VWAP [Shannon Method]", shorttitle="Auto AVWAP", overlay=true)
+isNewYear = year != year[1]
+var float cumPV = 0.0
+var float cumV  = 0.0
+if isNewYear
+    cumPV := hlc3 * volume
+    cumV  := volume
+else
+    cumPV += hlc3 * volume
+    cumV  += volume
+ytdAvwap = cumV > 0 ? cumPV / cumV : hlc3
+plot(ytdAvwap, "YTD AVWAP", color=color.aqua, linewidth=2)`,
+  },
+  {
+    id: 'inside-bar-auto-htf-v2',
+    name: 'Inside Bar Auto-HTF System v2.0',
+    author: 'Quant Trader (Pine v6)',
+    description:
+      'Detects coiled Inside Bars (High <= High[1] & Low >= Low[1]) with Mother Bar persistence, Auto-HTF Weekly EMA(50) bias, RVOL/ATR expansion & 0-5 compression quality score.',
+    category: 'Volatility',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 206000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Inside Bar Auto-HTF System v2.0", shorttitle="InsideBar HTF", overlay=true)
+isInside = high <= high[1] and low >= low[1]
+htfEma = request.security(syminfo.tickerid, "W", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+plot(htfEma, "HTF EMA 50", color=close > htfEma ? color.teal : color.red, linewidth=2)
+plotshape(isInside, "Inside Bar", shape.diamond, location.abovebar, color.yellow, size=size.tiny)`,
+  },
+  {
+    id: 'ice-confluence-v11',
+    name: 'Institutional Confluence Engine [ICE v1.1.0]',
+    author: 'Quant Core (Pine v6)',
+    description:
+      'Composite institutional scoring engine blending 0.35*MACD/ATR + 0.35*(B-Xtrender/50) + 0.30*(HMA_MFI-50)/50 gated by AlphaTrail, ADX(14), and ATR% regime.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 204000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Institutional Confluence Engine [ICE v1.1.0]", shorttitle="ICE v1.1", overlay=true)
+[macdLine, sigLine, histLine] = ta.macd(close, 12, 26, 9)
+atr14 = ta.atr(14)
+macdNorm = atr14 > 0 ? math.max(-1.0, math.min(1.0, histLine / atr14)) : 0.0
+bxt = (ta.rsi(ta.ema(close, 5) - ta.ema(close, 20), 15) - 50.0) / 50.0
+mfiHma = (ta.hma(ta.mfi(hlc3, 14), 7) - 50.0) / 50.0
+iceScore = (0.35 * macdNorm + 0.35 * bxt + 0.30 * mfiHma) * 100
+plot(ta.hma(close, 33), "ICE AlphaTrail Proxy", color=iceScore > 0 ? color.teal : color.red, linewidth=2)`,
+  },
+  {
+    id: 'ict-prop-engine-v5',
+    name: 'Institutional Prop Engine v5 | ICT Liquidity',
+    author: 'ICT Prop Quant (Pine v6)',
+    description:
+      '8-point ICT confluence engine combining Equal H/L BSL/SSL Sweeps vs Acceptance, Fair Value Gaps (FVG), Optimal Trade Entry (0.62-0.79), Weekly Mid, and EMA(20) bias.',
+    category: 'SMC',
+    version: 'v6',
+    overlay: true,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 202000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Institutional Prop Engine v5 | ICT Liquidity", shorttitle="ICT Prop v5", overlay=true)
+fvgBull = low > high[2] and close[1] > open[1]
+fvgBear = high < low[2] and close[1] < open[1]
+ema20 = ta.ema(close, 20)
+plot(ema20, "ICT EMA 20", color=close > ema20 ? color.emerald : color.rose, linewidth=2)
+plotshape(fvgBull, "Bull FVG", shape.triangleup, location.belowbar, color.teal, size=size.tiny)`,
+  },
+  {
+    id: 'mcdx-plus-institutional',
+    name: 'MCDX Plus — Institutional Edition',
+    author: 'Institutional Chips Suite (Pine v6)',
+    description:
+      'Decomposes price action within VWAP-Sigma or 100-bar High/Low boundaries into Profitable Chips (Banker), Floating Chips (Hot Money), and Trapped Chips (Retail) with PC vs SMA(10) regime.',
+    category: 'Volume',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 201000,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("MCDX Plus — Institutional Edition", shorttitle="MCDX+", overlay=false)
+hi = ta.highest(high, 50)
+lo = ta.lowest(low, 50)
+rng = math.max(hi - lo, 0.0001)
+pc = ((close - lo) / rng) * 100
+pcSma = ta.sma(pc, 10)
+plot(pc, "Profitable Chips %", color=color.red, style=plot.style_columns)
+plot(pcSma, "Banker MA(10)", color=color.white, linewidth=2)`,
+  },
+  {
+    id: 'startup-ss-strat-v2',
+    name: 'Startup — SS Strat v2.0 (7-Pane + Online IC)',
+    author: 'Startup Suite (Pine v6 Strategy)',
+    description:
+      'Self-contained 7-pane confluence strategy fusing Tango, Bravo (EMA 8/21), Echo, Arch, Helix, Lattice (EMA 8 vs 20/30/40/50 ribbon) & Mountain with Online-IC adaptive weighting, ATR stop & 2R target.',
+    category: 'Trend',
+    version: 'v6',
+    overlay: false,
+    enabled: true,
+    isBuiltIn: true,
+    importedAt: Date.now() - 200500,
+    syntaxValid: true,
+    pineCode: `//@version=6
+indicator("Startup — SS Strat v2.0", shorttitle="SS Strat v2", overlay=false)
+tango = (ta.sma(ta.rsi(close, 28), 10) - 50.0) / 15.0
+bravo = (ta.ema(close, 8) - ta.ema(close, 21)) / math.max(ta.atr(14), 0.0001)
+echo = (ta.sma(ta.rsi(close, 7), 2) - 50.0) / 25.0
+latticeAvg = (ta.ema(close, 20) + ta.ema(close, 30) + ta.ema(close, 40) + ta.ema(close, 50)) / 4.0
+lattice = ((ta.ema(close, 8) - latticeAvg) / math.max(close, 0.0001)) * 40.0
+mtn = ((close - ta.ema(close, 50)) / math.max(ta.ema(close, 50), 0.0001)) * 12.5
+comp = (2.0 * math.max(-1.0, math.min(1.0, tango)) + 2.0 * math.max(-1.0, math.min(1.0, bravo)) + math.max(-1.0, math.min(1.0, echo)) + math.max(-1.0, math.min(1.0, lattice)) + math.max(-1.0, math.min(1.0, mtn))) / 7.0
+plot(comp * 100.0, "SS Strat 7P Score", color=comp >= 0.4 ? color.lime : comp <= -0.4 ? color.red : color.gray, linewidth=2)
+hline(40, "Entry +0.40", color=color.teal)
+hline(-40, "Short -0.40", color=color.maroon)`,
+  },
 ];
 
 export const DEFAULT_CUSTOM_INDICATORS: CustomPineIndicator[] = [
@@ -470,10 +886,11 @@ plot(delta, "APEX Confluence Delta", color=delta > 0 ? color.green : color.red, 
   },
   {
     id: 'trendcloud-pro',
-    name: 'TrendCloud Pro',
-    author: 'Community Trader',
-    description: 'Dynamic multi-period EMA cloud (12 & 34) displaying bullish trend expansion and squeeze compression zones.',
-    category: 'Reversal',
+    name: 'G-Ron TrendCloud Pro v3',
+    author: 'G-Ron Quant (Pine v6)',
+    description:
+      '20-bar Donchian/SMA ratcheting TrendCloud state machine with 2.618 Fibonacci target ray, 200-bar MA institutional risk alignment, and reversal level tracking.',
+    category: 'Trend',
     version: 'v6',
     overlay: true,
     enabled: true,
@@ -481,18 +898,23 @@ plot(delta, "APEX Confluence Delta", color=delta > 0 ? color.green : color.red, 
     importedAt: Date.now() - 170000,
     syntaxValid: true,
     pineCode: `//@version=6
-indicator("TrendCloud Pro", overlay=true)
-fast = ta.ema(close, 12)
-slow = ta.ema(close, 34)
-p1 = plot(fast, "Fast Cloud Base", color=color.green)
-p2 = plot(slow, "Slow Cloud Base", color=color.blue)
-fill(p1, p2, color=fast > slow ? color.new(color.green, 85) : color.new(color.red, 85))`,
+indicator("G-Ron TrendCloud Pro v3", shorttitle="TrendCloud Pro", overlay=true)
+hi20 = ta.highest(high, 20)
+lo20 = ta.lowest(low, 20)
+mid20 = (hi20 + lo20) / 2
+sma20 = ta.sma(close, 20)
+ma200 = ta.sma(close, 200)
+p1 = plot(mid20, "Donchian Mid(20)", color=color.teal, linewidth=2)
+p2 = plot(sma20, "SMA(20)", color=color.blue, linewidth=1)
+plot(ma200, "200 MA Risk Filter", color=color.purple, linewidth=2)
+fill(p1, p2, color=close >= mid20 ? color.new(color.green, 82) : color.new(color.red, 82))`,
   },
   {
     id: 'agaig-avwap',
-    name: 'AGAIG + Institutional AVWAP',
-    author: 'Community Trader',
-    description: 'Peak-volume anchored VWAP with +/- 1.5 standard deviation institutional golden zones.',
+    name: 'AGAIG + Institutional AVWAP v2',
+    author: 'AGAIG Quant (Pine v6)',
+    description:
+      'SSL HMA(60) trend direction + 12-indicator Consensus Engine + CSR 1.5/2.0 ZigZag + Rolling Anchored VWAP & ADX(14) regime filter.',
     category: 'Reversal',
     version: 'v6',
     overlay: true,
@@ -501,18 +923,21 @@ fill(p1, p2, color=fast > slow ? color.new(color.green, 85) : color.new(color.re
     importedAt: Date.now() - 160000,
     syntaxValid: true,
     pineCode: `//@version=6
-indicator("AGAIG + Institutional AVWAP", overlay=true)
-avwap = ta.vwap(close)
+indicator("AGAIG + Institutional AVWAP v2", shorttitle="AGAIG v2", overlay=true)
+hmaHi = ta.hma(high, 60)
+hmaLo = ta.hma(low, 60)
+avwap = ta.vwap(hlc3)
 std = ta.stdev(close, 20) * 1.5
-plot(avwap, "Institutional AVWAP", color=color.yellow, linewidth=2)
-plot(avwap + std, "AGAIG Upper Zone (+1.5σ)", color=color.teal)
-plot(avwap - std, "AGAIG Lower Zone (-1.5σ)", color=color.green)`,
+plot(hmaHi, "SSL HMA High(60)", color=color.teal)
+plot(hmaLo, "SSL HMA Low(60)", color=color.rose)
+plot(avwap, "Institutional AVWAP", color=color.yellow, linewidth=2)`,
   },
   {
     id: 'supertrend-v9-pro',
-    name: 'SuperTrend v9 PRO',
-    author: 'Community Trader',
-    description: 'Advanced ATR trailing volatility bands with adaptive sensitivity for swing trading and trend persistence.',
+    name: 'SuperTrend v10.1 — Auto Fib & PRIME',
+    author: 'Quant Core (Pine v6 Upgrade)',
+    description:
+      'Upgraded v10.1 LONG-ONLY confluence suite (supersedes v9): SuperTrend(10,3.0) 0.5xATR cloud, EMA 20/50/200 stack, 3-pillar PRIME (Close>EMA200 + RSI>50 + VolZ>=1σ/BuyPress>10%), 10-bar Sweep detector, MTF tags & nearest S/R + Auto Fib 1.272/1.618/2.0 targets.',
     category: 'Trend',
     version: 'v6',
     overlay: true,
@@ -521,10 +946,24 @@ plot(avwap - std, "AGAIG Lower Zone (-1.5σ)", color=color.green)`,
     importedAt: Date.now() - 150000,
     syntaxValid: true,
     pineCode: `//@version=6
-indicator("SuperTrend v9 PRO", overlay=true)
-atr = ta.atr(10) * 3.0
-// Adaptive trailing band calculation
-plot(close > ta.ema(close, 20) ? low - atr : high + atr, "SuperTrend Band", color=color.green)`,
+indicator("SuperTrend v10.1 — Auto Fib & PRIME", shorttitle="ST v10.1", overlay=true)
+[stLine, stDir] = ta.supertrend(3.0, 10)
+atrBand = ta.atr(10) * 0.5
+isUp = close > stLine
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+rsi14 = ta.rsi(close, 14)
+volMean = ta.sma(volume, 50)
+volStd = ta.stdev(volume, 50)
+volZ = volStd > 0 ? (volume - volMean) / volStd : 0.0
+primeSig = isUp and not isUp[1] and close > ema200 and rsi14 > 50 and volZ >= 1.0
+pSt = plot(stLine, "SuperTrend v10 Line", color=isUp ? color.teal : color.red, linewidth=2)
+pBand = plot(isUp ? stLine + atrBand : stLine - atrBand, "ST Cloud Band", color=isUp ? color.teal : color.red)
+fill(pSt, pBand, color=isUp ? color.new(color.teal, 82) : color.new(color.red, 82))
+plot(ema20, "EMA 20", color=color.sky)
+plot(ema50, "EMA 50", color=color.orange)
+plotshape(primeSig, "PRIME Buy", shape.triangleup, location.belowbar, color.gold, text="PRIME")`,
   },
 ];
 

@@ -1,0 +1,60 @@
+// © Startup Suite — Echo
+//@version=6
+indicator("Startup Echo", "Echo", overlay=false, format=format.price, precision=2)
+
+// Spec: Faster than other diamonds. RSI-based. Hills bottoming = oversold,
+// hills topping = overbought. Use prior hill highs/lows to approximate
+// future tops/bottoms.
+
+color C_BLUE  = #2196F3
+color C_PINK  = #FF4081
+color C_GREEN = #00E676
+color C_RED   = #FF5252
+color C_GREY  = #424242
+color C_DARK  = #0D0D1A
+color C_WHITE = #FFFFFF
+
+int   rsiLen      = input.int(7, "Echo RSI Length", minval=2, group="Echo")
+int   smoLen      = input.int(2, "Smoothing",       minval=1, group="Echo")
+int   obLevel     = input.int(70, "Overbought",     minval=51, maxval=99, group="Echo")
+int   osLevel     = input.int(30, "Oversold",       minval=1,  maxval=49, group="Echo")
+bool  i_showHills = input.bool(true, "Fill Hills (above/below 50)", group="Display")
+bool  i_showPriorPeaks = input.bool(true, "Mark prior hill peaks/troughs", group="Display")
+int   pivotLen    = input.int(3, "Hill Peak/Trough Pivot Length", minval=1, group="Display")
+
+float rsiRaw = ta.rsi(close, rsiLen)
+float echo   = ta.sma(rsiRaw, smoLen)
+
+bool bull       = echo > 50
+bool bear       = echo < 50
+bool crossUp    = ta.crossover(echo, 50)
+bool crossDown  = ta.crossunder(echo, 50)
+
+// Hill envelopes — fill above/below 50 baseline
+float baseline = 50
+plot(echo, "Echo", color=bull ? C_BLUE : C_PINK, linewidth=2)
+plot(baseline, "Midline", color=C_GREY, linewidth=1)
+hline(obLevel, "Overbought", color=color.new(C_RED, 60), linestyle=hline.style_dotted)
+hline(osLevel, "Oversold",   color=color.new(C_GREEN, 60), linestyle=hline.style_dotted)
+
+p_echo = plot(i_showHills ? echo : na, "Echo Hill", color=na, display=display.none)
+p_base = plot(i_showHills ? baseline : na, "Base", color=na, display=display.none)
+fill(p_echo, p_base, color=bull ? color.new(C_BLUE, 75) : color.new(C_PINK, 75), title="Hill Fill")
+
+// Confirmation diamonds (cross of 50 — matches master suite Echo logic)
+plotshape(crossUp,   "Echo Bull", shape.diamond, location.bottom, C_BLUE, size=size.tiny)
+plotshape(crossDown, "Echo Bear", shape.diamond, location.top,    C_PINK, size=size.tiny)
+
+// Hill peak / trough markers — visualize prior tops & bottoms for projection
+float hPeak   = ta.pivothigh(echo, pivotLen, pivotLen)
+float hTrough = ta.pivotlow(echo,  pivotLen, pivotLen)
+plotshape(i_showPriorPeaks and not na(hPeak)   ? hPeak   : na, "Hill Peak",   shape.triangledown, location.absolute, color.new(C_RED, 30),   size=size.tiny, offset=-pivotLen)
+plotshape(i_showPriorPeaks and not na(hTrough) ? hTrough : na, "Hill Trough", shape.triangleup,   location.absolute, color.new(C_GREEN, 30), size=size.tiny, offset=-pivotLen)
+
+// Status line
+plot(echo > obLevel ? 1 : echo < osLevel ? -1 : 0, "OB/OS State", color=na, display=display.data_window)
+
+alertcondition(crossUp,   "Echo Bull Cross", "Echo crossed above 50")
+alertcondition(crossDown, "Echo Bear Cross", "Echo crossed below 50")
+alertcondition(ta.crossover(echo, obLevel),   "Echo Overbought",  "Echo entered overbought")
+alertcondition(ta.crossunder(echo, osLevel),  "Echo Oversold",    "Echo entered oversold")
