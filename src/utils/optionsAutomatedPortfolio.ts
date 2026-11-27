@@ -90,7 +90,14 @@ export interface OptionsTradeLog {
   timestamp: string;
   positionId: string;
   contract: string;
-  action: 'SELL_TO_OPEN' | 'BUY_TO_CLOSE' | 'EXPIRED_WORTHLESS' | 'ROLL_POSITION' | 'BREAKEVEN_EXIT';
+  action:
+    | 'SELL_TO_OPEN'
+    | 'BUY_TO_CLOSE'
+    | 'EXPIRED_WORTHLESS'
+    | 'EXPIRED_ITM_ASSIGNED'
+    | 'EXPIRED_ITM_EXERCISED'
+    | 'ROLL_POSITION'
+    | 'BREAKEVEN_EXIT';
   contracts: number;
   premium: number;
   realizedPnL?: number;
@@ -225,11 +232,11 @@ export function synthesizeOptionsEpisodesFromHistory(
   marketHealth?: MarketHealthReport | null
 ): OptionsTradeEpisode[] {
   return tradeHistory.map((trade, idx) => {
-    const isWin = trade.profitDollars > 0;
-    const isBreakEven = trade.outcomeReason === 'Break Even';
+    const isBreakEven = trade.outcomeReason === 'Break Even' || Math.abs(trade.profitDollars) < 0.5;
     const isError = trade.outcomeReason === 'Order Error';
+    const isLoss = isError || (!isBreakEven && trade.profitDollars < 0);
 
-    const outcome: OptionsTradeEpisode['outcome'] = isError ? 'LOSS' : isBreakEven ? 'BREAKEVEN' : 'WIN';
+    const outcome: OptionsTradeEpisode['outcome'] = isLoss ? 'LOSS' : isBreakEven ? 'BREAKEVEN' : 'WIN';
     const pattern = trade.tradingWarzPattern || 'GOLDEN_ZONE_BOUNCE';
     const patternLabel = pattern.replace(/_/g, ' ');
     const entryCtx: EntryMarketContext | null =
@@ -246,25 +253,32 @@ export function synthesizeOptionsEpisodesFromHistory(
 
     if (outcome === 'WIN') {
       synapticWeightDelta = Math.min(0.25, Number((0.05 + (trade.profitPercent / 100) * 0.10).toFixed(3)));
-      if (trade.profitPercent >= 95) {
-        reflectionCritique = `Held ${trade.contract} to expiration; full 100% premium (+$${trade.profitDollars.toFixed(2)}) captured as underlying traded safely above Golden Zone support floor ($${trade.goldenZoneSupportLevel}).${ctxTag}`;
+      if (trade.outcomeReason === 'Expired Worthless') {
+        reflectionCritique = `Held ${trade.contract} to expiration OTM; the option expired worthless and the full premium (+${trade.profitDollars.toFixed(2)}) was retained.${ctxTag}`;
         learnedRule = entryCtx
           ? `[${entryCtx.sentimentLabel}] TradingWarz ${patternLabel} short puts at Delta ≤ ${trade.delta} expired worthless in ${entryCtx.sentimentLabel}.`
-          : `TradingWarz ${patternLabel} setups at Delta ≤ ${trade.delta} reliably expire worthless; full premium capture maximizes long-term portfolio growth.`;
+          : `TradingWarz ${patternLabel} setups at Delta ≤ ${trade.delta} expired OTM; full premium capture is only recorded when intrinsic value is zero.`;
+      } else if (String(trade.outcomeReason).startsWith('Expired ITM')) {
+        reflectionCritique = `The option expired ITM and was assigned/exercised; after intrinsic settlement, net P&L was +${trade.profitDollars.toFixed(2)} (${trade.profitPercent.toFixed(1)}% of premium at risk).${ctxTag}`;
+        learnedRule = `Treat ITM expiration as assignment/exercise with intrinsic-value settlement; never classify it as a 100% premium win.`;
       } else {
-        reflectionCritique = `Executed disciplined early profit-take (${trade.profitPercent}%) on ${trade.contract}, banking +$${trade.profitDollars.toFixed(2)} within weekly cycle and liberating collateral.${ctxTag}`;
+        reflectionCritique = `Executed disciplined early profit-take (${trade.profitPercent}%) on ${trade.contract}, banking +${trade.profitDollars.toFixed(2)} within weekly cycle and liberating collateral.${ctxTag}`;
         learnedRule = entryCtx
-          ? `[${entryCtx.sentimentLabel}] Early 60–85% profit take on ${trade.ticker} short puts preserved theta edge.`
-          : `Early profit take at 60-85% locks in compounded returns while cutting weekend gamma risk to zero.`;
+          ? `[${entryCtx.sentimentLabel}] Early 60–85% profit take on ${trade.ticker} short options preserved the theta edge.`
+          : `Early profit-taking locks in gains while reducing the residual gamma risk into expiration.`;
       }
     } else if (outcome === 'BREAKEVEN') {
       synapticWeightDelta = +0.02; // Capital preservation positive reinforcement
-      reflectionCritique = `Underlying tested support near strike; bot executed defensive break-even exit on ${trade.contract} (P&L $${trade.profitDollars.toFixed(2)}), preserving capital without taking catastrophic tail loss.${ctxTag}`;
-      learnedRule = `Immediate break-even exit when strike is pressured protects 100% of underlying capital and ensures 99x profit factor.`;
+      reflectionCritique = `The option exited with near-zero realized P&L on ${trade.contract} (${trade.profitDollars.toFixed(2)}); no win or loss was attributed.${ctxTag}`;
+      learnedRule = `Classify a trade as breakeven only when the realized P&L is within the configured tolerance.`;
     } else {
       synapticWeightDelta = -0.15;
-      reflectionCritique = `Order execution anomaly on ${trade.contract} (-$${Math.abs(trade.profitDollars).toFixed(2)}); active memory enforced automated syntax and strike validation checks.${ctxTag}`;
-      learnedRule = `Always run pre-flight contract specification validation before routing short put orders to broker API.`;
+      reflectionCritique = String(trade.outcomeReason).startsWith('Expired ITM')
+        ? `The option expired ITM and assignment/exercise intrinsic value exceeded the premium; realized loss was -${Math.abs(trade.profitDollars).toFixed(2)} (${trade.profitPercent.toFixed(1)}% of premium at risk).${ctxTag}`
+        : `Realized options loss on ${trade.contract}: -${Math.abs(trade.profitDollars).toFixed(2)}. The observed loss, not an assumed expiry win, was used for learning.${ctxTag}`;
+      learnedRule = String(trade.outcomeReason).startsWith('Expired ITM')
+        ? `Reassess strike distance and tail-risk limits; a short option can lose more than its entire premium at expiration.`
+        : `Use realized broker or intrinsic-settlement P&L for options learning and verify all execution inputs.`;
     }
 
     return {
@@ -554,9 +568,16 @@ export function processOptionsAutonomousCycle(
             : Math.max(0, underlyingPrice - pos.strike),
         }
       : calculateBlackScholesGreeks(underlyingPrice, pos.strike, nextDte / 365, 0.045, ivDec, pos.optionType);
-    const decayedPremium = Math.max(0.05, Number(bsReprice.price.toFixed(2)));
-    const unrealizedPnL = (pos.entryPremiumPerContract - decayedPremium) * pos.contractsCount * multiplier;
-    const profitPct = ((pos.entryPremiumPerContract - decayedPremium) / Math.max(0.01, pos.entryPremiumPerContract)) * 100;
+    // At expiration the option mark is exactly intrinsic value; do not retain
+    // the non-expiry $0.05 pricing floor for an OTM contract.
+    const decayedPremium = nextDte === 0
+      ? Number(bsReprice.price.toFixed(2))
+      : Math.max(0.05, Number(bsReprice.price.toFixed(2)));
+    const pnlPerShare = pos.boughtSold === 'Sold'
+      ? pos.entryPremiumPerContract - decayedPremium
+      : decayedPremium - pos.entryPremiumPerContract;
+    const unrealizedPnL = pnlPerShare * pos.contractsCount * multiplier;
+    const profitPct = (pnlPerShare / Math.max(0.01, pos.entryPremiumPerContract)) * 100;
 
     let posCopy: OptionsPosition = {
       ...pos,
@@ -570,17 +591,34 @@ export function processOptionsAutonomousCycle(
     // Check Take-Profit Condition (e.g. >= 70% or 75% profit captured)
     if (profitPct >= pos.profitTargetPercent || posCopy.dteDaysRemaining === 0) {
       const isExpired = posCopy.dteDaysRemaining === 0;
+      const intrinsicValue = pos.optionType === 'PUT'
+        ? Math.max(0, pos.strike - underlyingPrice)
+        : Math.max(0, underlyingPrice - pos.strike);
+      const premiumAtRisk = pos.entryPremiumPerContract * pos.contractsCount * multiplier;
+      const intrinsicSettlement = intrinsicValue * pos.contractsCount * multiplier;
+      // Seller P&L = credit - intrinsic liability; buyer P&L is the inverse.
+      // This is the expiry economic P&L. Share inventory created by assignment
+      // is intentionally not fabricated in this options-only simulator.
+      const expiryPnL = pos.boughtSold === 'Sold'
+        ? premiumAtRisk - intrinsicSettlement
+        : intrinsicSettlement - premiumAtRisk;
       const finalPnL = isExpired
-        ? pos.totalPremiumCollected
+        ? Number(expiryPnL.toFixed(2))
         : Number(unrealizedPnL.toFixed(2));
-      const finalProfitPct = isExpired ? 100 : Number(profitPct.toFixed(1));
+      const finalProfitPct = Number(
+        ((finalPnL / Math.max(0.01, premiumAtRisk)) * 100).toFixed(1)
+      );
 
       updatedCash += finalPnL;
       updatedRealizedIncome += finalPnL;
 
-      const outcomeReason: OptionsTradeRecord['outcomeReason'] = isExpired
-        ? 'Expired Worthless'
-        : 'Early Take-Profit';
+      const outcomeReason: OptionsTradeRecord['outcomeReason'] = !isExpired
+        ? 'Early Take-Profit'
+        : intrinsicValue <= 0
+          ? 'Expired Worthless'
+          : pos.boughtSold === 'Sold'
+            ? 'Expired ITM / Assigned'
+            : 'Expired ITM / Exercised';
 
       const exitRegime = getTradeExecutionRegime(pos.ticker, now).regime;
 
@@ -589,10 +627,10 @@ export function processOptionsAutonomousCycle(
         id: makeUniquePortfolioId('rich-opt-live'),
         date: dateStr,
         ticker: pos.ticker,
-        boughtSold: 'Sold',
+        boughtSold: pos.boughtSold,
         contract: pos.contract,
         strike: pos.strike,
-        optionType: 'PUT',
+        optionType: pos.optionType,
         expiration: pos.expirationLabel,
         expirationDateStr: pos.expirationDateStr,
         profitDollars: finalPnL,
@@ -605,7 +643,9 @@ export function processOptionsAutonomousCycle(
         thetaPerDay: pos.dailyTheta,
         tradingWarzPattern: pos.tradingWarzPattern as any,
         goldenZoneSupportLevel: pos.goldenZoneSupportLevel,
-        whyOpenedThesis: `${outcomeReason}: ${pos.whyOpenedThesis} Banked +$${finalPnL.toFixed(2)} (${finalProfitPct}% profit).`,
+        whyOpenedThesis: isExpired && intrinsicValue > 0
+          ? `${outcomeReason}: ${pos.whyOpenedThesis} Intrinsic settlement $ ${intrinsicSettlement.toFixed(2)}; net P&L ${finalPnL.toFixed(2)} (${finalProfitPct}% of premium at risk). The simulator records the economic settlement but does not create underlying share inventory.`
+          : `${outcomeReason}: ${pos.whyOpenedThesis} Net P&L ${finalPnL.toFixed(2)} (${finalProfitPct}% of premium at risk).`,
         session: exitRegime,
       };
 
@@ -616,13 +656,21 @@ export function processOptionsAutonomousCycle(
         timestamp: timeStr,
         positionId: pos.id,
         contract: pos.contract,
-        action: isExpired ? 'EXPIRED_WORTHLESS' : 'BUY_TO_CLOSE',
+        action: !isExpired
+          ? 'BUY_TO_CLOSE'
+          : intrinsicValue <= 0
+            ? 'EXPIRED_WORTHLESS'
+            : pos.boughtSold === 'Sold'
+              ? 'EXPIRED_ITM_ASSIGNED'
+              : 'EXPIRED_ITM_EXERCISED',
         contracts: pos.contractsCount,
         premium: decayedPremium,
         realizedPnL: finalPnL,
         realizedPnLPercent: finalProfitPct,
         session: exitRegime,
-        reason: `${outcomeReason} [${exitRegime}] ${pos.contract}: Captured ${finalProfitPct}% of maximum premium (+$${finalPnL.toFixed(2)}). Collateral released. [Active Memory]: Reinforced TradingWarz ${pos.tradingWarzPattern} setup weight.`,
+        reason: isExpired && intrinsicValue > 0
+          ? `${outcomeReason} [${exitRegime}] ${pos.contract}: Intrinsic value $ ${intrinsicValue.toFixed(2)} per share; aggregate intrinsic settlement $ ${intrinsicSettlement.toFixed(2)}. Net expiry P&L $ ${finalPnL.toFixed(2)} (${finalProfitPct}% of premium at risk). Underlying assignment/exercise inventory is not represented by this options-only simulator.`
+          : `${outcomeReason} [${exitRegime}] ${pos.contract}: Net P&L $ ${finalPnL.toFixed(2)} (${finalProfitPct}% of premium at risk).`,
       });
 
       // Ingest into Active Memory
@@ -636,10 +684,14 @@ export function processOptionsAutonomousCycle(
         tradingWarzPattern: pos.tradingWarzPattern || 'TradingWarz Confluence',
         pnl: finalPnL,
         pnlPercent: finalProfitPct,
-        outcome: 'WIN',
-        reflectionCritique: `Successfully harvested $${finalPnL.toFixed(2)} from ${pos.contract} during ${exitRegime} session. Theta decay functioned reliably above support floor $${pos.goldenZoneSupportLevel.toFixed(2)}.`,
-        learnedRule: 'Disciplined early profit-taking at 70-85% locks in compounded gains with zero tail risk.',
-        synapticWeightDelta: +0.10,
+        outcome: Math.abs(finalPnL) < 0.5 ? 'BREAKEVEN' : finalPnL > 0 ? 'WIN' : 'LOSS',
+        reflectionCritique: isExpired && intrinsicValue > 0
+          ? `${outcomeReason}: intrinsic settlement $ ${intrinsicSettlement.toFixed(2)} versus premium ${pos.boughtSold === 'Sold' ? 'credit' : 'debit'} $ ${premiumAtRisk.toFixed(2)}; net P&L $ ${finalPnL.toFixed(2)}.`
+          : `${outcomeReason}: realized P&L $ ${finalPnL.toFixed(2)} on ${pos.contract} during ${exitRegime}.`,
+        learnedRule: isExpired && intrinsicValue > 0
+          ? 'Model ITM expiration as assignment/exercise with intrinsic-value settlement; it is not an automatic full-premium win.'
+          : 'Use the actual realized option P&L and only classify OTM expiry as full premium retention.',
+        synapticWeightDelta: Math.abs(finalPnL) < 0.5 ? +0.02 : finalPnL > 0 ? +0.10 : -0.15,
       });
       activeMemory.learningIterations++;
       continue; // Exited, do not keep in open positions
