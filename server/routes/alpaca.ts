@@ -149,6 +149,108 @@ export function createAlpacaRouter(
     }
   });
 
+  router.post('/api/alpaca/reconciliation/integrity-audit', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    const maxOrders = req.body?.maxOrders === undefined ? 5000 : Number(req.body.maxOrders);
+    if (!Number.isSafeInteger(maxOrders) || maxOrders < 1 || maxOrders > 10000) {
+      res.status(400).json({ error: 'maxOrders must be an integer from 1 to 10000.', mode: 'PAPER' });
+      return;
+    }
+    const startedAt = new Date().toISOString();
+    const auditId = 'integrity-' + randomUUID();
+    const counts = { VALID: 0, INVALID: 0, UNVERIFIABLE: 0, MISSING_LEDGER: 0, INDEX_MISMATCH: 0 };
+    const evidence: Array<Record<string, string | number | boolean>> = [];
+    let scanned = 0;
+    let pageToken = '';
+    const seenPageTokens = new Set<string>();
+    let coverageComplete = true;
+    try {
+      while (scanned < maxOrders) {
+        const page = await executionLedger.listTrackedOrdersPage({
+          limit: Math.min(500, maxOrders - scanned),
+          pageToken: pageToken || undefined,
+        });
+        for (let offset = 0; offset < page.orders.length; offset += 3) {
+          const batch = page.orders.slice(offset, offset + 3);
+          const results = await Promise.all(batch.map(async order => {
+            try {
+              if (!order.clientOrderId || !order.symbol) {
+                return { clientOrderId: String(order.clientOrderId || ''), symbol: String(order.symbol || ''), classification: 'UNVERIFIABLE', eventCount: 0 };
+              }
+              const events = await executionLedger.readEvents(order.clientOrderId);
+              if (createHash('sha256').update(order.clientOrderId).digest('hex') !== order.indexKey ||
+                  events.some(event => event.clientOrderId !== order.clientOrderId) ||
+                  events.some(event => String(event.symbol || '').toUpperCase() !== String(order.symbol || '').toUpperCase())) {
+                return { clientOrderId: order.clientOrderId, symbol: order.symbol, classification: 'INDEX_MISMATCH', eventCount: events.length };
+              }
+              if (events.length === 0) {
+                return { clientOrderId: order.clientOrderId, symbol: order.symbol, classification: 'MISSING_LEDGER', eventCount: 0 };
+              }
+              const verification = verifyExecutionLedgerChain(events);
+              return {
+                clientOrderId: order.clientOrderId, symbol: order.symbol,
+                classification: verification.valid ? 'VALID' : 'INVALID',
+                eventCount: events.length,
+                ...(verification.brokenAtSequence != null ? { brokenAtSequence: verification.brokenAtSequence } : {}),
+                headHash: verification.headHash,
+              };
+            } catch {
+              return { clientOrderId: order.clientOrderId, symbol: order.symbol, classification: 'UNVERIFIABLE', eventCount: 0 };
+            }
+          }));
+          for (const result of results) {
+            scanned++;
+            counts[result.classification as keyof typeof counts]++;
+            if (result.classification !== 'VALID' && evidence.length < 250) evidence.push(result);
+          }
+        }
+        pageToken = page.nextPageToken;
+        if (!pageToken) break;
+        if (seenPageTokens.has(pageToken)) throw new Error('Firestore returned a repeated order-index page token; audit stopped fail-closed.');
+        seenPageTokens.add(pageToken);
+      }
+      if (pageToken) coverageComplete = false;
+      const completedAt = new Date().toISOString();
+      const exceptions = counts.INVALID + counts.UNVERIFIABLE + counts.MISSING_LEDGER + counts.INDEX_MISMATCH;
+      const report = {
+        auditId, runType: 'ACCOUNT_INTEGRITY_AUDIT', startedAt, completedAt,
+        status: coverageComplete ? 'completed' : 'partial',
+        integrityStatus: exceptions === 0 ? 'CLEAN' : 'FINDINGS',
+        coverageComplete, coverageScope: 'INDEXED_ORDERS_ONLY',
+        maxOrders, scanned, counts, exceptionCount: exceptions,
+        evidence, evidenceTruncated: exceptions > evidence.length, readOnly: true,
+      };
+      await executionLedger.recordIntegrityAudit(report);
+      res.json({ mode: 'PAPER', ...report });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Account integrity audit could not be completed.',
+        mode: 'PAPER', auditId, scanned, partialResultNotPersisted: true,
+      });
+    }
+  });
+
+  router.get('/api/alpaca/reconciliation/integrity-audits', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      res.status(400).json({ error: 'limit must be an integer from 1 to 100.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const audits = await executionLedger.listIntegrityAudits({ limit });
+      res.json({ mode: 'PAPER', count: audits.length, audits, readOnly: true });
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : 'Integrity audit history is unavailable.', mode: 'PAPER' });
+    }
+  });
+
   router.get('/api/alpaca/reconciliation/runs', async (req: Request, res: Response) => {
     if (!executionLedger) {
       res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });

@@ -18,6 +18,7 @@ type DashboardState = {
   reconciliation?: any;
   loadedAt?: string;
   runs: any[];
+  integrityAudits: any[];
   ledger?: { clientOrderId: string; events: any[]; verification: any };
 };
 
@@ -32,7 +33,7 @@ const severityClass = (severity: string) => severity === 'CRITICAL'
   : 'border-sky-500/40 bg-sky-500/10 text-sky-300';
 
 export const ExecutionOperationsDashboard: React.FC = () => {
-  const [data, setData] = useState<DashboardState>({ alerts: [], runs: [] });
+  const [data, setData] = useState<DashboardState>({ alerts: [], runs: [], integrityAudits: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reconciling, setReconciling] = useState(false);
@@ -41,6 +42,7 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   const [orderLookup, setOrderLookup] = useState('');
   const [loadingLedger, setLoadingLedger] = useState(false);
   const [runFilter, setRunFilter] = useState('');
+  const [integrityRunning, setIntegrityRunning] = useState(false);
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const user = auth.currentUser;
@@ -58,11 +60,12 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   const load = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true); else setLoading(true);
     try {
-      const [overview, alerts, worker, runHistory] = await Promise.all([
+      const [overview, alerts, worker, runHistory, integrityHistory] = await Promise.all([
         api('/api/alpaca/overview'),
         api('/api/alpaca/reconciliation/alerts?limit=200'),
         api('/api/alpaca/reconciliation/worker-status'),
         api('/api/alpaca/reconciliation/runs?limit=50'),
+        api('/api/alpaca/reconciliation/integrity-audits?limit=20'),
       ]);
       setData(prev => ({
         ...prev,
@@ -70,6 +73,7 @@ export const ExecutionOperationsDashboard: React.FC = () => {
         alerts: Array.isArray(alerts.alerts) ? alerts.alerts : [],
         worker,
         runs: Array.isArray(runHistory.runs) ? runHistory.runs : [],
+        integrityAudits: Array.isArray(integrityHistory.audits) ? integrityHistory.audits : [],
         loadedAt: new Date().toISOString(),
       }));
       setError(null);
@@ -97,6 +101,19 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   };
 
 
+  const runAccountIntegrityAudit = async () => {
+    setIntegrityRunning(true);
+    try {
+      const result = await api('/api/alpaca/reconciliation/integrity-audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ maxOrders: 5000 }) });
+      setData(prev => ({ ...prev, integrityAudits: [result, ...prev.integrityAudits.filter(item => item.auditId !== result.auditId)].slice(0, 20) }));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Account integrity audit failed.');
+    } finally {
+      setIntegrityRunning(false);
+    }
+  };
+
   const loadLedgerHistory = async (clientOrderId?: string) => {
     const id = (clientOrderId ?? orderLookup).trim();
     if (!id) { setError('Enter a client_order_id to inspect its immutable ledger history.'); return; }
@@ -112,7 +129,7 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   };
 
   const downloadAudit = (format: 'json' | 'csv') => {
-    const payload = { exportedAt: new Date().toISOString(), mode: 'PAPER', runs: data.runs, ledger: data.ledger || null };
+    const payload = { exportedAt: new Date().toISOString(), mode: 'PAPER', runs: data.runs, integrityAudits: data.integrityAudits, ledger: data.ledger || null };
     let content: string;
     let mime: string;
     if (format === 'json') {
@@ -280,6 +297,23 @@ export const ExecutionOperationsDashboard: React.FC = () => {
         <p className="mt-3 text-[11px] text-zinc-500">A mismatch is a provenance signal, not proof of a broker defect. This audit never changes positions or orders.</p>
       </section>}
 
+
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div><h2 className="font-semibold text-white">Account-wide integrity audit</h2><p className="mt-1 text-xs text-zinc-500">Explicit read-only verification of indexed order ledgers. Maximum 5,000 orders per run; orders absent from the index are outside scope.</p></div>
+          <button onClick={() => void runAccountIntegrityAudit()} disabled={integrityRunning} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{integrityRunning ? 'Auditing…' : 'Run integrity audit'}</button>
+        </div>
+        <div className="space-y-2">
+          {data.integrityAudits.slice(0, 10).map((audit: any) => <article key={audit.auditId} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold text-zinc-100">{fmtDate(audit.completedAt || audit.startedAt)}</span><span className={audit.status === 'completed' && audit.coverageComplete ? 'text-[10px] font-bold text-emerald-300' : 'text-[10px] font-bold text-amber-300'}>{!audit.coverageComplete ? 'PARTIAL COVERAGE' : `${audit.status} · ${audit.integrityStatus || (audit.exceptionCount ? 'FINDINGS' : 'CLEAN')}`}</span></div>
+            <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2 text-[10px] text-zinc-400">
+              <span>Scanned <b className="text-zinc-200">{audit.scanned ?? 0}</b></span><span>Valid <b className="text-emerald-300">{audit.counts?.VALID ?? 0}</b></span><span>Invalid <b className="text-rose-300">{audit.counts?.INVALID ?? 0}</b></span><span>Missing <b className="text-zinc-200">{audit.counts?.MISSING_LEDGER ?? 0}</b></span><span>Unverifiable <b className="text-amber-300">{audit.counts?.UNVERIFIABLE ?? 0}</b></span><span>Index mismatch <b className="text-amber-300">{audit.counts?.INDEX_MISMATCH ?? 0}</b></span>
+            </div>
+            <p className="mt-2 text-[10px] text-zinc-500">Indexed orders only · {audit.auditId}</p>
+          </article>)}
+          {data.integrityAudits.length === 0 && <p className="text-xs text-zinc-500">No account-wide integrity audits recorded yet.</p>}
+        </div>
+      </section>
 
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

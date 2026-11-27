@@ -251,4 +251,42 @@ describe('Persistent Firestore execution ledger', () => {
     assert.equal(replay.alreadyIndexed, 1);
   });
 
+  it('lists a bounded order-index page and persists immutable integrity audit reports', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+    });
+    await ledger.append({
+      eventType: 'ORDER_SUBMITTED',
+      clientOrderId: 'integrity-order-1',
+      brokerOrderId: 'broker-integrity-1',
+      symbol: 'AAPL',
+      occurredAt: '2026-11-27T12:00:00.000Z',
+      payload: { status: 'accepted', qty: 1, side: 'buy' },
+    });
+    const page = await ledger.listTrackedOrdersPage({ limit: 1 });
+    assert.equal(page.orders.length, 1);
+    assert.equal(page.orders[0].clientOrderId, 'integrity-order-1');
+    assert.equal(page.orders[0].indexKey, createHash('sha256').update('integrity-order-1').digest('hex'));
+    assert.equal(page.nextPageToken, '');
+    const report = {
+      auditId: 'integrity-test-1',
+      startedAt: '2026-11-27T12:00:00.000Z',
+      completedAt: '2026-11-27T12:00:01.000Z',
+      status: 'completed',
+      coverageComplete: true,
+      scanned: 1,
+      counts: { VALID: 1, INVALID: 0, UNVERIFIABLE: 0, MISSING_LEDGER: 0, INDEX_MISMATCH: 0 },
+    };
+    await ledger.recordIntegrityAudit(report);
+    const audits = await ledger.listIntegrityAudits({ limit: 10 });
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].auditId, report.auditId);
+    await assert.rejects(() => ledger.recordIntegrityAudit(report), /could not be persisted/);
+  });
+
 });

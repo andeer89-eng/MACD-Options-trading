@@ -601,6 +601,45 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     return { scannedEvents, indexedOrders, alreadyIndexed, skippedInvalid };
   }
 
+  async function listTrackedOrdersPage(options: { limit?: number; pageToken?: string } = {}): Promise<{ orders: Array<TrackedExecutionOrder & { indexKey: string }>; nextPageToken: string }> {
+    const limit = Math.max(1, Math.min(1000, Math.floor(options.limit || 500)));
+    const query = new URLSearchParams({ pageSize: String(limit) });
+    if (options.pageToken) query.set('pageToken', options.pageToken);
+    const response = await request('/alpacaExecutionOrderIndex?' + query.toString());
+    if (response.status === 404) return { orders: [], nextPageToken: '' };
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Tracked execution order index page could not be read.');
+    const body = await response.json() as { documents?: any[]; nextPageToken?: string };
+    const orders = (body.documents || []).map(doc => ({
+      ...fromDocument(doc),
+      indexKey: String(doc.name || '').split('/').pop() || '',
+    })) as Array<TrackedExecutionOrder & { indexKey: string }>;
+    return { orders, nextPageToken: body.nextPageToken || '' };
+  }
+
+  async function recordIntegrityAudit(report: Record<string, unknown>): Promise<void> {
+    const auditId = String(report.auditId || '');
+    if (!auditId || auditId.length > 128) throw new Error('Invalid integrity audit ID.');
+    const path = '/alpacaExecutionIntegrityAudits/' + encodeURIComponent(auditId);
+    const response = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(report) },
+        currentDocument: { exists: false },
+      }] }),
+    });
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Integrity audit report could not be persisted.');
+  }
+
+  async function listIntegrityAudits(options: { limit?: number } = {}): Promise<Record<string, any>[]> {
+    const limit = Math.max(1, Math.min(100, Math.floor(options.limit || 20)));
+    const query = new URLSearchParams({ pageSize: String(limit), orderBy: 'startedAt desc' });
+    const response = await request('/alpacaExecutionIntegrityAudits?' + query.toString());
+    if (response.status === 404) return [];
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Integrity audit history could not be listed.');
+    const body = await response.json() as { documents?: any[] };
+    return (body.documents || []).map(doc => fromDocument(doc));
+  }
+
   async function listTrackedOrders(): Promise<TrackedExecutionOrder[]> {
     const orders: TrackedExecutionOrder[] = [];
     const seenTokens = new Set<string>();
@@ -625,5 +664,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
