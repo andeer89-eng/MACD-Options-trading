@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
 import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
-import type { createExecutionLedger } from '../services/executionLedger.ts';
+import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -114,6 +114,19 @@ export function createAlpacaRouter(
       res.json(result);
     } catch (err) {
       handleAlpacaError(res, err);
+    }
+  });
+
+  router.get('/api/alpaca/orders/:clientOrderId/ledger', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const events = await executionLedger.readEvents(req.params.clientOrderId);
+      res.json({ mode: 'PAPER', clientOrderId: req.params.clientOrderId, events, verification: verifyExecutionLedgerChain(events) });
+    } catch {
+      res.status(503).json({ error: 'Persistent execution ledger is temporarily unavailable.', mode: 'PAPER' });
     }
   });
 
