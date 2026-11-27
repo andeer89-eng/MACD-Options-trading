@@ -5,6 +5,7 @@ import { createExecutionReconciliationWorker } from './services/executionReconci
 describe('Automated execution reconciliation worker', () => {
   it('reconciles active orders and skips terminal orders', async () => {
     const appended: any[] = [];
+    const resolvedAlerts: any[] = [];
     const ledger = {
       listTrackedOrders: async () => [
         { clientOrderId: 'active-1', brokerOrderId: 'broker-1', symbol: 'AAPL', status: 'partially_filled', lastEventType: 'ORDER_SUBMITTED', updatedAt: '2026-11-27T12:00:00Z' },
@@ -20,7 +21,7 @@ describe('Automated execution reconciliation worker', () => {
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async () => {},
       upsertOperationalAlert: async () => {},
-      resolveOperationalAlert: async () => {},
+      resolveOperationalAlert: async (...args: any[]) => { resolvedAlerts.push(args); },
     };
     const alpaca = {
       getExecutionSnapshot: async (clientOrderId: string) => ({
@@ -51,10 +52,12 @@ describe('Automated execution reconciliation worker', () => {
     assert.equal(result.failed, 0);
     assert.deepEqual(appended.map(event => event.eventType), ['FILL_RECORDED', 'FILL_RECORDED', 'RECONCILIATION']);
     assert.equal(worker.getStatus().lastRun?.reconciled, 1);
+    assert.equal(resolvedAlerts.length, 1);
   });
 
-  it('fails closed and does not append when fill history is incomplete', async () => {
+  it('fails closed and raises a deduplicated order alert when fill history is incomplete', async () => {
     const appended: any[] = [];
+    const raisedAlerts: any[] = [];
     const ledger = {
       listTrackedOrders: async () => [
         { clientOrderId: 'active-2', brokerOrderId: 'broker-2', symbol: 'NVDA', status: 'new', lastEventType: 'ORDER_SUBMITTED', updatedAt: '2026-11-27T12:00:00Z' },
@@ -78,6 +81,9 @@ describe('Automated execution reconciliation worker', () => {
     assert.equal(result.failed, 1);
     assert.equal(appended.length, 0);
     assert.match(result.errors[0].error, /incomplete/);
+    assert.equal(raisedAlerts.length, 1);
+    assert.equal(raisedAlerts[0].type, 'ORDER_RECONCILIATION_FAILURE');
+    assert.equal(raisedAlerts[0].severity, 'WARNING');
   });
   it('does not poll Alpaca when another instance owns the distributed lease', async () => {
     let brokerCalls = 0;
@@ -90,7 +96,7 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async (run: any) => { runs.push(run); },
-      upsertOperationalAlert: async () => {},
+      upsertOperationalAlert: async (alert: any) => { raisedAlerts.push(alert); },
       resolveOperationalAlert: async () => {},
     };
     const alpaca = {
