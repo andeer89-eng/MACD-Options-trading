@@ -181,7 +181,9 @@ export function createAlpacaRouter(
                 return { clientOrderId: String(order.clientOrderId || ''), symbol: String(order.symbol || ''), classification: 'UNVERIFIABLE', eventCount: 0 };
               }
               const events = await executionLedger.readEvents(order.clientOrderId);
-              if (createHash('sha256').update(order.clientOrderId).digest('hex') !== order.indexKey) {
+              if (createHash('sha256').update(order.clientOrderId).digest('hex') !== order.indexKey ||
+                  events.some(event => event.clientOrderId !== order.clientOrderId) ||
+                  events.some(event => String(event.symbol || '').toUpperCase() !== String(order.symbol || '').toUpperCase())) {
                 return { clientOrderId: order.clientOrderId, symbol: order.symbol, classification: 'INDEX_MISMATCH', eventCount: events.length };
               }
               if (events.length === 0) {
