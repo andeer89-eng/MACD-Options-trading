@@ -230,7 +230,7 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal exceeded the safe pagination limit.', 500);
   }
 
-  async function verify(ownerId: string) {
+  async function verify(ownerId: string): Promise<ReturnType<typeof verifyPredictionJournal> & { headMatches: boolean }> {
     const events = await readEvents(ownerId);
     const chain = verifyPredictionJournal(events);
     const headResponse = await request(`/${headPath(ownerId)}`);
