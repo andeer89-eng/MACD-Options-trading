@@ -229,7 +229,7 @@ export function createFirebaseVerifiedUserMiddleware(options: {
   return async function requireVerifiedFirebaseUser(req: Request, res: ExpressResponse, next: NextFunction): Promise<void> {
     res.setHeader('Cache-Control', 'no-store');
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) {
       res.status(401).json({ error: 'Authentication required.' });
       return;
