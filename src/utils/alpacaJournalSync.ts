@@ -35,6 +35,9 @@ export interface AlpacaAccountDTO {
   day_pnl: number;
   day_pnl_pct: number;
   pattern_day_trader: boolean;
+  trading_blocked?: boolean;
+  account_blocked?: boolean;
+  trade_suspended_by_user?: boolean;
 }
 
 export interface AlpacaPositionDTO {
@@ -80,6 +83,11 @@ export interface AlpacaFillDTO {
   transaction_time: string;
 }
 
+export interface AlpacaPortfolioEquityPointDTO {
+  timestamp: number;
+  equity: number;
+}
+
 export interface AlpacaOverviewDTO {
   configured: boolean;
   mode: 'PAPER';
@@ -93,6 +101,9 @@ export interface AlpacaOverviewDTO {
   optionPositions: AlpacaPositionDTO[];
   orders: AlpacaOrderDTO[];
   fills: AlpacaFillDTO[];
+  portfolioHistory?: AlpacaPortfolioEquityPointDTO[];
+  portfolioHistoryComplete?: boolean;
+  portfolioHistoryError?: string;
   error?: string;
 }
 
