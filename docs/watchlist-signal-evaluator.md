@@ -26,12 +26,16 @@ by timestamp, including the exact final pivot-confirmation candle. The strategy 
 validates chronology, OHLC consistency, and that no candle timestamp is later
 than `evaluatedAt`. It cannot independently prove provider finality, feed
 integrity, exchange calendar alignment, or that the data is authoritative.
-Those controls belong to the future worker/provider integration.
+Those controls belong to the server-side provider integration. P1.18e now
+supplies a provenance-bound closed-candle envelope from the Yahoo Chart API,
+but Yahoo's feed finality and exchange-session completeness remain limitations.
 
 The evaluator returns evidence fields (threshold, prior close, observed close,
 trigger candle timestamp, evaluation timestamp) but does not persist or emit a
-trigger event. It must not be wired to the P1.17 persistence endpoint until
-provider provenance and closed-candle finality are independently enforced.
+trigger event. It is used by the read-only P1.18e evaluation worker. That worker writes only
+to the append-only evaluation journal; it does not call the P1.17 state-transition
+endpoint. Provider provenance is checked, but Yahoo is not exchange-authoritative
+and the newest returned bar is excluded conservatively.
 
 ## Tests
 
