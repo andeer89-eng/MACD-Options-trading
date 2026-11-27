@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AlpacaApiError, AlpacaService } from '../services/alpaca.ts';
 import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts';
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
@@ -120,6 +120,44 @@ export function createAlpacaRouter(
     }
   });
 
+  router.get('/api/alpaca/reconciliation/alerts', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const status = req.query.status === 'RESOLVED' ? 'RESOLVED' :
+        req.query.status === 'ACTIVE' ? 'ACTIVE' : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : 100;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+        res.status(400).json({ error: 'limit must be an integer from 1 to 200.', mode: 'PAPER' });
+        return;
+      }
+      const alerts = await executionLedger.listOperationalAlerts({ status, limit });
+      res.json({
+        mode: 'PAPER',
+        count: alerts.length,
+        activeCount: alerts.filter(alert => alert.status === 'ACTIVE').length,
+        alerts,
+        readOnly: true,
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Operational alerts are unavailable.',
+        mode: 'PAPER',
+      });
+    }
+  });
+
+  router.get('/api/alpaca/reconciliation/worker-status', async (_req: Request, res: Response) => {
+    res.json({
+      mode: 'PAPER',
+      ledgerConfigured: Boolean(executionLedger),
+      worker: reconciliationWorker?.getStatus() || { running: false, unavailable: true },
+      readOnly: true,
+    });
+  });
+
   router.get('/api/alpaca/reconciliation/positions', async (_req: Request, res: Response) => {
     if (!executionLedger) {
       res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
@@ -138,6 +176,15 @@ export function createAlpacaRouter(
         for (const result of results) {
           const verification = verifyExecutionLedgerChain(result.events);
           if (!verification.valid) {
+            await executionLedger.upsertOperationalAlert({
+              alertId: 'ledger-chain-' + createHash('sha256').update(result.clientOrderId).digest('hex').slice(0, 48),
+              type: 'LEDGER_CHAIN_INVALID',
+              severity: 'CRITICAL',
+              title: 'Execution ledger integrity failure',
+              message: 'A per-order SHA-256 event chain failed verification; position reconciliation was stopped.',
+              source: 'POSITION_RECONCILIATION',
+              evidence: { clientOrderId: result.clientOrderId, brokenAtSequence: verification.brokenAtSequence ?? 0 },
+            }).catch(() => undefined);
             res.status(409).json({
               error: 'An execution ledger hash chain is invalid; position reconciliation was not classified.',
               mode: 'PAPER',
@@ -161,6 +208,32 @@ export function createAlpacaRouter(
       const completedAt = new Date().toISOString();
       const nonMatched = reconciliation.summary.unattributedOrExternalActivity +
         reconciliation.summary.unexplainedVariance;
+      for (const row of reconciliation.rows) {
+        const alertId = 'position-' + createHash('sha256').update(row.symbol).digest('hex').slice(0, 48);
+        if (row.classification === 'LEDGER_NET_EQUALS_BROKER') {
+          await executionLedger.resolveOperationalAlert(alertId, 'Position quantity now matches the application-ledger net fills.');
+        } else {
+          const unexplained = row.classification === 'UNEXPLAINED_VARIANCE';
+          await executionLedger.upsertOperationalAlert({
+            alertId,
+            type: unexplained ? 'POSITION_QUANTITY_VARIANCE' : 'UNATTRIBUTED_POSITION',
+            severity: unexplained ? 'WARNING' : 'INFO',
+            title: unexplained ? 'Position quantity variance detected' : 'Position has no application fill provenance',
+            message: unexplained
+              ? 'Broker quantity differs from net application-ledger fills. External activity or missing provenance may explain the difference.'
+              : 'Broker reports a position with no matching application-ledger fill history.',
+            source: 'POSITION_RECONCILIATION',
+            evidence: {
+              symbol: row.symbol,
+              brokerQty: row.brokerQty,
+              ledgerNetFillQty: row.ledgerNetFillQty,
+              unexplainedQty: row.unexplainedQty,
+              classification: row.classification,
+              snapshotAt: snapshot.fetchedAt,
+            },
+          });
+        }
+      }
       const runId = 'positions-' + randomUUID();
       await executionLedger.recordReconciliationRun({
         runId,
