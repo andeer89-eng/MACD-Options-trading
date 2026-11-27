@@ -39,7 +39,7 @@ jobs:
           java-version: '21'
 
       - name: Test Firestore rules in emulator
-        run: npx firebase emulators:exec --only firestore --project demo-macd-options-rules "bunx tsx --test tests/firestoreRules.emulator.ts"
+        run: npx firebase emulators:exec --only firestore --project demo-macd-options-rules "bunx tsx --test tests/firestoreRules.emulator.mjs"
 
       - name: TypeScript validation
         run: bun run lint
