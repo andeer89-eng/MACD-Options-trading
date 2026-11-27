@@ -167,12 +167,17 @@ function validateJudgeOutput(
   generatedAt: number,
   allowed: Set<string>,
 ): JudgeAssessment | null {
+  const bull = committee.assessments.find((assessment) => assessment.role === 'BULL');
+  const bear = committee.assessments.find((assessment) => assessment.role === 'BEAR');
+  const bullBearConflict = Boolean(bull && bear && bull.finding.stance !== 'NEUTRAL' &&
+    bear.finding.stance !== 'NEUTRAL' && bull.finding.stance !== bear.finding.stance);
   if (!isRecord(value) || value.packId !== pack.packId || value.packSha256 !== pack.canonicalSha256 ||
       value.assetClass !== pack.assetClass || value.committeeGeneratedAt !== committee.generatedAt ||
       value.generatedAt !== generatedAt || !['APPROVE', 'REDUCE', 'REJECT'].includes(String(value.disposition)) ||
       !isText(value.summary) || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) ||
       value.confidence < 0 || value.confidence > 1 || !isStringArray(value.sourceRefs) ||
       value.sourceRefs.some((ref) => !allowed.has(ref)) || typeof value.conflictDetected !== 'boolean' ||
+      value.conflictDetected !== bullBearConflict ||
       !['COMPLETE', 'PARTIAL', 'INSUFFICIENT'].includes(String(value.evidenceCompleteness)) ||
       typeof value.riskMultiplier !== 'number' || !Number.isFinite(value.riskMultiplier) ||
       value.riskMultiplier < 0 || value.riskMultiplier > committee.riskMultiplierCeiling ||
@@ -254,7 +259,8 @@ export async function runIndependentJudge(
   }
   const forcedReject = assessment.evidenceCompleteness === 'INSUFFICIENT';
   const forcedReduce = deterministic.reduce.length > 0 ||
-    (pack.assetClass === 'STOCK' && !assessment.stockReview?.thesisInvalidationReviewed) ||
+    (pack.assetClass === 'STOCK' && (!assessment.stockReview?.thesisInvalidationReviewed ||
+      (Boolean((pack.evidence as StockEvidenceInput).fundamentals) && !assessment.stockReview?.fundamentalsReviewed))) ||
     (pack.assetClass === 'OPTION' && (!assessment.optionReview?.liquidityReviewed ||
       !assessment.optionReview?.ivAndGreeksReviewed || !assessment.optionReview?.assignmentAndExerciseReviewed)) ||
     assessment.evidenceCompleteness !== 'COMPLETE';
