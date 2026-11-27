@@ -149,6 +149,27 @@ export function createAlpacaRouter(
     }
   });
 
+  router.get('/api/alpaca/reconciliation/runs', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent execution ledger is not configured.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        res.status(400).json({ error: 'limit must be an integer from 1 to 100.', mode: 'PAPER' });
+        return;
+      }
+      const runs = await executionLedger.listReconciliationRuns({ limit });
+      res.json({ mode: 'PAPER', count: runs.length, runs, readOnly: true });
+    } catch (error) {
+      res.status(503).json({
+        error: error instanceof Error ? error.message : 'Reconciliation run history is unavailable.',
+        mode: 'PAPER',
+      });
+    }
+  });
+
   router.get('/api/alpaca/reconciliation/worker-status', async (_req: Request, res: Response) => {
     res.json({
       mode: 'PAPER',
