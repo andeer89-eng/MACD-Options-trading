@@ -16,6 +16,7 @@ import { createPythonRouter } from './server/routes/python.ts';
 import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
+import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -29,9 +30,10 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   alpacaAllowedUidsOverride?: string[];
   firebaseAuthFetchOverride?: typeof fetch;
   executionLedgerRequiredOverride?: boolean;
+  reconciliationIntervalMs?: number;
 }
 
-export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express }> {
+export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
   const app = express();
   app.use(express.json());
 
@@ -58,6 +60,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     : undefined;
   const executionLedgerRequired = options.executionLedgerRequiredOverride ??
     (process.env.EXECUTION_LEDGER_REQUIRED === 'true' || (isProduction && process.env.EXECUTION_LEDGER_REQUIRED !== 'false'));
+  const configuredInterval = Number(process.env.EXECUTION_RECONCILIATION_INTERVAL_MS);
+  const reconciliationWorker = executionLedger
+    ? createExecutionReconciliationWorker({
+        alpaca,
+        ledger: executionLedger,
+        intervalMs: options.reconciliationIntervalMs ??
+          (Number.isFinite(configuredInterval) && configuredInterval >= 30_000 ? configuredInterval : 60_000),
+        concurrency: 3,
+      })
+    : undefined;
 
   app.use(createAlpacaRouter(alpaca, {
     projectId: firebaseProjectId,
@@ -97,11 +109,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     }
   }
 
-  return { app };
+  return { app, startBackgroundWorkers: () => reconciliationWorker?.start() };
 }
 
 async function startServer() {
-  const { app } = await createApp({ attachFrontend: true });
+  const { app, startBackgroundWorkers } = await createApp({ attachFrontend: true });
+  startBackgroundWorkers();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Trullas Scanner Server] Running on http://0.0.0.0:${PORT}`);
   });
