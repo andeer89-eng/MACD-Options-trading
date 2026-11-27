@@ -7,7 +7,7 @@ The Alpaca overview ingests option lifecycle activities from the Trading API acc
 - `OPEXP`: option expiration
 - `OPTRD`: underlying-security trade paired with an assignment or exercise
 
-The activity payload is retained as an immutable broker-sourced event record (activity ID, type, date, symbol, quantity, net amount, price, status, and description). The endpoint is paginated with `page_token`; the overview exposes `optionLifecycleHistoryComplete` and `optionLifecycleHistoryError` so a capped or failed history is never represented as complete.
+The activity payload is returned as a read-only broker-sourced event snapshot (activity ID, type, date, symbol, quantity, net amount, price, status, and description). This first increment exposes the fetched events in the overview response; it does not yet persist a separate local event store. The endpoint is paginated with `page_token`; the overview exposes `optionLifecycleHistoryComplete` and `optionLifecycleHistoryError` so a capped or failed history is never represented as complete.
 
 ## Accounting boundary
 
