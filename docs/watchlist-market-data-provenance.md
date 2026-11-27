@@ -10,7 +10,8 @@ provenance.
 
 The returned envelope identifies provider, normalized symbol, timeframe,
 exchange, exchange timezone, currency, source endpoint, retrieval timestamp,
-closure policy, excluded latest bar timestamp, and a SHA-256 digest.
+closure policy, excluded latest bar timestamp, and a SHA-256 digest over the
+normalized closed OHLCV/date records.
 
 ## Closed-candle policy
 
@@ -23,11 +24,12 @@ corrections; it only avoids treating the newest potentially-open bar as closed.
 
 ## Integrity and freshness
 
-The SHA-256 digest covers the normalized OHLC array passed to the evaluator,
+The SHA-256 digest covers the normalized OHLCV/date array passed to the evaluator,
 not the original HTTP response bytes. The evaluator verifies the digest,
 provider ID, symbol, timeframe, retrieval time, maximum age supplied by the
-caller, and closure boundary. The caller must select an interval-appropriate
-maximum age; no scheduler or worker currently does so.
+caller, and closure boundary. The P1.18e worker endpoint currently defaults to a
+15-minute retrieval-age limit; this is not an exchange-session staleness check
+and must be reviewed before any scheduled production use.
 
 ## Explicit limitations
 
@@ -36,6 +38,7 @@ maximum age; no scheduler or worker currently does so.
   signed; the digest is an integrity check of the normalized in-process payload.
 - The provider's exchange timezone and symbol metadata are descriptive, not
   proof of listing venue or official market calendar.
-- No Firestore state transition, scheduler, worker, broker order, or trading
-  activation is connected to this evidence contract.
+- The P1.18e read-only evaluation worker consumes this envelope and appends
+  journal records; it does not perform Firestore watchlist state transitions.
+- No scheduler, broker order, or trading activation is connected.
 - Production feed behavior has not been live-validated in this PR.
