@@ -177,6 +177,9 @@ export function createAlpacaRouter(
           const batch = page.orders.slice(offset, offset + 3);
           const results = await Promise.all(batch.map(async order => {
             try {
+              if (!order.clientOrderId || !order.symbol) {
+                return { clientOrderId: String(order.clientOrderId || ''), symbol: String(order.symbol || ''), classification: 'UNVERIFIABLE', eventCount: 0 };
+              }
               const events = await executionLedger.readEvents(order.clientOrderId);
               if (createHash('sha256').update(order.clientOrderId).digest('hex') !== order.indexKey) {
                 return { clientOrderId: order.clientOrderId, symbol: order.symbol, classification: 'INDEX_MISMATCH', eventCount: events.length };
