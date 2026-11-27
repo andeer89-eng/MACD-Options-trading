@@ -12,6 +12,7 @@ import {
   WatchlistEvaluationJournalError,
 } from '../services/watchlistEvaluationJournal.ts';
 import { evaluateWatchlistBreakout } from '../services/watchlistSignalEvaluator.ts';
+import { validateWatchlistCandleFreshness } from '../services/watchlistCandleFreshness.ts';
 
 function safeSecretEqual(candidate: string, expected: string): boolean {
   const left = Buffer.from(candidate);
@@ -85,6 +86,19 @@ export function createWatchlistEvaluationRouter(options: {
       const lastClosedCandle = candles[candles.length - 1];
       if (!lastClosedCandle) {
         res.status(503).json({ error: 'No closed market candles are available.' });
+        return;
+      }
+
+      const freshnessFailure = validateWatchlistCandleFreshness({
+        timeframe,
+        lastClosedCandleTimestamp: lastClosedCandle.timestamp,
+        evaluatedAt,
+      });
+      if (freshnessFailure) {
+        res.status(503).json({
+          error: 'The latest closed market candle is outside the conservative freshness window.',
+          reason: freshnessFailure,
+        });
         return;
       }
 
