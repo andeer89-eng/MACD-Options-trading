@@ -10,6 +10,7 @@ function safeSecretEqual(candidate: string, expected: string): boolean {
 
 export function createWatchlistTriggerRouter(options: {
   projectId: string;
+  databaseId?: string;
   serviceAccountJson?: string;
   workerToken?: string;
   fetchImpl?: typeof fetch;
@@ -18,6 +19,7 @@ export function createWatchlistTriggerRouter(options: {
   const service = options.serviceAccountJson
     ? createWatchlistTriggerService({
         projectId: options.projectId,
+        databaseId: options.databaseId,
         serviceAccountJson: options.serviceAccountJson,
         fetchImpl: options.fetchImpl,
       })
