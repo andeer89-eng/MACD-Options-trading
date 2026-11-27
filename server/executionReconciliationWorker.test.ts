@@ -19,6 +19,8 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async () => {},
+      upsertOperationalAlert: async () => {},
+      resolveOperationalAlert: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async (clientOrderId: string) => ({
@@ -88,6 +90,8 @@ describe('Automated execution reconciliation worker', () => {
       renewReconciliationLease: async () => true,
       releaseReconciliationLease: async () => {},
       recordReconciliationRun: async (run: any) => { runs.push(run); },
+      upsertOperationalAlert: async () => {},
+      resolveOperationalAlert: async () => {},
     };
     const alpaca = {
       getExecutionSnapshot: async () => { brokerCalls++; return null; },
