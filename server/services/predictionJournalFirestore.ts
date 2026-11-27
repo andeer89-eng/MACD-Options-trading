@@ -163,5 +163,61 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal remained contended after retry limit.', 409);
   }
 
-  return { append };
+
+  async function readAll(ownerId: string, pageSize = 500): Promise<{ events: PredictionEvent[]; verification: { valid: boolean; length: number; headHash: string; brokenAtSequence: number | null } }> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) {
+      throw new FirestorePredictionJournalError('Invalid prediction journal owner.', 400);
+    }
+    const safePageSize = Math.min(1000, Math.max(1, Math.floor(pageSize)));
+    const events: PredictionEvent[] = [];
+    let pageToken: string | undefined;
+    let pages = 0;
+    do {
+      if (++pages > 1000) throw new FirestorePredictionJournalError('Prediction journal exceeds replay safety limit.', 413);
+      const params = new URLSearchParams({ pageSize: String(safePageSize), orderBy: 'sequence' });
+      if (pageToken) params.set('pageToken', pageToken);
+      const response = await request(`/${collection(ownerId)}?${params.toString()}`);
+      if (!response.ok) throw new FirestorePredictionJournalError('Prediction journal events could not be read.', 503);
+      const page = await response.json() as {
+        documents?: Array<{ fields?: Record<string, { stringValue?: string }> }>;
+        nextPageToken?: string;
+      };
+      for (const document of page.documents || []) {
+        const raw = document.fields?.eventJson?.stringValue;
+        if (!raw) throw new FirestorePredictionJournalError('Stored prediction journal event is malformed.', 500);
+        let event: PredictionEvent;
+        try { event = JSON.parse(raw) as PredictionEvent; }
+        catch { throw new FirestorePredictionJournalError('Stored prediction journal event is not valid JSON.', 500); }
+        events.push(event);
+      }
+      pageToken = page.nextPageToken;
+    } while (pageToken);
+
+    const metaResponse = await request(`/${headPath(ownerId)}`);
+    let expectedSequence = 0;
+    let expectedHead = GENESIS;
+    if (metaResponse.ok) {
+      const meta = await metaResponse.json() as { fields?: Record<string, { integerValue?: string; stringValue?: string }> };
+      expectedSequence = Number(meta.fields?.sequence?.integerValue ?? 0);
+      expectedHead = meta.fields?.headHash?.stringValue ?? GENESIS;
+    } else if (metaResponse.status !== 404) {
+      throw new FirestorePredictionJournalError('Prediction journal head could not be read.', 503);
+    }
+
+    let previous = GENESIS;
+    for (let index = 0; index < events.length; index++) {
+      const { eventHash, ...eventBody } = events[index];
+      if (events[index].sequence !== index + 1 || events[index].prevHash !== previous ||
+          !/^[a-f0-9]{64}$/.test(eventHash) || hash(canonical(eventBody)) !== eventHash) {
+        return { events, verification: { valid: false, length: events.length, headHash: events.at(-1)?.eventHash || GENESIS,
+          brokenAtSequence: events[index].sequence } };
+      }
+      previous = eventHash;
+    }
+    const valid = events.length === expectedSequence && previous === expectedHead;
+    return { events, verification: { valid, length: events.length, headHash: previous,
+      brokenAtSequence: valid ? null : events.length + 1 } };
+  }
+
+  return { append, readAll };
 }
