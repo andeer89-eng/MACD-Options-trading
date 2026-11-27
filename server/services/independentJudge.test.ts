@@ -118,3 +118,11 @@ test('judge output with incomplete asset-specific review is reduced', async () =
   const result = await runIndependentJudge(pack, committee, judge, { now: () => now + 20 });
   assert.equal(result.disposition, 'REDUCE');
 });
+test('tampered evidence pack fails canonical SHA-256 verification', async () => {
+  const pack = stockPack(); const committee = committeeFor(pack);
+  const tampered = { ...pack, symbol: 'MSFT' };
+  const judge: IndependentJudge = async (p, c, context) => validJudge(p, c, context);
+  const result = await runIndependentJudge(tampered, committee, judge, { now: () => now + 20 });
+  assert.equal(result.disposition, 'REJECT');
+  assert.ok(result.reasons.includes('EVIDENCE_PACK_HASH_MISMATCH'));
+});
