@@ -92,7 +92,7 @@ export function createFirestorePredictionJournal(options: {
     }
   }
 
-  async function append(ownerId: string, body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
+  async function appendEvent(ownerId: string, body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !body ||
         (body.eventType === 'PREDICTION_RECORDED' && body.prediction.schemaVersion !== '1.0.0') ||
         (body.eventType === 'OUTCOME_LABELED' && !/^[A-Za-z0-9_-]{1,128}$/.test(body.predictionId))) {
@@ -197,6 +197,14 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal remained contended after retry limit.', 409);
   }
 
+  // Raw outcome events must never bypass domain validation. Only labelOutcome may persist them.
+  async function append(ownerId: string, body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
+    if (body?.eventType === 'OUTCOME_LABELED') {
+      throw new FirestorePredictionJournalError('Outcome labels must use labelOutcome().', 400);
+    }
+    return appendEvent(ownerId, body);
+  }
+
   async function labelOutcome(ownerId: string, predictionId: string, outcome: PredictionOutcome): Promise<{ event: PredictionEvent; replayed: boolean }> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !/^[A-Za-z0-9_-]{1,128}$/.test(predictionId)) {
       throw new FirestorePredictionJournalError('Invalid prediction journal outcome identity.', 400);
@@ -221,7 +229,7 @@ export function createFirestorePredictionJournal(options: {
     // label() enforces prediction existence, asset-class agreement, target horizon, outcome shape,
     // and immutable one-label-per-prediction semantics before the Firestore append is attempted.
     domain.label(predictionId, outcome);
-    return append(ownerId, { eventType: 'OUTCOME_LABELED', predictionId, outcome });
+    return appendEvent(ownerId, { eventType: 'OUTCOME_LABELED', predictionId, outcome });
   }
 
   async function readEvents(ownerId: string): Promise<PredictionEvent[]> {
