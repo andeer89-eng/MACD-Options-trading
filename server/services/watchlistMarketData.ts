@@ -76,6 +76,9 @@ export function buildWatchlistSignalMarketData(input: {
       ![candle.open, candle.high, candle.low, candle.close].every(
         value => Number.isFinite(value) && value > 0
       ) ||
+      !Number.isFinite(candle.volume) || candle.volume < 0 ||
+      typeof candle.dateStr !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(candle.dateStr) ||
+      Number.isNaN(Date.parse(candle.dateStr)) ||
       candle.high < Math.max(candle.open, candle.close, candle.low) ||
       candle.low > Math.min(candle.open, candle.close, candle.high)
     ) {
@@ -132,7 +135,12 @@ export function validateWatchlistSignalMarketData(
   if (!/^[a-f0-9]{64}$/.test(evidence.normalizedPayloadSha256)) return 'INVALID_MARKET_DATA_DIGEST';
   const digest = createHash('sha256').update(JSON.stringify(evidence.candles)).digest('hex');
   if (digest !== evidence.normalizedPayloadSha256) return 'MARKET_DATA_DIGEST_MISMATCH';
-  if (evidence.candles.length < 2 || evidence.candles.some(c => c.timestamp >= evidence.excludedLatestCandleTimestamp)) {
+  if (evidence.candles.length < 2 || evidence.candles.some(c =>
+    c.timestamp >= evidence.excludedLatestCandleTimestamp ||
+    !Number.isFinite(c.volume) || c.volume < 0 ||
+    typeof c.dateStr !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(c.dateStr) ||
+    Number.isNaN(Date.parse(c.dateStr))
+  )) {
     return 'CLOSED_CANDLE_BOUNDARY_INVALID';
   }
   return null;
