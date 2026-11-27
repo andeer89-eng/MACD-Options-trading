@@ -63,8 +63,14 @@ Authorization: Bearer <WATCHLIST_EVALUATION_WORKER_TOKEN>
 
 The default maximum age for evidence retrieval is 15 minutes. This checks the
 age of the server retrieval envelope; it does **not** independently prove that
-the last closed candle is current for the exchange session. The current endpoint
-does not provide a per-timeframe freshness policy or exchange-calendar check.
+the last closed candle is current for the exchange session. P1.18f adds a
+timeframe-specific, conservative maximum age for the last closed candle: 20 min
+(5m), 45 min (15m), 90 min (30m), 3 h (1h), 5 days (1d), and 10 days (1wk).
+A candle outside its limit is rejected with HTTP 503; the worker does not widen
+these limits automatically. These are fail-closed age limits, not an exchange
+calendar: holidays and unusual sessions may cause false rejections. The ownerId
+continues to be supplied by the trusted worker; this endpoint does not yet
+independently bind it to a verified authenticated user session.
 
 ## Response and status behavior
 
