@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import { verifyPredictionJournal, type PredictionEvent } from './predictionJournal.ts';
+import { InMemoryPredictionJournal, verifyPredictionJournal, type PredictionEvent, type PredictionOutcome, type PredictionSnapshotInput } from './predictionJournal.ts';
 
 type FetchLike = typeof fetch;
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
@@ -197,6 +197,33 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal remained contended after retry limit.', 409);
   }
 
+  async function labelOutcome(ownerId: string, predictionId: string, outcome: PredictionOutcome): Promise<{ event: PredictionEvent; replayed: boolean }> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !/^[A-Za-z0-9_-]{1,128}$/.test(predictionId)) {
+      throw new FirestorePredictionJournalError('Invalid prediction journal outcome identity.', 400);
+    }
+    const events = await readEvents(ownerId);
+    const chain = await verify(ownerId);
+    if (!chain.valid || !chain.headMatches) {
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; outcome labeling is blocked.', 409);
+    }
+
+    // Rehydrate the domain journal so outcome validation uses the same rules as the in-memory reference.
+    const domain = new InMemoryPredictionJournal(now);
+    for (const event of events) {
+      if (event.eventType === 'PREDICTION_RECORDED') {
+        const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+          snapshotSha256: _snapshotSha256, ...input } = event.prediction;
+        domain.record(input as PredictionSnapshotInput);
+      } else {
+        domain.label(event.predictionId, event.outcome);
+      }
+    }
+    // label() enforces prediction existence, asset-class agreement, target horizon, outcome shape,
+    // and immutable one-label-per-prediction semantics before the Firestore append is attempted.
+    domain.label(predictionId, outcome);
+    return append(ownerId, { eventType: 'OUTCOME_LABELED', predictionId, outcome });
+  }
+
   async function readEvents(ownerId: string): Promise<PredictionEvent[]> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) {
       throw new FirestorePredictionJournalError('Invalid prediction journal owner.', 400);
@@ -251,5 +278,5 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, readEvents, verify };
+  return { append, labelOutcome, readEvents, verify };
 }
