@@ -19,6 +19,10 @@ The rolling periods use Alpaca's 1-year daily portfolio-history response and the
 
 The risk gate blocks new entries. Existing risk-reducing close/cancel operations remain available; the options cycle continues to evaluate take-profit and expiry exits before it considers new short puts.
 
+## Working-order snapshot integrity
+
+The server retrieves working orders with the same cursor-based pagination discipline as historical orders. If the broker snapshot reaches the pagination cap, repeats a cursor, or otherwise cannot be proven complete, the order request fails closed with HTTP 503; it does not evaluate risk against a silently truncated first page.
+
 ## Concurrency
 
 A shared in-tab lock prevents the equity and options automation managers from running overlapping cycles in the same browser tab. The server-side risk check is independently executed on every POST /api/alpaca/orders request, so a second tab or direct API caller cannot rely on the UI lock.

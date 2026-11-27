@@ -293,6 +293,38 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
             );
           }
 
+          if (url.includes('/v2/orders') && method === 'GET' && new URL(url).searchParams.get('status') === 'open') {
+            const requestUrl = new URL(url);
+            const oldestOpenOrder = {
+              id: 'ord-open-oldest-501',
+              symbol: 'AAPL',
+              asset_class: 'us_equity',
+              side: 'buy',
+              qty: '1',
+              filled_qty: '0',
+              filled_avg_price: null,
+              limit_price: '1.00',
+              type: 'limit',
+              time_in_force: 'day',
+              status: 'accepted',
+              submitted_at: '2026-11-27T14:30:00Z',
+              filled_at: null,
+            };
+            if (requestUrl.searchParams.has('before_order_id')) {
+              return new Response(JSON.stringify([oldestOpenOrder]), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              });
+            }
+            return new Response(JSON.stringify(Array.from({ length: 500 }, (_, i) => ({
+              ...oldestOpenOrder,
+              id: `ord-open-${String(i).padStart(3, '0')}`,
+            }))), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
           if (url.includes('/v2/orders') && method === 'GET') {
             const requestUrl = new URL(url);
             const oldestOrder = {
@@ -480,6 +512,9 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(data.account.account_blocked, false);
       assert.equal(data.fillHistoryComplete, true);
       assert.ok(calls.some((call) => call.url.includes('before_order_id=ord-eq-open-1')));
+      assert.ok(calls.some((call) =>
+        call.url.includes('/v2/orders?status=open') && call.url.includes('before_order_id=ord-open-499')
+      ), 'Risk gate must paginate the complete working-order snapshot beyond 500 orders');
       assert.ok(calls.some((call) => call.url.includes('page_token=fill-page-099')));
 
       const accountCall = calls.find((c) => c.url.startsWith('https://paper-api.alpaca.markets/v2/account'));

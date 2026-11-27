@@ -392,7 +392,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     }
   }
 
-  async function fetchAllOrders(): Promise<{ items: any[]; complete: boolean }> {
+  async function fetchAllOrders(status: 'all' | 'open' = 'all'): Promise<{ items: any[]; complete: boolean }> {
     const pageSize = 500;
     const maxPages = 20;
     const items: any[] = [];
@@ -402,7 +402,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
       const cursor = beforeOrderId ? `&before_order_id=${encodeURIComponent(beforeOrderId)}` : '';
       const page = await alpacaRequest<any[]>(
-        `/v2/orders?status=all&limit=${pageSize}&direction=desc${cursor}`
+        `/v2/orders?status=${status}&limit=${pageSize}&direction=desc${cursor}`
       );
       const rows = Array.isArray(page) ? page : [];
       items.push(...rows);
@@ -687,12 +687,16 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     }
     // The browser risk gate is advisory. Rebuild a fresh broker snapshot for every opening order.
     const isShortPutSell = validated.isOption && validated.payload.side === 'sell' && /P\d{8}$/.test(validated.payload.symbol);
-    const [rawAccount, rawPositions, rawOpenOrders, rawHistory] = await Promise.all([
+    const [rawAccount, rawPositions, openOrderHistory, rawHistory] = await Promise.all([
       alpacaRequest<any>('/v2/account'),
       alpacaRequest<any[]>('/v2/positions'),
-      alpacaRequest<any[]>('/v2/orders?status=open&limit=500&direction=desc'),
+      fetchAllOrders('open'),
       alpacaRequest<any>('/v2/account/portfolio/history?period=1A&timeframe=1D&intraday_reporting=extended_hours'),
     ]);
+    if (!openOrderHistory.complete) {
+      throw new AlpacaApiError(503, 'Open-order risk snapshot is incomplete; new entries are disabled until the full working-order set can be verified.');
+    }
+    const rawOpenOrders = openOrderHistory.items;
     const equity = toNum(rawAccount?.equity);
     const lastEquity = toNum(rawAccount?.last_equity, equity);
     const positions = (Array.isArray(rawPositions) ? rawPositions : []).map((p) => ({
