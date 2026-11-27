@@ -143,13 +143,27 @@ test('persists and idempotently replays outcome labels with their own uniqueness
   await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
   const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
     totalReturnPct: 12, labelSource: 'test-fixture' };
-  const first = await journal.append('owner_1', { eventType: 'OUTCOME_LABELED', predictionId: prediction.predictionId, outcome });
-  const replay = await journal.append('owner_1', { eventType: 'OUTCOME_LABELED', predictionId: prediction.predictionId, outcome });
+  const first = await journal.labelOutcome('owner_1', prediction.predictionId, outcome);
+  const replay = await journal.labelOutcome('owner_1', prediction.predictionId, outcome);
   assert.equal(first.event.eventHash, replay.event.eventHash);
   assert.equal(replay.replayed, true);
   const verification = await journal.verify('owner_1');
   assert.equal(verification.valid, true);
   assert.equal(verification.length, 2);
+});
+
+test('rejects raw OUTCOME_LABELED appends so semantic validation cannot be bypassed', async () => {
+  let requests = 0;
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: async () => { requests++; return new Response('{}', { status: 500 }); } });
+  const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
+    totalReturnPct: 12, labelSource: 'test-fixture' };
+  await assert.rejects(
+    () => journal.append('owner_1', { eventType: 'OUTCOME_LABELED', predictionId: prediction.predictionId, outcome }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400 &&
+      error.message.includes('labelOutcome'),
+  );
+  assert.equal(requests, 0);
 });
 
 test('rejects invalid owner and malformed event before Firestore access', async () => {
