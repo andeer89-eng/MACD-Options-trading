@@ -113,6 +113,8 @@ service cloud.firestore {
         allow list: if isVerifiedOwner(userId) && resource.data.ownerId == request.auth.uid;
         allow create: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
                          isValidWatchlistItem(incoming(), userId) &&
+                         // TRIGGERED is server-authoritative; clients cannot create triggered records.
+                         incoming().status != 'TRIGGERED' &&
                          incoming().createdAt == request.time &&
                          incoming().updatedAt == request.time;
         allow update: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
@@ -121,6 +123,8 @@ service cloud.firestore {
                          incoming().createdAt == existing().createdAt &&
                          // Terminal watchlist states are irreversible: clients may not reactivate them.
                          (!isTerminalWatchlistStatus(existing().status) || incoming().status == existing().status) &&
+                         // Only trusted server code (Admin SDK, which bypasses rules) may set TRIGGERED.
+                         (incoming().status != 'TRIGGERED' || existing().status == 'TRIGGERED') &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isPinned', 'totalScore', 'currentPrice', 'atr', 'setup', 'updatedAt']) &&
                          incoming().updatedAt == request.time;
         allow delete: if isVerifiedOwner(userId) && isValidId(userId) && isValidId(itemId) &&
