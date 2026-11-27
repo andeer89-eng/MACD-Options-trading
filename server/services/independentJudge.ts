@@ -1,4 +1,4 @@
-import type { MultiAssetEvidencePack } from './multiAssetEvidencePack.ts';
+import type { MultiAssetEvidencePack, StockEvidenceInput, OptionEvidenceInput } from './multiAssetEvidencePack.ts';
 import type { AgentAssessment, CommitteeResult } from './multiAgentCommittee.ts';
 
 export type JudgeDisposition = 'APPROVE' | 'REDUCE' | 'REJECT';
@@ -130,20 +130,21 @@ function deterministicReview(pack: MultiAssetEvidencePack, now: number, policy: 
     }
   }
   if (pack.assetClass === 'STOCK') {
-    const age = pack.asOf - pack.evidence.market.retrievedAt;
+    const stock = pack.evidence as StockEvidenceInput;
+    const age = now - stock.market.retrievedAt;
     if (age < 0 || age > policy.maxStockMarketAgeMs) reject.push('STOCK_MARKET_EVIDENCE_STALE');
-    if (!pack.evidence.market.candles.length) reject.push('STOCK_MARKET_CANDLES_MISSING');
-    if (pack.evidence.fundamentals) {
-      for (const fact of pack.evidence.fundamentals.facts) {
-        if (fact.filingDate > pack.evidence.fundamentals.asOfDate || fact.filingDate > new Date(pack.asOf).toISOString().slice(0, 10)) {
+    if (!stock.market.candles.length) reject.push('STOCK_MARKET_CANDLES_MISSING');
+    if (stock.fundamentals) {
+      for (const fact of stock.fundamentals.facts) {
+        if (fact.filingDate > stock.fundamentals.asOfDate || fact.filingDate > new Date(pack.asOf).toISOString().slice(0, 10)) {
           reject.push('POINT_IN_TIME_FUNDAMENTAL_VIOLATION');
           break;
         }
       }
     }
   } else {
-    const { contract, quote } = pack.evidence;
-    const quoteAge = pack.asOf - quote.quoteAt;
+    const { contract, quote } = pack.evidence as OptionEvidenceInput;
+    const quoteAge = now - quote.quoteAt;
     if (quoteAge < 0 || quoteAge > policy.maxOptionQuoteAgeMs) reject.push('OPTION_QUOTE_STALE');
     if (Date.parse(contract.expirationDate + 'T00:00:00.000Z') <= Date.parse(new Date(pack.asOf).toISOString().slice(0, 10) + 'T00:00:00.000Z')) {
       reject.push('OPTION_EXPIRED_OR_EXPIRING_TODAY');
@@ -188,7 +189,7 @@ function validateJudgeOutput(
         typeof value.stockReview.fundamentalsReviewed !== 'boolean' || value.optionReview !== undefined) return null;
     return { ...common, stockReview: { thesisInvalidationReviewed: value.stockReview.thesisInvalidationReviewed, fundamentalsReviewed: value.stockReview.fundamentalsReviewed } };
   }
-  const { contract, quote } = pack.evidence;
+  const { contract, quote } = pack.evidence as OptionEvidenceInput;
   const mid = (quote.bid + quote.ask) / 2;
   const spreadPct = mid > 0 ? (quote.ask - quote.bid) / mid : 1;
   if (!isRecord(value.optionReview) || value.optionReview.occSymbol !== contract.occSymbol ||
