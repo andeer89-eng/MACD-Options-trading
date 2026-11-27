@@ -475,12 +475,15 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
       }
       const cycleShadowBase = buildEntryMarketContextFromReport(activeHealth, { assetMode: 'EQUITY' });
       const newShadowInputs = skippedByRiskGates
-        .filter((s) => typeof s.signalPrice === 'number' && s.signalPrice > 0)
+        .filter((s) => {
+          const observedPrice = priceLookup[String(s.symbol).toUpperCase()];
+          return typeof observedPrice === 'number' && Number.isFinite(observedPrice) && observedPrice > 0;
+        })
         .map((s) => ({
           symbol: s.symbol,
           setupType: s.setupType || 'BULLISH TRIPLE',
           assetMode: 'EQUITY' as const,
-          signalPrice: s.signalPrice!,
+          signalPrice: priceLookup[String(s.symbol).toUpperCase()],
           blockReason: s.reasons[0] || 'Risk gate veto',
           entryMarketContext: cycleShadowBase,
         }));
