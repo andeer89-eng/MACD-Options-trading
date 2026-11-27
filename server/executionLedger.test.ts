@@ -40,13 +40,13 @@ function createFirestoreMock() {
       }
       return new Response(JSON.stringify({ writeResults: body.writes.map(() => ({})) }), { status: 200 });
     }
-    if (init?.method === 'GET' && path.includes('?pageSize=')) {
+    if ((!init?.method || init.method === 'GET') && path.includes('?pageSize=')) {
       const collectionPath = path.split('?')[0];
       const prefix = 'https://firestore.googleapis.com/v1/projects/test-project' + marker + collectionPath + '/';
       const found = [...documents.values()].filter(doc => doc.name.startsWith(prefix));
       return new Response(JSON.stringify({ documents: found }), { status: 200 });
     }
-    if (init?.method === 'GET') {
+    if (!init?.method || init.method === 'GET') {
       const name = 'https://firestore.googleapis.com/v1/projects/test-project' + marker + path;
       const doc = documents.get(name);
       return doc
