@@ -598,7 +598,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const excessiveEquityBuy = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day' }),
+        body: JSON.stringify({ symbol: 'MSFT', side: 'buy', qty: 5000, type: 'market', time_in_force: 'day', client_order_id: 'test-msft-large-buy-001' }),
       });
       assert.equal(excessiveEquityBuy.status, 409, 'Projected equity order notional must count against gross exposure');
 

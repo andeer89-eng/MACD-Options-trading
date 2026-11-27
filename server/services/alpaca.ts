@@ -719,6 +719,9 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
     }
+    const cfg = getConfig();
+    if (!cfg.configured) throw new AlpacaApiError(503, cfg.message);
+
     const clientOrderId = validated.payload.client_order_id;
     if (!clientOrderId) {
       throw new AlpacaApiError(400, 'client_order_id is required. Generate one stable ID per order intent and reuse it for every retry.');
