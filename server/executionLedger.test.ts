@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createExecutionLedger, verifyExecutionLedgerChain } from './services/executionLedger.ts';
 
 function decode(value: any): any {
@@ -43,8 +43,15 @@ function createFirestoreMock() {
     if ((!init?.method || init.method === 'GET') && path.includes('?pageSize=')) {
       const collectionPath = path.split('?')[0];
       const prefix = 'https://firestore.googleapis.com/v1/projects/test-project' + marker + collectionPath + '/';
-      const found = [...documents.values()].filter(doc => doc.name.startsWith(prefix));
-      return new Response(JSON.stringify({ documents: found }), { status: 200 });
+      const found = [...documents.values()]
+        .filter(doc => doc.name.startsWith(prefix))
+        .sort((a, b) => Number(a.fields.sequence?.integerValue || 0) - Number(b.fields.sequence?.integerValue || 0));
+      const parsedUrl = new URL(url);
+      const pageSize = Number(parsedUrl.searchParams.get('pageSize') || 1000);
+      const offset = Number(parsedUrl.searchParams.get('pageToken') || 0);
+      const page = found.slice(offset, offset + pageSize);
+      const nextPageToken = offset + pageSize < found.length ? String(offset + pageSize) : undefined;
+      return new Response(JSON.stringify({ documents: page, nextPageToken }), { status: 200 });
     }
     if (!init?.method || init.method === 'GET') {
       const name = 'https://firestore.googleapis.com/v1/projects/test-project' + marker + path;
