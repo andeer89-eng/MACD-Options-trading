@@ -216,3 +216,30 @@ The authenticated endpoint `POST /api/alpaca/reconciliation/backfill-index` reco
 Run the backfill once after deploying the index schema and before relying on the worker to
 discover all pre-existing orders. The endpoint requires the same Firebase-authenticated
 Alpaca API access as the other reconciliation endpoints. No broker order mutation occurs.
+
+## P1.9 — provenance-aware position reconciliation
+
+The authenticated read-only endpoint
+`GET /api/alpaca/reconciliation/positions` retrieves the current Alpaca Paper positions,
+reads every indexed order's complete ledger history in bounded batches, verifies each
+per-order SHA-256 chain, and compares signed broker quantities with net `FILL_RECORDED`
+quantities attributable to orders submitted through this application.
+
+Classifications are deliberately conservative:
+
+- `LEDGER_NET_EQUALS_BROKER`: application fill net equals the current broker quantity.
+- `UNATTRIBUTED_OR_EXTERNAL_ACTIVITY`: broker holds a position with no application fill provenance.
+- `UNEXPLAINED_VARIANCE`: application fill net and current broker quantity differ, or ledger fills exist for a symbol with no current broker position.
+
+These are provenance indicators, not confirmed broker defects. The app ledger does not
+establish opening balances and may not include manual broker trades, activity before ledger
+coverage, option exercise/assignment, transfers, or corporate actions. In particular, a
+numerical match does not prove complete provenance, and a variance must not trigger automatic
+trading or position mutation.
+
+Each successful snapshot is written as an immutable `POSITION_SNAPSHOT` record in
+`alpacaExecutionRuns`, including aggregate counts and up to 500 symbol-level rows.
+Invalid quantities, malformed fills, incomplete ledger reads, or a broken hash chain fail
+closed rather than producing a classified result. The endpoint performs only GET requests
+against Alpaca and Firestore writes for the audit record; it never submits, replaces, or
+cancels an order and never closes or changes a position.
