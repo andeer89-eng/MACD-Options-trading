@@ -1,5 +1,5 @@
 import { createPublicKey, verify as verifySignature } from 'node:crypto';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, Response as ExpressResponse } from 'express';
 
 const FIREBASE_SIGNING_CERTS_URL =
   'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
@@ -66,7 +66,7 @@ export function createFirebaseIdTokenVerifier(options: {
       return cachedCerts;
     }
 
-    let response: Response;
+    let response: globalThis.Response;
     try {
       response = await fetchImpl(FIREBASE_SIGNING_CERTS_URL, {
         method: 'GET',
@@ -183,7 +183,7 @@ export function createFirebaseAlpacaAuthMiddleware(options: FirebaseAuthOptions)
 
   return async function requireFirebaseAlpacaUser(
     req: Request,
-    res: Response,
+    res: ExpressResponse,
     next: NextFunction
   ): Promise<void> {
     res.setHeader('Cache-Control', 'no-store');
