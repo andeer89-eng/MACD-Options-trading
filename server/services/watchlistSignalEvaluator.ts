@@ -1,5 +1,8 @@
 import type { DivergenceSetup } from '../../src/utils/trullasStrategy.ts';
-import { validateWatchlistSignalMarketData, type WatchlistSignalMarketData } from './watchlistMarketData.ts';
+import {
+  validateWatchlistSignalMarketData,
+  type WatchlistSignalMarketData,
+} from './watchlistMarketData.ts';
 
 export const WATCHLIST_SIGNAL_RULE_VERSION = 'trullas-close-cross-v1';
 
@@ -13,6 +16,8 @@ export type WatchlistSignalEvaluation =
       observedClose: number;
       triggerCandleTimestamp: number;
       evaluatedAt: number;
+      marketDataProvider: WatchlistSignalMarketData['provider'];
+      normalizedPayloadSha256: string;
     }
   | {
       status: 'NOT_TRIGGERED' | 'INVALIDATED' | 'INVALID_INPUT';
@@ -20,25 +25,18 @@ export type WatchlistSignalEvaluation =
       reason: string;
     };
 
-type ClosedCandle = Pick<Candle, 'timestamp' | 'open' | 'high' | 'low' | 'close'>;
-
 /**
  * Deterministic, read-only trigger evaluator.
  *
- * Contract: the caller must provide finalized/closed candles from one
- * authoritative feed, in strictly increasing timestamp order. This function
- * rejects future-dated or malformed bars, but cannot independently verify
- * that a provider has finalized a candle.
- *
- * A trigger requires a CLOSE crossing the strategy's existing Fibonacci
- * 23.6% trigger level. A wick touch is not sufficient. If the stop and trigger
- * are both touched in the same candle, ordering is unknowable from OHLC data,
- * so the setup is conservatively invalidated rather than triggered.
+ * Requires a provenance envelope built by the server market-data adapter.
+ * The adapter excludes the newest returned candle because Yahoo does not
+ * expose a verified candle-finalization flag in this integration.
  */
 export function evaluateWatchlistBreakout(
   setup: DivergenceSetup,
-  closedCandles: ClosedCandle[],
-  evaluatedAt: number
+  marketData: WatchlistSignalMarketData,
+  evaluatedAt: number,
+  maxMarketDataAgeMs: number
 ): WatchlistSignalEvaluation {
   const invalid = (reason: string): WatchlistSignalEvaluation => ({
     status: 'INVALID_INPUT',
@@ -49,19 +47,32 @@ export function evaluateWatchlistBreakout(
   if (!setup || typeof setup !== 'object' || !Array.isArray(setup.points) || setup.points.length === 0) {
     return invalid('SETUP_OR_CONFIRMATION_POINT_MISSING');
   }
-  if (!Array.isArray(closedCandles) || closedCandles.length < 2) {
+  if (!marketData || !Array.isArray(marketData.candles) || marketData.candles.length < 2) {
     return invalid('AT_LEAST_TWO_CLOSED_CANDLES_REQUIRED');
   }
   if (!Number.isFinite(evaluatedAt) || evaluatedAt <= 0) {
     return invalid('INVALID_EVALUATION_TIMESTAMP');
   }
 
-  const provenanceError = validateWatchlistSignalMarketData(marketData, setup, evaluatedAt, maxMarketDataAgeMs);\n  if (provenanceError) return invalid(provenanceError);\n\n  const closedCandles = marketData.candles;\n  const bullish = setup.type === 'BULLISH_TRIPLE' || setup.type === 'BULLISH_DOUBLE';
+  const provenanceError = validateWatchlistSignalMarketData(
+    marketData,
+    setup,
+    evaluatedAt,
+    maxMarketDataAgeMs
+  );
+  if (provenanceError) return invalid(provenanceError);
+
+  const closedCandles = marketData.candles;
+  const bullish = setup.type === 'BULLISH_TRIPLE' || setup.type === 'BULLISH_DOUBLE';
   const bearish = setup.type === 'BEARISH_TRIPLE' || setup.type === 'BEARISH_DOUBLE';
   if (!bullish && !bearish) return invalid('UNSUPPORTED_SETUP_DIRECTION');
 
   const confirmationTimestamp = setup.confirmationTimestamp;
-  if (typeof confirmationTimestamp !== 'number' || !Number.isFinite(confirmationTimestamp) || confirmationTimestamp <= 0) {
+  if (
+    typeof confirmationTimestamp !== 'number' ||
+    !Number.isFinite(confirmationTimestamp) ||
+    confirmationTimestamp <= 0
+  ) {
     return invalid('PIVOT_CONFIRMATION_TIMESTAMP_MISSING');
   }
 
@@ -90,9 +101,7 @@ export function evaluateWatchlistBreakout(
       return invalid('CANDLE_SERIES_INVALID_OR_NOT_CHRONOLOGICAL');
     }
     previousTimestamp = candle.timestamp;
-    if (candle.timestamp === confirmationTimestamp) {
-      confirmationIndex = index;
-    }
+    if (candle.timestamp === confirmationTimestamp) confirmationIndex = index;
   }
 
   if (confirmationIndex < 0) return invalid('PIVOT_CONFIRMATION_CANDLE_NOT_IN_SERIES');
@@ -132,6 +141,8 @@ export function evaluateWatchlistBreakout(
         observedClose: current.close,
         triggerCandleTimestamp: current.timestamp,
         evaluatedAt,
+        marketDataProvider: marketData.provider,
+        normalizedPayloadSha256: marketData.normalizedPayloadSha256,
       };
     }
   }
