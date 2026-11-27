@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMultiAssetEvidencePack } from './multiAssetEvidencePack.ts';
+import { buildMultiAssetEvidencePack, type OptionEvidenceInput } from './multiAssetEvidencePack.ts';
 import { COMMITTEE_ROLES, type CommitteeResult } from './multiAgentCommittee.ts';
 import { runIndependentJudge, type IndependentJudge } from './independentJudge.ts';
 
@@ -52,7 +52,7 @@ function validJudge(pack: ReturnType<typeof stockPack>, committee: CommitteeResu
   };
   if (pack.assetClass === 'STOCK') return { ...common,
     stockReview: { thesisInvalidationReviewed: true, fundamentalsReviewed: false }, ...overrides };
-  const { contract, quote } = pack.evidence;
+  const { contract, quote } = pack.evidence as OptionEvidenceInput;
   const mid = (quote.bid + quote.ask) / 2;
   return { ...common, optionReview: { occSymbol: contract.occSymbol, expirationDate: contract.expirationDate,
     strike: contract.strike, bidAskSpreadPct: (quote.ask - quote.bid) / mid,
@@ -113,7 +113,7 @@ test('committee veto and deterministic risk veto always dominate judge approval'
 test('judge output with incomplete asset-specific review is reduced', async () => {
   const pack = optionPack(); const committee = committeeFor(pack);
   const judge: IndependentJudge = async (p, c, context) => validJudge(p, c, context, {
-    optionReview: { ...validJudge(p, c, context).optionReview, assignmentAndExerciseReviewed: false },
+    optionReview: { ...(validJudge(p, c, context) as any).optionReview, assignmentAndExerciseReviewed: false },
   });
   const result = await runIndependentJudge(pack, committee, judge, { now: () => now + 20 });
   assert.equal(result.disposition, 'REDUCE');
