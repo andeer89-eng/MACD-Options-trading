@@ -22,7 +22,7 @@ Rule version: `trullas-close-cross-v1`.
 ## Candle contract and limitations
 
 The caller must supply finalized/closed candles from one feed, strictly ordered
-by timestamp, including the final pivot-confirmation candle. The evaluator
+by timestamp, including the exact final pivot-confirmation candle. The strategy now records\n\`confirmationTimestamp\` as pivot index + right-side lookback, and the evaluator\nstarts strictly after that timestamp. Crosses that occurred before the pivot was\nknowable are ignored. The evaluator
 validates chronology, OHLC consistency, and that no candle timestamp is later
 than `evaluatedAt`. It cannot independently prove provider finality, feed
 integrity, exchange calendar alignment, or that the data is authoritative.

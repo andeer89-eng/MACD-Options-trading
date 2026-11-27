@@ -59,6 +59,11 @@ export function evaluateWatchlistBreakout(
   const bearish = setup.type === 'BEARISH_TRIPLE' || setup.type === 'BEARISH_DOUBLE';
   if (!bullish && !bearish) return invalid('UNSUPPORTED_SETUP_DIRECTION');
 
+  const confirmationTimestamp = setup.confirmationTimestamp;
+  if (typeof confirmationTimestamp !== 'number' || !Number.isFinite(confirmationTimestamp) || confirmationTimestamp <= 0) {
+    return invalid('PIVOT_CONFIRMATION_TIMESTAMP_MISSING');
+  }
+
   const threshold = setup.triggerPrice;
   const stopLoss = setup.stopLoss;
   if (!Number.isFinite(threshold) || threshold <= 0 || !Number.isFinite(stopLoss) || stopLoss <= 0) {
@@ -84,7 +89,7 @@ export function evaluateWatchlistBreakout(
       return invalid('CANDLE_SERIES_INVALID_OR_NOT_CHRONOLOGICAL');
     }
     previousTimestamp = candle.timestamp;
-    if (candle.timestamp === setup.points[setup.points.length - 1].timestamp) {
+    if (candle.timestamp === confirmationTimestamp) {
       confirmationIndex = index;
     }
   }

@@ -24,6 +24,7 @@ const setup = (type: DivergenceSetup['type'] = 'BULLISH_DOUBLE'): DivergenceSetu
   confluenceChecks: { priceDivergence: true, macdDivergence: true, rsiDivergence: true, volumeExhaustion: true, macdCrossConfirmed: true },
   scalingTranches: { tranche1: 'one', tranche2: 'two', tranche3: 'three' },
   detectedAt: base,
+  confirmationTimestamp: base,
 });
 const bar = (day: number, open: number, high: number, low: number, close: number): Candle => ({
   timestamp: base + day * 86_400_000,
@@ -62,6 +63,32 @@ test('same candle touching stop and trigger is conservatively invalidated', () =
   const result = evaluateWatchlistBreakout(setup(), [bar(0, 99, 101, 98, 100), bar(1, 100, 106, 94, 105.5)], base + 2 * 86_400_000);
   assert.equal(result.status, 'INVALIDATED');
   if (result.status === 'INVALIDATED') assert.match(result.reason, /ORDER_UNKNOWABLE/);
+});
+
+
+test('does not trigger on a breakout that occurred before the final pivot was confirmed', () => {
+  const delayedSetup = { ...setup(), confirmationTimestamp: base + 2 * 86_400_000 };
+  const result = evaluateWatchlistBreakout(
+    delayedSetup,
+    [
+      bar(0, 99, 101, 98, 100),
+      bar(1, 100, 106, 99, 105.5), // crossed before confirmation
+      bar(2, 105, 106, 104, 105), // pivot becomes knowable only here
+      bar(3, 105, 105.5, 103, 104), // no fresh cross
+    ],
+    base + 4 * 86_400_000
+  );
+  assert.equal(result.status, 'NOT_TRIGGERED');
+});
+
+test('rejects setups without an explicit pivot confirmation timestamp', () => {
+  const { confirmationTimestamp: _ignored, ...unconfirmed } = setup();
+  const result = evaluateWatchlistBreakout(unconfirmed as DivergenceSetup, [
+    bar(0, 99, 101, 98, 100),
+    bar(1, 100, 106, 99, 105.5),
+  ], base + 2 * 86_400_000);
+  assert.equal(result.status, 'INVALID_INPUT');
+  if (result.status === 'INVALID_INPUT') assert.equal(result.reason, 'PIVOT_CONFIRMATION_TIMESTAMP_MISSING');
 });
 
 test('rejects unordered, malformed, future-dated and unanchored candle series', () => {
