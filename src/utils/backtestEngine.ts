@@ -219,6 +219,7 @@ export function runBacktest(
     tp1: number;
     tp2: number;
     barsPending: number;
+    eligibleFromIndex: number;
   }
   const pendingSetups: PendingSetup[] = [];
 
@@ -259,6 +260,7 @@ export function runBacktest(
         tp1: setup.targets.tp1,
         tp2: setup.targets.tp2,
         barsPending: 0,
+        eligibleFromIndex: i + 1,
       });
     }
 
@@ -451,6 +453,9 @@ export function runBacktest(
     if (!activeTrade && pendingSetups.length > 0) {
       for (let pIdx = pendingSetups.length - 1; pIdx >= 0; pIdx--) {
         const ps = pendingSetups[pIdx];
+        // A pivot is only known after this confirmation candle closes.
+        // Never allow its high/low to trigger a trade retroactively.
+        if (i < ps.eligibleFromIndex) continue;
         ps.barsPending++;
 
         // Invalidation check: did price break the swing extreme (Stop Loss) before triggering?
@@ -471,7 +476,11 @@ export function runBacktest(
             : curCandle.low <= ps.triggerPrice;
 
         if (triggered) {
-          const entryPrice = ps.triggerPrice;
+          // Stop-market fills occur at the trigger unless the market gaps
+          // through it, in which case the open is the first executable price.
+          const entryPrice = ps.direction === 'long'
+            ? Math.max(curCandle.open, ps.triggerPrice)
+            : Math.min(curCandle.open, ps.triggerPrice);
           const stopLoss = ps.stopLoss;
           const riskPerShare = Math.max(0.1, Math.abs(entryPrice - stopLoss));
 
@@ -708,13 +717,66 @@ function runTosStrategyBacktest(
     qualityScore: number;
     rulesFired: string[];
   }
+  interface PendingTosEntry {
+    direction: 'long' | 'short';
+    setupType: SimulatedTrade['setupType'];
+    qualityScore: number;
+    rulesFired: string[];
+    tp2Mult: number;
+    atr: number;
+  }
   let activeTrade: ActiveTosTrade | null = null;
+  let pendingEntry: PendingTosEntry | null = null;
 
   const startIdx = strategyMode === 'stacked_ema_pullback' ? 50 : 35;
 
   for (let i = startIdx; i < n; i++) {
     const cur = candles[i];
     const prev = candles[i - 1];
+
+    // Signals use the completed previous candle. Execute at this candle's open.
+    if (!activeTrade && pendingEntry) {
+      const signal = pendingEntry;
+      pendingEntry = null;
+      const entryPrice = Number(cur.open.toFixed(2));
+      const stopDistance = Math.max(0.1, signal.atr * 1.5);
+      const stopLoss = Number(
+        (signal.direction === 'long' ? entryPrice - stopDistance : entryPrice + stopDistance).toFixed(2)
+      );
+      const tp1 = Number(
+        (signal.direction === 'long' ? entryPrice + stopDistance * 1.5 : entryPrice - stopDistance * 1.5).toFixed(2)
+      );
+      const tp2 = Number(
+        (signal.direction === 'long' ? entryPrice + stopDistance * signal.tp2Mult : entryPrice - stopDistance * signal.tp2Mult).toFixed(2)
+      );
+      const riskDollars = (initialBalance * riskPerTradePct) / 100;
+      let quantity = Math.max(1, Math.floor(riskDollars / stopDistance));
+      const maxSharesByCapital = Math.floor((initialBalance * 0.4) / entryPrice);
+      if (maxSharesByCapital > 0 && quantity > maxSharesByCapital) {
+        quantity = maxSharesByCapital;
+      }
+
+      activeTrade = {
+        setupType: signal.setupType,
+        direction: signal.direction,
+        entryIndex: i,
+        entryTime: cur.timestamp,
+        entryDateStr: cur.dateStr,
+        entryPrice,
+        currentStopLoss: stopLoss,
+        initialStopLoss: stopLoss,
+        tp1,
+        tp2,
+        quantity,
+        remainingQuantity: quantity,
+        partialGrossPnl: 0,
+        partialExecutions: [],
+        riskDollars,
+        tp1Hit: false,
+        qualityScore: signal.qualityScore,
+        rulesFired: signal.rulesFired,
+      };
+    }
 
     if (activeTrade) {
       const barsHeld = i - activeTrade.entryIndex;
@@ -953,43 +1015,14 @@ function runTosStrategyBacktest(
     }
 
     if (signalDir) {
-      const entryPrice = Number(cur.close.toFixed(2));
-      const stopDistance = Math.max(0.1, effAtr * 1.5);
-      const stopLoss = Number(
-        (signalDir === 'long' ? entryPrice - stopDistance : entryPrice + stopDistance).toFixed(2)
-      );
-      const tp1 = Number(
-        (signalDir === 'long' ? entryPrice + stopDistance * 1.5 : entryPrice - stopDistance * 1.5).toFixed(2)
-      );
-      const tp2 = Number(
-        (signalDir === 'long' ? entryPrice + stopDistance * tp2Mult : entryPrice - stopDistance * tp2Mult).toFixed(2)
-      );
-      const riskDollars = (initialBalance * riskPerTradePct) / 100;
-      let quantity = Math.max(1, Math.floor(riskDollars / stopDistance));
-      const maxSharesByCapital = Math.floor((initialBalance * 0.4) / entryPrice);
-      if (maxSharesByCapital > 0 && quantity > maxSharesByCapital) {
-        quantity = maxSharesByCapital;
-      }
-
-      activeTrade = {
-        setupType,
+      // This signal is only known after bar i closes; queue it for bar i + 1.
+      pendingEntry = {
         direction: signalDir,
-        entryIndex: i,
-        entryTime: cur.timestamp,
-        entryDateStr: cur.dateStr,
-        entryPrice,
-        currentStopLoss: stopLoss,
-        initialStopLoss: stopLoss,
-        tp1,
-        tp2,
-        quantity,
-        remainingQuantity: quantity,
-        partialGrossPnl: 0,
-        partialExecutions: [],
-        riskDollars,
-        tp1Hit: false,
+        setupType,
         qualityScore,
         rulesFired,
+        tp2Mult,
+        atr: effAtr,
       };
     }
   }
