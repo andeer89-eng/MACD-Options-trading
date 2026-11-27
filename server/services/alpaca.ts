@@ -639,6 +639,16 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       status: String(order?.status || ''),
       limit_price: toNullableNum(order?.limit_price),
     }));
+    if (validated.isOption && validated.payload.side === 'sell' && /P\d{8}$/.test(validated.payload.symbol)) {
+      openOrders.push({
+        symbol: validated.payload.symbol,
+        asset_class: 'us_option',
+        side: 'sell',
+        qty: validated.payload.qty,
+        status: 'new',
+        limit_price: validated.payload.limit_price ?? null,
+      });
+    }
     const timestamps = Array.isArray(rawHistory?.timestamp) ? rawHistory.timestamp : [];
     const equityValues = Array.isArray(rawHistory?.equity) ? rawHistory.equity : [];
     const equityHistory = timestamps.map((timestamp: unknown, index: number) => ({
