@@ -218,7 +218,7 @@ describe('Trullàs Backtest Engine & LuxAlgo Journal-Core Integration', () => {
       } else if (i === 66) {
         // Next-open entry is around 121.70; hit TP1 without touching the initial stop or TP2.
         close = 121.8;
-        high = 124.0;
+        high = 125.0;
         low = 121.0;
       } else if (i === 67) {
         // Reverse through the entry after TP1 so the remaining tranche exits at breakeven.
