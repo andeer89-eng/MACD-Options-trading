@@ -320,7 +320,7 @@ Limits and interpretation:
 
 The authenticated Execution Operations dashboard exposes an explicit, read-only account integrity audit. It pages the Firestore order index in bounded batches (maximum 10,000 indexed orders per API run; dashboard default 5,000), reads each order's complete event history, and verifies sequence continuity, previous-hash links, and SHA-256 entry hashes.
 
-Classifications are mutually exclusive: `VALID`, `INVALID`, `UNVERIFIABLE`, `MISSING_LEDGER`, and `INDEX_MISMATCH`. Audit reports are append-only documents in `alpacaExecutionIntegrityAudits`; the API exposes the latest 100 reports. Evidence is bounded to 250 exception rows per report, while aggregate counts cover every scanned index entry.
+Classifications are mutually exclusive: `VALID`, `INVALID`, `UNVERIFIABLE`, `MISSING_LEDGER`, and `INDEX_MISMATCH`. Audit reports are append-only documents in `alpacaExecutionIntegrityAudits`; the API exposes the latest 100 reports. Evidence is bounded to 250 exception rows per report, while aggregate counts cover every scanned index entry. `status` describes coverage completion (`completed` or `partial`); `integrityStatus` separately reports `CLEAN` or `FINDINGS`, so detected integrity exceptions do not incorrectly imply that the scan itself was incomplete.
 
 Coverage is explicitly limited to orders present in `alpacaExecutionOrderIndex`. A run that reaches its configured order cap while more index pages remain is marked partial (`coverageComplete=false`). It is not evidence that unindexed broker orders or orders outside the local index do not exist. Firestore read or report-persistence failures return HTTP 503; an unpersisted partial result is not presented as a durable audit.
 
