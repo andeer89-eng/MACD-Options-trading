@@ -72,3 +72,19 @@ test('validates identity, freshness and normalized-payload digest', () => {
   assert.equal(validateWatchlistSignalMarketData(evidence, setup(), base + 4 * 86_400_000, 60_000), 'STALE_MARKET_DATA_EVIDENCE');
   assert.equal(validateWatchlistSignalMarketData({ ...evidence, candles: [candle(1, 99)] }, setup(), base + 3 * 86_400_000, 60_000), 'MARKET_DATA_DIGEST_MISMATCH');
 });
+
+test('rejects OHLCV evidence with invalid volume or non-canonical date strings', () => {
+  const invalidVolume = buildWatchlistSignalMarketData({
+    symbol: 'AAPL', timeframe: '1d', range: '3mo',
+    candles: [candle(0, 100), { ...candle(1, 101), volume: Number.NaN }, candle(2, 102)],
+    retrievedAt: base + 3 * 86_400_000, feedMetadata: metadata,
+  });
+  assert.equal(invalidVolume.ok, false);
+
+  const invalidDate = buildWatchlistSignalMarketData({
+    symbol: 'AAPL', timeframe: '1d', range: '3mo',
+    candles: [candle(0, 100), { ...candle(1, 101), dateStr: '2026-02-30' }, candle(2, 102)],
+    retrievedAt: base + 3 * 86_400_000, feedMetadata: metadata,
+  });
+  assert.equal(invalidDate.ok, false);
+});

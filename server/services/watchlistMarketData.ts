@@ -19,7 +19,7 @@ export type WatchlistSignalMarketData = {
   retrievedAt: number;
   closurePolicy: typeof WATCHLIST_CANDLE_CLOSURE_POLICY;
   excludedLatestCandleTimestamp: number;
-  candles: Array<Pick<Candle, 'timestamp' | 'open' | 'high' | 'low' | 'close'>>;
+  candles: Candle[];
   normalizedPayloadSha256: string;
 };
 
@@ -32,7 +32,7 @@ export type WatchlistMarketDataBuildResult =
  *
  * The provider does not expose a trustworthy per-candle finalization flag in
  * this integration. We therefore exclude the newest returned bar entirely.
- * The digest covers normalized OHLC records, not Yahoo's original HTTP bytes.
+ * The digest covers normalized OHLCV/date records, not Yahoo's original HTTP bytes.
  */
 export function buildWatchlistSignalMarketData(input: {
   symbol: string;
@@ -76,6 +76,9 @@ export function buildWatchlistSignalMarketData(input: {
       ![candle.open, candle.high, candle.low, candle.close].every(
         value => Number.isFinite(value) && value > 0
       ) ||
+      !Number.isFinite(candle.volume) || candle.volume < 0 ||
+      typeof candle.dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(candle.dateStr) ||
+      Number.isNaN(Date.parse(candle.dateStr)) || new Date(candle.timestamp).toISOString().slice(0, 10) !== candle.dateStr ||
       candle.high < Math.max(candle.open, candle.close, candle.low) ||
       candle.low > Math.min(candle.open, candle.close, candle.high)
     ) {
@@ -85,9 +88,7 @@ export function buildWatchlistSignalMarketData(input: {
   }
 
   const excludedLatestCandleTimestamp = ordered[ordered.length - 1].timestamp;
-  const candles = ordered.slice(0, -1).map(({ timestamp, open, high, low, close }) => ({
-    timestamp, open, high, low, close,
-  }));
+  const candles = ordered.slice(0, -1).map(candle => ({ ...candle }));
   if (candles.length < 2) return { ok: false, reason: 'INSUFFICIENT_CLOSED_CANDLES' };
 
   const normalizedPayloadSha256 = createHash('sha256')
@@ -134,7 +135,12 @@ export function validateWatchlistSignalMarketData(
   if (!/^[a-f0-9]{64}$/.test(evidence.normalizedPayloadSha256)) return 'INVALID_MARKET_DATA_DIGEST';
   const digest = createHash('sha256').update(JSON.stringify(evidence.candles)).digest('hex');
   if (digest !== evidence.normalizedPayloadSha256) return 'MARKET_DATA_DIGEST_MISMATCH';
-  if (evidence.candles.length < 2 || evidence.candles.some(c => c.timestamp >= evidence.excludedLatestCandleTimestamp)) {
+  if (evidence.candles.length < 2 || evidence.candles.some(c =>
+    c.timestamp >= evidence.excludedLatestCandleTimestamp ||
+    !Number.isFinite(c.volume) || c.volume < 0 ||
+    typeof c.dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.dateStr) ||
+    Number.isNaN(Date.parse(c.dateStr)) || new Date(c.timestamp).toISOString().slice(0, 10) !== c.dateStr
+  )) {
     return 'CLOSED_CANDLE_BOUNDARY_INVALID';
   }
   return null;
