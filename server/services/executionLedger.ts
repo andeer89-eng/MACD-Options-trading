@@ -208,7 +208,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       const isConflict = commit.status === 409 || commit.status === 412 || commitError?.error?.status === 'FAILED_PRECONDITION' || commitError?.error?.status === 'ALREADY_EXISTS';
       if (isConflict) {
         const existing = await request('/' + eventPath + '/' + eventId);
-        if (existing.ok) return event;
+        if (existing.ok) return fromDocument(await existing.json()) as ExecutionLedgerEvent;
       }
       if (!isConflict) {
         throw new ExecutionLedgerUnavailableError('Firestore ledger commit failed.');
@@ -218,12 +218,34 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
   }
 
   async function readEvents(clientOrderId: string): Promise<ExecutionLedgerEvent[]> {
+    if (!clientOrderId || clientOrderId.length > 128) throw new Error('Invalid client_order_id.');
     const orderKey = createHash('sha256').update(clientOrderId).digest('hex');
-    const response = await request(`/alpacaExecutionLedger/${orderKey}/events?pageSize=1000&orderBy=sequence`);
-    if (!response.ok) return [];
-    const body = await response.json() as { documents?: any[] };
-    return (body.documents || []).map(doc => fromDocument(doc) as ExecutionLedgerEvent)
-      .sort((a, b) => a.sequence - b.sequence);
+    const collectionPath = `/alpacaExecutionLedger/${orderKey}/events`;
+    const events: ExecutionLedgerEvent[] = [];
+    const seenTokens = new Set<string>();
+    let pageToken = '';
+
+    // Firestore caps a page at 1,000 documents. Continue until the server
+    // explicitly reports there are no more pages; never verify a truncated chain.
+    for (let page = 0; page < 10_000; page++) {
+      const query = new URLSearchParams({ pageSize: '1000', orderBy: 'sequence' });
+      if (pageToken) query.set('pageToken', pageToken);
+      const response = await request(`${collectionPath}?${query.toString()}`);
+      if (response.status === 404 && page === 0) return [];
+      if (!response.ok) {
+        throw new ExecutionLedgerUnavailableError('Firestore ledger history could not be read.');
+      }
+      const body = await response.json() as { documents?: any[]; nextPageToken?: string };
+      events.push(...(body.documents || []).map(doc => fromDocument(doc) as ExecutionLedgerEvent));
+      const next = body.nextPageToken || '';
+      if (!next) return events.sort((a, b) => a.sequence - b.sequence);
+      if (seenTokens.has(next)) {
+        throw new ExecutionLedgerUnavailableError('Firestore returned a repeated ledger page token.');
+      }
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    throw new ExecutionLedgerUnavailableError('Execution ledger history exceeded the safe pagination limit.');
   }
 
   return { append, readEvents };
