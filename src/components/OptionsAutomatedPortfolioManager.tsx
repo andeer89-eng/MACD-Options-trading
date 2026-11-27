@@ -398,6 +398,23 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           .sort((a, b) => b.strike_price - a.strike_price);
         const chosen = tradable.find((c) => (c.close_price ?? 0) >= 0.15) || tradable[0];
         if (!chosen) continue;
+        const proposedPortfolioRisk = evaluatePortfolioRisk({
+          account: activeOverview.account,
+          positions: [
+            ...(activeOverview.equityPositions || []),
+            ...(activeOverview.optionPositions || []),
+          ],
+          openOrders: [
+            ...(activeOverview.orders || []),
+            { symbol: chosen.symbol, asset_class: 'us_option', side: 'sell' as const, qty: 1, status: 'new' },
+          ],
+          equityHistory: activeOverview.portfolioHistory || [],
+          fetchedAt: activeOverview.fetchedAt,
+        });
+        if (!proposedPortfolioRisk.allowNewEntries) {
+          actionsLog.push(`Skipped ${chosen.symbol}: proposed position breaches portfolio limits — ${proposedPortfolioRisk.reasons.join(' ')}`);
+          continue;
+        }
         const orderRisk = evaluateShortPutOrderRisk({
           symbol: chosen.symbol,
           contracts: 1,
