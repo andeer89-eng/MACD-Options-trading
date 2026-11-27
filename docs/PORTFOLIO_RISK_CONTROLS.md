@@ -286,3 +286,31 @@ Dashboard refresh is manual; there is no aggressive polling. The position audit 
 
 The view is intended for Alpaca Paper operations. It does not add live trading, order controls,
 external alert delivery, or deployment configuration.
+
+## P1.12 — Audit & Traceability Center
+
+The authenticated read-only operations dashboard exposes persisted reconciliation history through
+`GET /api/alpaca/reconciliation/runs?limit=50` (limit 1–100). The API reads the Firestore
+`alpacaExecutionRuns` collection, returns bounded run records, and fails closed on unavailable
+storage or repeated pagination tokens.
+
+The dashboard provides:
+- A bounded reconciliation-run timeline with status, timestamps, counts, run IDs, and available
+  position snapshot symbols. A local text filter searches the loaded records.
+- Per-order ledger inspection using the existing
+  `GET /api/alpaca/orders/:clientOrderId/ledger` endpoint. The full event history is returned
+  with sequence, payload, previous hash, entry hash, and SHA-256 chain verification.
+- JSON export of the currently loaded run history and selected order ledger.
+- CSV export of the selected order's event records, including hash fields.
+
+Limits and interpretation:
+- The dashboard loads the latest 50 run records; this is not an exhaustive archive browser.
+- CSV export is for one selected order, not a combined all-account fill export.
+- Per-order integrity is verified only for the order explicitly inspected; no claim of account-wide
+  hash-chain verification is made by this UI.
+- The order ledger lookup requires the exact `client_order_id`; this increment does not expose a
+  new account-wide order search endpoint.
+- Historical run records are displayed as persisted, bounded evidence; they do not prove that a
+  broker account has been fully reconciled outside the recorded scope.
+- No order submission, replacement, cancellation, position mutation, background broker polling,
+  or deployment behavior is added.

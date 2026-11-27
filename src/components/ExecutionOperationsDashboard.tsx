@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity, AlertTriangle, Bell, CheckCircle2, Clock3, Database, RefreshCw,
-  ShieldCheck, TrendingUp, Wallet, Wifi, WifiOff,
+  ShieldCheck, TrendingUp, Wallet, Wifi, Download, Search, FileCheck2,
 } from 'lucide-react';
 import { auth } from '../lib/firebase';
 
@@ -17,6 +17,8 @@ type DashboardState = {
   worker?: any;
   reconciliation?: any;
   loadedAt?: string;
+  runs: any[];
+  ledger?: { clientOrderId: string; events: any[]; verification: any };
 };
 
 const fmtMoney = (value: unknown) => {
@@ -30,12 +32,15 @@ const severityClass = (severity: string) => severity === 'CRITICAL'
   : 'border-sky-500/40 bg-sky-500/10 text-sky-300';
 
 export const ExecutionOperationsDashboard: React.FC = () => {
-  const [data, setData] = useState<DashboardState>({ alerts: [] });
+  const [data, setData] = useState<DashboardState>({ alerts: [], runs: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const [orderLookup, setOrderLookup] = useState('');
+  const [loadingLedger, setLoadingLedger] = useState(false);
+  const [runFilter, setRunFilter] = useState('');
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const user = auth.currentUser;
@@ -53,16 +58,18 @@ export const ExecutionOperationsDashboard: React.FC = () => {
   const load = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true); else setLoading(true);
     try {
-      const [overview, alerts, worker] = await Promise.all([
+      const [overview, alerts, worker, runHistory] = await Promise.all([
         api('/api/alpaca/overview'),
         api('/api/alpaca/reconciliation/alerts?limit=200'),
         api('/api/alpaca/reconciliation/worker-status'),
+        api('/api/alpaca/reconciliation/runs?limit=50'),
       ]);
       setData(prev => ({
         ...prev,
         overview,
         alerts: Array.isArray(alerts.alerts) ? alerts.alerts : [],
         worker,
+        runs: Array.isArray(runHistory.runs) ? runHistory.runs : [],
         loadedAt: new Date().toISOString(),
       }));
       setError(null);
@@ -87,6 +94,45 @@ export const ExecutionOperationsDashboard: React.FC = () => {
     } finally {
       setReconciling(false);
     }
+  };
+
+
+  const loadLedgerHistory = async (clientOrderId?: string) => {
+    const id = (clientOrderId ?? orderLookup).trim();
+    if (!id) { setError('Enter a client_order_id to inspect its immutable ledger history.'); return; }
+    setLoadingLedger(true);
+    try {
+      const result = await api('/api/alpaca/orders/' + encodeURIComponent(id) + '/ledger');
+      setData(prev => ({ ...prev, ledger: result }));
+      setError(null);
+    } catch (e) {
+      setData(prev => ({ ...prev, ledger: undefined }));
+      setError(e instanceof Error ? e.message : 'Ledger history could not be loaded.');
+    } finally { setLoadingLedger(false); }
+  };
+
+  const downloadAudit = (format: 'json' | 'csv') => {
+    const payload = { exportedAt: new Date().toISOString(), mode: 'PAPER', runs: data.runs, ledger: data.ledger || null };
+    let content: string;
+    let mime: string;
+    if (format === 'json') {
+      content = JSON.stringify(payload, null, 2);
+      mime = 'application/json';
+    } else {
+      const events = data.ledger?.events || [];
+      const columns = ['sequence', 'occurredAt', 'eventType', 'symbol', 'clientOrderId', 'brokerOrderId', 'payload', 'prevHash', 'entryHash'];
+      const quote = (value: unknown) => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+      content = [columns.join(','), ...events.map((event: any) => columns.map(key =>
+        quote(key === 'payload' ? JSON.stringify(event[key] || {}) : event[key])).join(','))].join('\n');
+      mime = 'text/csv;charset=utf-8';
+    }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'execution-audit-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + format;
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   const alerts = data.alerts.filter(alert => showResolved || alert.status === 'ACTIVE');
@@ -233,6 +279,55 @@ export const ExecutionOperationsDashboard: React.FC = () => {
         </div>
         <p className="mt-3 text-[11px] text-zinc-500">A mismatch is a provenance signal, not proof of a broker defect. This audit never changes positions or orders.</p>
       </section>}
+
+
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-white flex items-center gap-2"><FileCheck2 className="w-4 h-4 text-emerald-300" /> Audit & Traceability Center</h2>
+            <p className="text-xs text-zinc-500 mt-1">Persistent reconciliation runs and verifiable per-order event history.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => downloadAudit('json')} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800"><Download className="w-3.5 h-3.5" /> Export JSON</button>
+            <button onClick={() => downloadAudit('csv')} disabled={!data.ledger?.events?.length} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"><Download className="w-3.5 h-3.5" /> Export events CSV</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between"><h3 className="text-sm font-medium text-zinc-200">Reconciliation run history</h3><span className="text-[10px] text-zinc-500">{data.runs.length} latest runs</span></div>
+            <input value={runFilter} onChange={e => setRunFilter(e.target.value)} placeholder="Filter by run type, status or symbol…" className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500" />
+            <div className="max-h-[340px] overflow-auto space-y-2">
+              {data.runs.filter(run => !runFilter || [run.runType, run.status, run.runId, JSON.stringify(run.rows || [])].join(' ').toLowerCase().includes(runFilter.toLowerCase())).map((run: any) =>
+                <article key={run.runId} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold text-zinc-100">{run.runType || 'ORDER_RECONCILIATION'}</span><span className={run.status === 'completed' ? 'text-[10px] uppercase font-bold text-emerald-300' : run.status === 'failed' ? 'text-[10px] uppercase font-bold text-rose-300' : 'text-[10px] uppercase font-bold text-amber-300'}>{run.status}</span></div>
+                  <div className="mt-1 text-[10px] text-zinc-500">{fmtDate(run.completedAt || run.startedAt)} · {run.runId}</div>
+                  <div className="mt-2 grid grid-cols-4 gap-2 text-[10px]"><span className="text-zinc-400">Scanned <b className="text-zinc-200">{run.scanned ?? '—'}</b></span><span className="text-zinc-400">OK <b className="text-zinc-200">{run.reconciled ?? '—'}</b></span><span className="text-zinc-400">Failed <b className="text-zinc-200">{run.failed ?? '—'}</b></span><span className="text-zinc-400">Errors <b className="text-zinc-200">{run.errorCount ?? '—'}</b></span></div>
+                  {Array.isArray(run.rows) && run.rows.length > 0 && <div className="mt-2 text-[10px] text-zinc-500">Symbols: {run.rows.slice(0, 8).map((row: any) => row.symbol || row.clientOrderId).filter(Boolean).join(', ')}{run.rows.length > 8 ? '…' : ''}</div>}
+                </article>
+              )}
+              {data.runs.length === 0 && <p className="py-6 text-center text-xs text-zinc-500">No persisted reconciliation runs found.</p>}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-zinc-200">Order ledger inspection</h3>
+            <div className="flex gap-2">
+              <input value={orderLookup} onChange={e => setOrderLookup(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void loadLedgerHistory(); }} placeholder="client_order_id" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none focus:border-emerald-500" />
+              <button onClick={() => void loadLedgerHistory()} disabled={loadingLedger || !orderLookup.trim()} className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"><Search className="w-3.5 h-3.5" /> {loadingLedger ? 'Loading' : 'Inspect'}</button>
+            </div>
+            {data.ledger && <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-mono text-zinc-300">{data.ledger.clientOrderId}</span><span className={data.ledger.verification?.valid ? 'rounded-md border border-emerald-500/40 px-2 py-1 text-[10px] font-bold text-emerald-300' : 'rounded-md border border-rose-500/40 px-2 py-1 text-[10px] font-bold text-rose-300'}>{data.ledger.verification?.valid ? 'HASH CHAIN VALID' : 'HASH CHAIN INVALID'}</span></div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-400"><span>Events: <b className="text-zinc-200">{data.ledger.verification?.length ?? data.ledger.events?.length ?? 0}</b></span><span className="truncate">Head: <b className="font-mono text-zinc-300">{data.ledger.verification?.headHash || '—'}</b></span></div>
+              <div className="max-h-[260px] overflow-auto space-y-1.5">
+                {(data.ledger.events || []).map((event: any) => <div key={event.eventId} className="grid grid-cols-[42px_1fr_auto] items-start gap-2 border-t border-zinc-800 pt-2 text-[10px]">
+                  <span className="font-mono text-zinc-500">#{event.sequence}</span><div><div className="font-semibold text-zinc-200">{event.eventType} · {event.symbol}</div><div className="text-zinc-500">{fmtDate(event.occurredAt)} · {JSON.stringify(event.payload || {})}</div><div className="font-mono text-zinc-600 break-all">SHA {event.entryHash}</div></div><span className="text-emerald-400">✓</span>
+                </div>)}
+              </div>
+            </div>}
+            {!data.ledger && <p className="rounded-lg border border-dashed border-zinc-800 p-5 text-center text-xs text-zinc-500">Enter an order's client_order_id to load its complete ledger chain and verify every event.</p>}
+          </div>
+        </div>
+        <p className="text-[10px] text-zinc-600">Run history is bounded to the latest 50 records. CSV exports the currently inspected order's events; JSON exports the visible run history and inspected ledger. No broker mutations are available here.</p>
+      </section>
 
       <p className="text-[10px] text-zinc-600 flex items-center gap-2"><Wifi className="w-3 h-3" /> Dashboard refresh is manual; it does not poll Alpaca continuously or initiate trading activity.</p>
     </div>
