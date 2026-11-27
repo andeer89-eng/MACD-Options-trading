@@ -124,7 +124,7 @@ function deterministicReview(pack: MultiAssetEvidencePack, now: number, policy: 
   const reject: string[] = [];
   const reduce: string[] = [];
   for (const source of pack.sources) {
-    if (!Number.isFinite(source.retrievedAt) || source.retrievedAt > pack.generatedAt || source.retrievedAt > pack.asOf) {
+    if (!Number.isFinite(source.retrievedAt) || source.retrievedAt > pack.generatedAt || source.retrievedAt > now) {
       reject.push('SOURCE_TIMESTAMP_OUTSIDE_AS_OF_WINDOW');
       break;
     }
@@ -175,6 +175,7 @@ function validateJudgeOutput(
       !['COMPLETE', 'PARTIAL', 'INSUFFICIENT'].includes(String(value.evidenceCompleteness)) ||
       typeof value.riskMultiplier !== 'number' || !Number.isFinite(value.riskMultiplier) ||
       value.riskMultiplier < 0 || value.riskMultiplier > committee.riskMultiplierCeiling ||
+      (value.disposition === 'REDUCE' && value.riskMultiplier >= committee.riskMultiplierCeiling) ||
       !isStringArray(value.reasons)) return null;
   const common = {
     schemaVersion: '1.0.0' as const, packId: pack.packId, packSha256: pack.canonicalSha256,
@@ -246,16 +247,17 @@ export async function runIndependentJudge(
       assessment: null, riskMultiplierCeiling: 0, reasons: ['INVALID_OR_MISSING_INDEPENDENT_JUDGE_OUTPUT'],
       generatedAt, executionEligible: false };
   }
+  const forcedReject = assessment.evidenceCompleteness === 'INSUFFICIENT';
   const forcedReduce = deterministic.reduce.length > 0 ||
     (pack.assetClass === 'STOCK' && !assessment.stockReview?.thesisInvalidationReviewed) ||
     (pack.assetClass === 'OPTION' && (!assessment.optionReview?.liquidityReviewed ||
       !assessment.optionReview?.ivAndGreeksReviewed || !assessment.optionReview?.assignmentAndExerciseReviewed)) ||
     assessment.evidenceCompleteness !== 'COMPLETE';
-  const disposition: JudgeDisposition = assessment.disposition === 'REJECT' ? 'REJECT' :
+  const disposition: JudgeDisposition = assessment.disposition === 'REJECT' || forcedReject ? 'REJECT' :
     (assessment.disposition === 'REDUCE' || forcedReduce ? 'REDUCE' : 'APPROVE');
   const reasons = [...assessment.reasons, ...deterministic.reduce];
   if (forcedReduce) reasons.push('INDEPENDENT_REVIEW_REQUIRES_REDUCED_RISK');
   return { schemaVersion: '1.0.0', packId: pack.packId, assetClass: pack.assetClass, disposition,
-    assessment, riskMultiplierCeiling: Math.min(committee.riskMultiplierCeiling, assessment.riskMultiplier),
+    assessment, riskMultiplierCeiling: disposition === 'REJECT' ? 0 : Math.min(committee.riskMultiplierCeiling, assessment.riskMultiplier),
     reasons, generatedAt, executionEligible: false };
 }
