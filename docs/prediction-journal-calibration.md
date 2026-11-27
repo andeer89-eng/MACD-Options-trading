@@ -45,3 +45,14 @@ The initial report computes a one-vs-rest positive Brier score, threshold accura
 4. Prevent early, duplicate-conflicting or cross-asset labels.
 5. Calculate calibration reports without pooling the two asset classes.
 6. Keep all execution interfaces untouched.
+
+## P1.26 — Multiclass calibration scores
+
+The calibration report now includes:
+- **Multiclass Brier score**: sum of squared errors across POSITIVE, NEUTRAL and NEGATIVE probabilities, averaged per prediction.
+- **Multiclass log loss**: negative log probability assigned to the realized class, with a numerical floor of 1e-15.
+- **Three-class accuracy**: argmax probability class compared with the realized outcome class.
+
+The existing one-vs-rest positive Brier score and positive-probability reliability buckets remain available for continuity. Every report is still explicitly scoped to one asset class; callers must request STOCK and OPTION independently. Empty cohorts return zero-valued aggregate metrics and sampleSize=0; consumers must use sampleSize to distinguish an empty report from a measured zero score.
+
+Tests cover positive, neutral and negative realized outcomes and verify that STOCK and OPTION remain separate. No persistence, API route, worker, UI, broker or execution integration is introduced.

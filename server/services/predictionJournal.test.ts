@@ -70,6 +70,12 @@ test('calculates separate Brier and reliability reports for STOCK and OPTION', (
   assert.equal(options.sampleSize, 1);
   assert.ok(Math.abs(options.brierScore - 0.04) < 1e-9);
   assert.notEqual(stocks.assetClass, options.assetClass);
+  assert.ok(Math.abs(stocks.multiclassBrierScore - 0.14) < 1e-9);
+  assert.ok(Math.abs(stocks.logLoss - -Math.log(0.7)) < 1e-9);
+  assert.equal(stocks.accuracy, 1);
+  assert.ok(Math.abs(options.multiclassBrierScore - 0.38) < 1e-9);
+  assert.ok(Math.abs(options.logLoss - -Math.log(0.5)) < 1e-9);
+  assert.equal(options.accuracy, 1);
 });
 test('rejects malformed journal chain after tampering', () => {
   const journal = new InMemoryPredictionJournal(() => clock);
@@ -77,4 +83,24 @@ test('rejects malformed journal chain after tampering', () => {
   const events = journal.listEvents();
   (events[0] as any).prediction.symbol = 'TSLA';
   assert.equal(verifyPredictionJournal(events).valid, false);
+});
+
+test('multiclass calibration scores the realized NEUTRAL and NEGATIVE classes', () => {
+  const journal = new InMemoryPredictionJournal(() => clock);
+  const neutralPrediction = journal.record({ ...stockInput('neutral-stock'),
+    probabilities: { positive: 0.1, neutral: 0.8, negative: 0.1 } });
+  const negativePrediction = journal.record({ ...stockInput('negative-stock'),
+    probabilities: { positive: 0.1, neutral: 0.2, negative: 0.7 } });
+  clock += 2000;
+  const neutralOutcome = journal.label('neutral-stock', { ...stockOutcome(), outcome: 'NEUTRAL' });
+  const negativeOutcome = journal.label('negative-stock', { ...stockOutcome(), outcome: 'NEGATIVE' });
+  const report = calculateCalibration([
+    { prediction: neutralPrediction, outcome: neutralOutcome },
+    { prediction: negativePrediction, outcome: negativeOutcome },
+  ], 'STOCK');
+  assert.equal(report.sampleSize, 2);
+  assert.equal(report.accuracy, 1);
+  assert.ok(Math.abs(report.multiclassBrierScore - 0.1) < 1e-9);
+  assert.ok(Math.abs(report.logLoss - ((-Math.log(0.8) - Math.log(0.7)) / 2)) < 1e-9);
+  assert.ok(Math.abs(report.brierScore - 0.01) < 1e-12);
 });
