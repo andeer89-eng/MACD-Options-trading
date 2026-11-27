@@ -686,7 +686,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       throw new AlpacaApiError(400, validated.error);
     }
     // The browser risk gate is advisory. Rebuild a fresh broker snapshot for every opening order.
-    const isShortPutSell = validated.isOption && validated.payload.side === 'sell' && /P\\d{8}$/.test(validated.payload.symbol);
+    const isShortPutSell = validated.isOption && validated.payload.side === 'sell' && /P\d{8}$/.test(validated.payload.symbol);
     const [rawAccount, rawPositions, rawOpenOrders, rawHistory] = await Promise.all([
       alpacaRequest<any>('/v2/account'),
       alpacaRequest<any[]>('/v2/positions'),
