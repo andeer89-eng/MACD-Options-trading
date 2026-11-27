@@ -34,6 +34,16 @@ const ASSET_CONTEXT = {
   STOCK:'Analyze this as an underlying equity/security. Do not invent options data or infer unavailable fundamentals.',
   OPTION:'Analyze this as a specific listed option contract. Treat the underlying as context only. Explicitly assess expiry, strike, multiplier, bid/ask, liquidity, IV and Greeks. Do not substitute stock-only return logic for option payoff.',
 } as const;
+function cloneAndFreeze<T>(value:T):T {
+  const clone = structuredClone(value);
+  const freeze = (item:unknown):void => {
+    if (!item || typeof item !== 'object' || Object.isFrozen(item)) return;
+    Object.freeze(item);
+    for (const child of Object.values(item as Record<string,unknown>)) freeze(child);
+  };
+  freeze(clone);
+  return clone;
+}
 function isRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
 function nonEmpty(value:unknown):value is string{return typeof value==='string'&&value.trim().length>0;}
 function stringList(value:unknown):value is string[]{return Array.isArray(value)&&value.length<=30&&value.every(v=>nonEmpty(v)&&v.length<=500);}
@@ -79,7 +89,7 @@ export async function runAIInvestmentCommittee(input:{
   const outcomes=await Promise.all(roles.map(async role=>{
     try{
       const request:AgentRequest={role,assetClass:pack.assetClass,systemInstruction:systemInstruction(role,pack.assetClass),
-        evidencePack:pack,outputContract:{packId:pack.packId,requiredRole:role,scoreRange:[-100,100],
+        evidencePack:cloneAndFreeze(pack),outputContract:{packId:pack.packId,requiredRole:role,scoreRange:[-100,100],
           confidenceRange:[0,1],evidenceSourceIndexRange:[0,Math.max(0,pack.sources.length-1)],riskDispositionRequired:role==='RISK'}};
       return {role,assessment:validateAssessment(await input.agent.assess(request),role,pack)};
     }catch{return {role,assessment:null};}
