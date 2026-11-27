@@ -1,4 +1,4 @@
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 
 export type ExecutionEventType =
   | 'ORDER_SUBMITTED'
@@ -45,10 +45,6 @@ function canonical(value: unknown): string {
   const obj = value as Record<string, unknown>;
   return '{' + Object.keys(obj).sort().filter(k => obj[k] !== undefined)
     .map(k => JSON.stringify(k) + ':' + canonical(obj[k])).join(',') + '}';
-}
-
-function sha256(value: string): string {
-  return createSign('SHA256').constructor === undefined ? value : '';
 }
 
 function base64url(value: string | Buffer): string {
@@ -157,11 +153,17 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
 
   async function append(input: Omit<ExecutionLedgerEvent, 'eventId' | 'sequence' | 'prevHash' | 'entryHash'>): Promise<ExecutionLedgerEvent> {
     if (!input.clientOrderId || input.clientOrderId.length > 128) throw new Error('Invalid client_order_id.');
-    const orderKey = Buffer.from(input.clientOrderId).toString('base64url').slice(0, 100);
+    const orderKey = createHash('sha256').update(input.clientOrderId).digest('hex');
     const basePath = `alpacaExecutionLedger/${orderKey}`;
     const headPath = basePath + '/metadata/head';
     const eventPath = basePath + '/events';
     const occurredAt = input.occurredAt || new Date(now()).toISOString();
+    const eventId = createHash('sha256').update(canonical({
+      eventType: input.eventType, clientOrderId: input.clientOrderId,
+      brokerOrderId: input.brokerOrderId || null, payload: input.payload,
+    })).digest('hex');
+    const existingResponse = await request('/' + eventPath + '/' + eventId);
+    if (existingResponse.ok) return fromDocument(await existingResponse.json()) as ExecutionLedgerEvent;
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const headResponse = await request('/' + headPath);
@@ -170,13 +172,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       const sequence = (Number(head.sequence) || 0) + 1;
       const prevHash = typeof head.entryHash === 'string' ? head.entryHash : GENESIS;
       const base = { ...input, occurredAt, sequence, prevHash };
-      const signer = createSign('SHA256');
-      signer.update(canonical(base));
-      signer.end();
-      // Hashing uses SHA-256; sign() is intentionally not used as a hash.
-      const { createHash } = await import('node:crypto');
-      const entryHash = createHash('sha256').update(canonical(base)).digest('hex');
-      const eventId = entryHash;
+      const entryHash = createHash('sha256').update(canonical({ ...base, eventId })).digest('hex');
       const event: ExecutionLedgerEvent = { ...base, eventId, entryHash };
 
       const writes: any[] = [{
@@ -194,11 +190,13 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       }];
       const commit = await request(':commit', { method: 'POST', body: JSON.stringify({ writes }) });
       if (commit.ok) return event;
-      if (commit.status === 409) {
+      const commitError = commit.status === 400 ? await commit.clone().json().catch(() => null) as any : null;
+      const isConflict = commit.status === 409 || commit.status === 412 || commitError?.error?.status === 'FAILED_PRECONDITION' || commitError?.error?.status === 'ALREADY_EXISTS';
+      if (isConflict) {
         const existing = await request('/' + eventPath + '/' + eventId);
         if (existing.ok) return event;
       }
-      if (commit.status !== 409 && commit.status !== 412) {
+      if (!isConflict) {
         throw new ExecutionLedgerUnavailableError('Firestore ledger commit failed.');
       }
     }
@@ -206,7 +204,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
   }
 
   async function readEvents(clientOrderId: string): Promise<ExecutionLedgerEvent[]> {
-    const orderKey = Buffer.from(clientOrderId).toString('base64url').slice(0, 100);
+    const orderKey = createHash('sha256').update(clientOrderId).digest('hex');
     const response = await request(`/alpacaExecutionLedger/${orderKey}/events?pageSize=1000&orderBy=sequence`);
     if (!response.ok) return [];
     const body = await response.json() as { documents?: any[] };
