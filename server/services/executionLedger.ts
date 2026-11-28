@@ -338,7 +338,13 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
         currentDocument: document?.updateTime ? { updateTime: document.updateTime } : { exists: false },
       }] }),
     });
-    if (commit.status === 409 || commit.status === 412) throw new ExecutionLedgerConflictError();
+    const commitError = commit.status === 400
+      ? await commit.clone().json().catch(() => null) as any
+      : null;
+    const isConflict = commit.status === 409 || commit.status === 412 ||
+      commitError?.error?.status === 'FAILED_PRECONDITION' ||
+      commitError?.error?.status === 'ALREADY_EXISTS';
+    if (isConflict) throw new ExecutionLedgerConflictError();
     if (!commit.ok) throw new ExecutionLedgerUnavailableError('Trading control state could not be persisted.');
     return next;
   }
