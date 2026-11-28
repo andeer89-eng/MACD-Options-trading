@@ -11,9 +11,18 @@ import {
   synthesizeOptionsEpisodesFromHistory,
 } from './optionsAutomatedPortfolio.ts';
 
+function runOptionsCycle(
+  account: ReturnType<typeof initDefaultOptionsPortfolio>,
+  marketItems: Array<{ symbol: string; currentPrice: number; candles?: Array<{ open: number; high: number; low: number; close: number }> }>,
+  allowExtendedHours = true,
+) {
+  return processOptionsAutonomousCycle({ ...account, isAutoPilotActive: true }, marketItems, allowExtendedHours);
+}
+
 test('initDefaultOptionsPortfolio initializes clean empty journal with zero synthetic trades or seeded income', () => {
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.startingBalance, 2000);
+  assert.strictEqual(account.isAutoPilotActive, false);
   assert.strictEqual(account.cash, 2000);
   assert.strictEqual(account.positions.length, 0);
   assert.strictEqual(account.tradeHistory.length, 0, 'Active trade history starts clean with 0 trades');
@@ -44,7 +53,7 @@ test('processOptionsAutonomousCycle scans and opens a qualified SPY position cle
     { symbol: 'SPY', currentPrice: 592.0, candles: testCandles },
   ];
 
-  const { updatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
+  const { updatedAccount } = runOptionsCycle(account, marketItems, true);
   assert.ok(updatedAccount.positions.length >= 1, `Expected at least 1 position opened, got ${updatedAccount.positions.length}`);
   assert.ok(updatedAccount.equity > 0);
   assert.ok(updatedAccount.positions[0].executionSession, 'Expected position to have executionSession');
@@ -61,7 +70,7 @@ test('manualCloseOptionsPosition closes an option, updates realized income, and 
     { open: 591.5, high: 593, low: 590, close: 592 },
   ];
   const marketItems = [{ symbol: 'SPY', currentPrice: 592.0, candles: testCandles }];
-  const { updatedAccount: populatedAccount } = processOptionsAutonomousCycle(account, marketItems, true);
+  const { updatedAccount: populatedAccount } = runOptionsCycle(account, marketItems, true);
   assert.ok(populatedAccount.positions.length > 0);
 
   const initialIncome = populatedAccount.totalRealizedIncome;
@@ -136,7 +145,7 @@ test('processOptionsAutonomousCycle does not mutate input account arrays and iss
   const originalHistoryRef = inputAccount.tradeHistory;
   const originalEpisodesRef = inputAccount.activeMemory.episodes;
 
-  const { updatedAccount } = processOptionsAutonomousCycle(
+  const { updatedAccount } = runOptionsCycle(
     inputAccount,
     [
       { symbol: 'QQQ', currentPrice: 505 },
@@ -197,7 +206,7 @@ test('short put expiration realizes premium less intrinsic liability instead of 
     whyOpenedThesis: 'Short put settlement fixture',
   };
 
-  const { updatedAccount } = processOptionsAutonomousCycle(
+  const { updatedAccount } = runOptionsCycle(
     { ...base, positions: [position], maxOpenPositions: 0 },
     [{ symbol: 'SPY', currentPrice: 90 }],
     true
@@ -256,7 +265,7 @@ test('short put expiration OTM retains the premium and is the only expiry classi
     whyOpenedThesis: 'Short put OTM fixture',
   };
 
-  const { updatedAccount } = processOptionsAutonomousCycle(
+  const { updatedAccount } = runOptionsCycle(
     { ...base, positions: [position], maxOpenPositions: 0 },
     [{ symbol: 'SPY', currentPrice: 105 }],
     true
@@ -306,7 +315,7 @@ test('long put expiration ITM realizes intrinsic value less premium debit', () =
     whyOpenedThesis: 'Long put exercise fixture',
   };
 
-  const { updatedAccount } = processOptionsAutonomousCycle(
+  const { updatedAccount } = runOptionsCycle(
     { ...base, positions: [position], maxOpenPositions: 0 },
     [{ symbol: 'SPY', currentPrice: 90 }],
     true
