@@ -5,7 +5,7 @@ import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts'
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
-import { getBotOrderBlockReason } from '../services/tradingControl.ts';
+import { getBotOrderBlockReason, getBotOptionCapabilityViolation } from '../services/tradingControl.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -134,6 +134,18 @@ export function createAlpacaRouter(
     }
     if (blockReason === 'NOT_ARMED') {
       res.status(423).json({ error: 'Autonomous trading is not armed on the server. Bot orders are disabled.', code: blockReason, mode: 'PAPER' });
+      return;
+    }
+    const optionViolation = getBotOptionCapabilityViolation({
+      symbol: String(req.body?.symbol || ''),
+      side: String(req.body?.side || ''),
+    });
+    if (optionViolation) {
+      res.status(403).json({
+        error: 'The autonomous options bot currently supports cash-secured short-put entries only. Unsupported option order was blocked.',
+        code: optionViolation,
+        mode: 'PAPER',
+      });
       return;
     }
     await submitOrder(req, res);
