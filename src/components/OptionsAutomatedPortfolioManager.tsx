@@ -452,7 +452,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           ...(chosen.close_price && chosen.close_price > 0
             ? { limit_price: Number(chosen.close_price.toFixed(2)) }
             : {}),
-        });
+        }, 'BOT');
 
         if (orderRes.ok) {
           openSlots -= 1;
