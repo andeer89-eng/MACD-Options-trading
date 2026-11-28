@@ -128,6 +128,6 @@ test('stock shadow strategy rejects malformed OHLC and non-monotonic candle data
     now: () => Date.parse('2026-11-28T12:00:00.000Z'),
   });
   const result = await strategy.evaluate({ symbols: ['AAPL'] });
-  assert.equal(result.scan.evaluatedSymbols, 0);
-  assert.equal(result.scan.errors[0].error, 'INSUFFICIENT_CANDLES');
+  assert.equal(result.scan?.evaluatedSymbols, 0);
+  assert.equal(result.scan?.errors[0].error, 'INSUFFICIENT_CANDLES');
 });
