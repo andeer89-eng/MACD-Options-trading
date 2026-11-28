@@ -172,6 +172,11 @@ export type CalibrationCohort<T> = {
   report: CalibrationReport;
   belowMinimumSample: boolean;
 };
+
+export const PREDICTION_ORIGIN_COHORTS = [
+  'STOCK_BOT', 'OPTION_BOT', 'WATCHLIST', 'SCANNER', 'CHART', 'MANUAL', 'RESEARCH', 'LEGACY_UNATTRIBUTED',
+] as const;
+export type PredictionOriginCohort = typeof PREDICTION_ORIGIN_COHORTS[number];
 export type StockBenchmarkCalibration = {
   assetClass: 'STOCK';
   sampleSize: number;
@@ -185,6 +190,7 @@ export type CohortCalibrationReport =
       assetClass: 'STOCK';
       overall: CalibrationReport;
       horizonCohorts: Array<CalibrationCohort<string>>;
+      originCohorts: Array<CalibrationCohort<PredictionOriginCohort>>;
       benchmark: StockBenchmarkCalibration;
       minimumSampleSize: number;
     }
@@ -192,6 +198,7 @@ export type CohortCalibrationReport =
       assetClass: 'OPTION';
       overall: CalibrationReport;
       horizonCohorts: Array<CalibrationCohort<string>>;
+      originCohorts: Array<CalibrationCohort<PredictionOriginCohort>>;
       exitMethodCohorts: Array<CalibrationCohort<OptionOutcome['exitMethod']>>;
       minimumSampleSize: number;
     };
@@ -242,6 +249,12 @@ export function calculateCohortCalibration(
     band.key,
     rows.filter(row => horizonBand(row.prediction) === band.key),
   ));
+  // Fixed, mutually exclusive origin cohorts preserve a visible legacy bucket
+  // and never expose internal source/run identifiers in the aggregate report.
+  const originCohorts = PREDICTION_ORIGIN_COHORTS.map(kind => cohort(
+    kind,
+    rows.filter(row => (row.prediction.origin?.kind ?? 'LEGACY_UNATTRIBUTED') === kind),
+  ));
   if (assetClass === 'STOCK') {
     const stockRows = rows.filter((row): row is { prediction: PredictionSnapshot; outcome: StockOutcome } =>
       row.outcome.assetClass === 'STOCK' && row.prediction.assetClass === 'STOCK');
@@ -249,7 +262,7 @@ export function calculateCohortCalibration(
     const excessReturns = benchmarkRows.map(row => row.outcome.totalReturnPct - row.outcome.benchmarkReturnPct!);
     const n = excessReturns.length;
     return {
-      assetClass, overall, horizonCohorts,
+      assetClass, overall, horizonCohorts, originCohorts,
       benchmark: {
         assetClass: 'STOCK', sampleSize: n,
         coverage: stockRows.length ? n / stockRows.length : 0,
@@ -264,7 +277,7 @@ export function calculateCohortCalibration(
     row.outcome.assetClass === 'OPTION' && row.prediction.assetClass === 'OPTION');
   const exitMethods: OptionOutcome['exitMethod'][] = ['CLOSED', 'MARK_TO_MARKET', 'EXPIRED'];
   return {
-    assetClass, overall, horizonCohorts,
+    assetClass, overall, horizonCohorts, originCohorts,
     exitMethodCohorts: exitMethods.map(method => cohort(method, optionRows.filter(row => row.outcome.exitMethod === method))),
     minimumSampleSize,
   };
