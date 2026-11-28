@@ -1,4 +1,5 @@
 import { evaluatePortfolioRisk, evaluateShortPutOrderRisk } from '../../src/utils/portfolioRiskEngine.ts';
+import { validateShortPutEntryQuote } from './optionQuotePolicy.ts';
 
 export const ALPACA_PAPER_ENDPOINT = 'https://paper-api.alpaca.markets';
 export const ALPACA_DATA_ENDPOINT = 'https://data.alpaca.markets';
@@ -93,6 +94,28 @@ export interface AlpacaOptionContractItem {
   tradable: boolean;
 }
 
+export interface AlpacaOptionSnapshotItem {
+  symbol: string;
+  feed: 'opra' | 'indicative';
+  bidPrice: number | null;
+  askPrice: number | null;
+  bidSize: number;
+  askSize: number;
+  quoteTimestamp: string | null;
+  quoteAgeMs: number | null;
+  spreadPercent: number | null;
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  impliedVolatility: number | null;
+  tradePrice: number | null;
+  tradeSize: number;
+  tradeTimestamp: string | null;
+  quoteStatus: 'FRESH' | 'STALE' | 'INVALID' | 'MISSING';
+  isUsable: boolean;
+}
+
 export interface AlpacaPortfolioEquityPoint { timestamp: number; equity: number; }
 
 export interface AlpacaOverviewResponse {
@@ -136,6 +159,7 @@ export type FetchLike = typeof fetch;
 export interface AlpacaServiceOptions {
   env?: Record<string, string | undefined>;
   fetchImpl?: FetchLike;
+  now?: () => number;
 }
 
 function isPlaceholderCredential(val: string | undefined): boolean {
@@ -309,6 +333,7 @@ export class AlpacaApiError extends Error {
 
 export function createAlpacaService(options: AlpacaServiceOptions = {}) {
   const fetchFn: FetchLike = options.fetchImpl || fetch;
+  const now = options.now ?? Date.now;
   const getConfig = () => resolveAlpacaConfig(options.env ?? process.env);
 
   async function fetchLatestEquityPrice(symbol: string): Promise<number> {
@@ -697,6 +722,82 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     }
   }
 
+  async function getOptionSnapshots(params: {
+    symbols: string[];
+    feed?: 'opra' | 'indicative';
+  }): Promise<{ feed: 'opra' | 'indicative'; fetchedAt: string; snapshots: AlpacaOptionSnapshotItem[] }> {
+    const symbols = [...new Set((params.symbols || []).map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean))];
+    if (symbols.length < 1 || symbols.length > 100 || symbols.some((symbol) => !isOccOptionSymbol(symbol))) {
+      throw new AlpacaApiError(400, 'Option snapshots require between 1 and 100 valid OCC contract symbols.');
+    }
+    const feed = params.feed ?? 'opra';
+    if (feed !== 'opra' && feed !== 'indicative') {
+      throw new AlpacaApiError(400, 'Options market-data feed must be opra or indicative.');
+    }
+    const cfg = getConfig();
+    if (!cfg.configured || !cfg.keyId || !cfg.secretKey) {
+      throw new AlpacaApiError(503, 'Alpaca Paper credentials are unavailable for option quote validation.');
+    }
+    const qs = new URLSearchParams({ symbols: symbols.join(','), feed });
+    const response = await fetchFn(`${cfg.dataEndpoint}/v1beta1/options/snapshots?${qs.toString()}`, {
+      headers: {
+        'APCA-API-KEY-ID': cfg.keyId,
+        'APCA-API-SECRET-KEY': cfg.secretKey,
+        'Content-Type': 'application/json',
+      },
+    });
+    const rawText = await response.text();
+    let body: any = null;
+    try { body = rawText ? JSON.parse(rawText) : null; } catch { body = null; }
+    if (!response.ok) {
+      throw new AlpacaApiError(response.status, body?.message || body?.error ||
+        `Alpaca options market-data API returned HTTP ${response.status}.`);
+    }
+    const rawSnapshots = body?.snapshots && typeof body.snapshots === 'object' ? body.snapshots : {};
+    const fetchedAt = new Date(now()).toISOString();
+    const snapshots = symbols.map((symbol): AlpacaOptionSnapshotItem => {
+      const raw = rawSnapshots[symbol] || {};
+      const quote = raw.latestQuote || null;
+      const trade = raw.latestTrade || null;
+      const bidPrice = toNullableNum(quote?.bp);
+      const askPrice = toNullableNum(quote?.ap);
+      const bidSize = Math.max(0, toNum(quote?.bs));
+      const askSize = Math.max(0, toNum(quote?.as));
+      const quoteTimestamp = typeof quote?.t === 'string' ? quote.t : null;
+      const quoteTime = quoteTimestamp ? Date.parse(quoteTimestamp) : NaN;
+      const quoteAgeMs = Number.isFinite(quoteTime) ? now() - quoteTime : null;
+      const midpoint = bidPrice !== null && askPrice !== null ? (bidPrice + askPrice) / 2 : 0;
+      const spreadPercent = midpoint > 0 && bidPrice !== null && askPrice !== null
+        ? Number((((askPrice - bidPrice) / midpoint) * 100).toFixed(4))
+        : null;
+      let quoteStatus: AlpacaOptionSnapshotItem['quoteStatus'] = 'MISSING';
+      if (quote) {
+        if (quoteAgeMs === null || bidPrice === null || askPrice === null ||
+            bidPrice <= 0 || askPrice < bidPrice || bidSize <= 0 || askSize <= 0) {
+          quoteStatus = 'INVALID';
+        } else if (quoteAgeMs < -5_000 || quoteAgeMs > 30_000) {
+          quoteStatus = 'STALE';
+        } else {
+          quoteStatus = 'FRESH';
+        }
+      }
+      return {
+        symbol, feed, bidPrice, askPrice, bidSize, askSize, quoteTimestamp, quoteAgeMs, spreadPercent,
+        delta: toNullableNum(raw.greeks?.delta),
+        gamma: toNullableNum(raw.greeks?.gamma),
+        theta: toNullableNum(raw.greeks?.theta),
+        vega: toNullableNum(raw.greeks?.vega),
+        impliedVolatility: toNullableNum(raw.impliedVolatility),
+        tradePrice: toNullableNum(trade?.p),
+        tradeSize: Math.max(0, toNum(trade?.s)),
+        tradeTimestamp: typeof trade?.t === 'string' ? trade.t : null,
+        quoteStatus,
+        isUsable: quoteStatus === 'FRESH',
+      };
+    });
+    return { feed, fetchedAt, snapshots };
+  }
+
   async function getOptionContracts(params: {
     underlying: string;
     type?: 'put' | 'call';
@@ -878,6 +979,17 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       }
     }
     if (isOpeningShortPutSell) {
+      const quoteSnapshot = await getOptionSnapshots({
+        symbols: [validated.payload.symbol],
+        feed: 'opra',
+      });
+      const quotePolicyError = validateShortPutEntryQuote(
+        quoteSnapshot.snapshots[0],
+        validated.payload.limit_price ?? null,
+      );
+      if (quotePolicyError) {
+        throw new AlpacaApiError(409, quotePolicyError);
+      }
       const orderRisk = evaluateShortPutOrderRisk({
         symbol: validated.payload.symbol, contracts: validated.payload.qty,
         premiumPerShare: validated.payload.limit_price ?? 0, equity,
@@ -973,6 +1085,7 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
     getPositionSnapshot,
     getOrderHistorySnapshot,
     getOptionContracts,
+    getOptionSnapshots,
     submitOrder,
     closePosition,
     cancelOrder,
