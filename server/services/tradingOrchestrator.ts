@@ -24,6 +24,12 @@ export interface TradingCycleLeaseStore {
     fencingToken: number;
     leaseMs: number;
   }): Promise<boolean>;
+  isTradingCycleLeaseValid(input: {
+    ownerId: string;
+    botId: TradingBotId;
+    workerId: string;
+    fencingToken: number;
+  }): Promise<boolean>;
   releaseTradingCycleLease(input: {
     ownerId: string;
     botId: TradingBotId;
@@ -66,7 +72,12 @@ export function createTradingOrchestrator(options: {
     ownerId: string;
     botId: TradingBotId;
     isArmed: () => Promise<boolean>;
-    execute: (context: { signal: AbortSignal; fencingToken: number; assertLease: () => void }) => Promise<T>;
+    execute: (context: {
+      signal: AbortSignal;
+      fencingToken: number;
+      assertLease: () => void;
+      verifyLease: () => Promise<void>;
+    }) => Promise<T>;
   }): Promise<TradingCycleResult<T>> {
     if (!await input.isArmed()) return { status: 'skipped', reason: 'NOT_ARMED' };
     const lease = await options.leaseStore.acquireTradingCycleLease({
@@ -82,6 +93,20 @@ export function createTradingOrchestrator(options: {
     let heartbeatInFlight = false;
     const assertLease = () => {
       if (leaseLost || controller.signal.aborted) throw new Error('Trading cycle lease was lost; stale worker is fenced.');
+    };
+    const verifyLease = async () => {
+      assertLease();
+      const valid = await options.leaseStore.isTradingCycleLeaseValid({
+        ownerId: input.ownerId,
+        botId: input.botId,
+        workerId,
+        fencingToken: lease.fencingToken,
+      });
+      if (!valid) {
+        leaseLost = true;
+        controller.abort(new Error('Trading cycle lease was lost.'));
+        assertLease();
+      }
     };
     const heartbeat = setIntervalFn(() => {
       if (heartbeatInFlight || leaseLost) return;
@@ -110,8 +135,10 @@ export function createTradingOrchestrator(options: {
         signal: controller.signal,
         fencingToken: lease.fencingToken,
         assertLease,
+        verifyLease,
       });
       if (leaseLost) return { status: 'aborted', reason: 'LEASE_LOST' };
+      await verifyLease();
       assertLease();
       return { status: 'completed', fencingToken: lease.fencingToken, value };
     } catch (error) {
