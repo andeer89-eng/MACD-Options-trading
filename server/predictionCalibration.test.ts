@@ -33,6 +33,25 @@ const snapshot = {
   },
 };
 
+
+const predictionInput = {
+  predictionId: 'manual-prediction-1',
+  assetClass: 'STOCK' as const,
+  symbol: 'AAPL',
+  createdAt: 1_000,
+  targetAt: 2_000,
+  evidencePackId: 'evidence-pack-1',
+  evidencePackSha256: 'a'.repeat(64),
+  committeeGeneratedAt: 1_100,
+  judgeGeneratedAt: 1_200,
+  disposition: 'APPROVE' as const,
+  riskMultiplier: 0.5,
+  confidence: 0.8,
+  probabilities: { positive: 0.7, neutral: 0.2, negative: 0.1 },
+  sourceRefs: ['sec:filing:1'],
+  origin: { kind: 'MANUAL' as const, sourceId: 'manual-review-1' },
+};
+
 describe('authenticated prediction calibration read API', () => {
   it('requires a Firebase bearer token and rejects invalid tokens', async () => {
     const router = createPredictionCalibrationRouter({
@@ -132,4 +151,97 @@ describe('authenticated prediction calibration read API', () => {
       assert.equal(calls, 0);
     });
   });
+  it('records user-authored predictions under the verified UID and returns idempotent status', async () => {
+    const calls: Array<{ ownerId: string; input: unknown }> = [];
+    let replayed = false;
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async token => { assert.equal(token, 'valid-token'); return { uid: 'verified_user_1' }; },
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async (ownerId: string, input: unknown) => {
+          calls.push({ ownerId, input });
+          return {
+            replayed,
+            event: { eventType: 'PREDICTION_RECORDED', prediction: {
+              ...(input as object), schemaVersion: '1.0.0', recordedAt: 3_000,
+              inputSha256: 'b'.repeat(64), snapshotSha256: 'c'.repeat(64),
+            } },
+          };
+        },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const first = await fetch(baseUrl + '/api/research/predictions', {
+        method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify(predictionInput),
+      });
+      assert.equal(first.status, 201);
+      const firstBody = await first.json() as any;
+      assert.equal(firstBody.prediction.origin.kind, 'MANUAL');
+      assert.equal(firstBody.replayed, false);
+
+      replayed = true;
+      const replay = await fetch(baseUrl + '/api/research/predictions', {
+        method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify(predictionInput),
+      });
+      assert.equal(replay.status, 200);
+      assert.equal((await replay.json() as any).replayed, true);
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].ownerId, 'verified_user_1');
+      assert.deepEqual(calls[0].input, predictionInput);
+    });
+  });
+
+  it('rejects unauthenticated, bot-claimed, and owner-overridden prediction capture before storage', async () => {
+    let calls = 0;
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async () => ({ uid: 'verified_user_1' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { calls++; throw new Error('must not be called'); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const unauthenticated = await fetch(baseUrl + '/api/research/predictions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(predictionInput),
+      });
+      assert.equal(unauthenticated.status, 401);
+
+      for (const body of [
+        { ...predictionInput, origin: { kind: 'STOCK_BOT', sourceId: 'forged-bot-run' } },
+        { ...predictionInput, ownerId: 'attacker_uid' },
+        { ...predictionInput, unexpectedField: 'not-allowed' },
+      ]) {
+        const response = await fetch(baseUrl + '/api/research/predictions', {
+          method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        assert.equal(response.status, 400);
+      }
+      assert.equal(calls, 0);
+    });
+  });
+
+  it('maps semantic persistence conflicts to an HTTP conflict response', async () => {
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async () => ({ uid: 'verified_user_1' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { throw new FirestorePredictionJournalError('Prediction identity collision.', 409); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const response = await fetch(baseUrl + '/api/research/predictions', {
+        method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify(predictionInput),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    });
+  });
+
 });
