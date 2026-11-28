@@ -75,3 +75,25 @@ API:
 
 A server-side UI for this API and audited operator notifications are still
 required before declaring the trading control plane complete.
+
+## Unified order-intent lifecycle
+
+Every persisted manual or autonomous order now begins with a server-created,
+owner-scoped intent keyed by a SHA-256 identifier derived from verified owner
+UID and the stable Alpaca `client_order_id`. The ledger records the source
+(`MANUAL`, `STOCK_BOT`, or `OPTION_BOT`), asset class, symbol, side,
+quantity, order type and limit/stop prices.
+
+Before the broker side effect, the ledger records `CREATED`,
+`RISK_APPROVED`, and `SUBMISSION_PENDING`. The Alpaca service invokes the
+risk-approved/pending callbacks only after its broker snapshot, portfolio
+risk, short-put collateral and quote checks pass. A successful broker response
+records `SUBMITTED`; definitive broker/risk rejection records `REJECTED`;
+ambiguous submission failures record `UNKNOWN` and must be retried with the
+same `client_order_id`.
+
+The execution ledger enforces allowed intent-state transitions using the
+same Firestore order-index compare-and-set. Broker reconciliation advances
+submitted orders to partial/full fill, canceled, expired or rejected states.
+Historical broker orders can seed state from reconciliation without a
+pre-existing intent event.

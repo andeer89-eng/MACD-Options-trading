@@ -291,6 +291,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: any }> = [];
     let includePendingNvdaClose = false;
     const submittedOrders = new Map<string, any>();
+    const ledgerEvents: Array<Record<string, any>> = [];
     let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
@@ -305,7 +306,10 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         updatedBy: TEST_FIREBASE_UID,
       };
       const executionLedgerOverride = {
-        append: async () => ({}),
+        append: async (event: Record<string, any>) => {
+          ledgerEvents.push(event);
+          return event;
+        },
         getTradingControl: async (ownerId: string) => ownerId === TEST_FIREBASE_UID
           ? { ...tradingControl }
           : {
@@ -774,6 +778,11 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(eqRes.status, 200);
       const eqBody = (await eqRes.json()) as any;
       assert.equal(eqBody.order.id, 'ord-created-test-aapl-buy-003');
+      const manualIntentEvents = ledgerEvents.filter((event) => event.clientOrderId === 'test-aapl-buy-003');
+      assert.deepEqual(manualIntentEvents.map((event) => event.payload.intentState), [
+        'CREATED', 'RISK_APPROVED', 'SUBMISSION_PENDING', 'SUBMITTED',
+      ]);
+      assert.equal(manualIntentEvents[0].payload.source, 'MANUAL');
 
       const optRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',

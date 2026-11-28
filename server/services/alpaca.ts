@@ -154,6 +154,11 @@ export interface AlpacaOrderRequestInput {
   stop_loss?: { stop_price: number; limit_price?: number };
 }
 
+export interface OrderSubmissionLifecycleHooks {
+  onRiskApproved?: () => Promise<unknown> | unknown;
+  onSubmissionPending?: () => Promise<unknown> | unknown;
+}
+
 export type FetchLike = typeof fetch;
 
 export interface AlpacaServiceOptions {
@@ -851,7 +856,10 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       }));
   }
 
-  async function submitOrder(rawInput: Partial<AlpacaOrderRequestInput>) {
+  async function submitOrder(
+    rawInput: Partial<AlpacaOrderRequestInput>,
+    lifecycle: OrderSubmissionLifecycleHooks = {},
+  ) {
     const validated = validateOrderRequest(rawInput);
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
@@ -874,7 +882,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         String(previouslySubmitted?.type || '') === validated.payload.type &&
         String(previouslySubmitted?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
         toNullableNum(previouslySubmitted?.limit_price) === (validated.payload.limit_price ?? null) &&
-        toNullableNum(previouslySubmitted?.stop_price) === (validated.payload.stop_price ?? null);
+        toNullableNum(previouslySubmitted?.stop_price) === (validated.payload.stop_price ?? null) &&
+        String(previouslySubmitted?.order_class || 'simple') === String(validated.payload.order_class || 'simple') &&
+        toNullableNum(previouslySubmitted?.take_profit?.limit_price) === (validated.payload.take_profit?.limit_price ?? null) &&
+        toNullableNum(previouslySubmitted?.stop_loss?.stop_price) === (validated.payload.stop_loss?.stop_price ?? null) &&
+        toNullableNum(previouslySubmitted?.stop_loss?.limit_price) === (validated.payload.stop_loss?.limit_price ?? null);
       if (!sameIntent) {
         throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
       }
@@ -997,6 +1009,10 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       if (!orderRisk.allowed) throw new AlpacaApiError(409, orderRisk.reason || 'Short-put per-trade loss limit exceeded.');
     }
 
+    // Persist risk approval and submission intent before the external broker side effect.
+    await lifecycle.onRiskApproved?.();
+    await lifecycle.onSubmissionPending?.();
+
     let order: any;
     try {
       order = await alpacaRequest<any>('/v2/orders', {
@@ -1016,7 +1032,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
             String(recovered?.type || '') === validated.payload.type &&
             String(recovered?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
             toNullableNum(recovered?.limit_price) === (validated.payload.limit_price ?? null) &&
-            toNullableNum(recovered?.stop_price) === (validated.payload.stop_price ?? null);
+            toNullableNum(recovered?.stop_price) === (validated.payload.stop_price ?? null) &&
+            String(recovered?.order_class || 'simple') === String(validated.payload.order_class || 'simple') &&
+            toNullableNum(recovered?.take_profit?.limit_price) === (validated.payload.take_profit?.limit_price ?? null) &&
+            toNullableNum(recovered?.stop_loss?.stop_price) === (validated.payload.stop_loss?.stop_price ?? null) &&
+            toNullableNum(recovered?.stop_loss?.limit_price) === (validated.payload.stop_loss?.limit_price ?? null);
           if (!sameIntent) {
             throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
           }

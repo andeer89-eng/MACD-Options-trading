@@ -1,4 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
+import { canTransitionOrderIntent, OrderIntentState } from './orderIntent.ts';
 import {
   createDefaultTradingControlState,
   normalizeTradingControlState,
@@ -8,6 +9,10 @@ import {
 } from './tradingControl.ts';
 
 export type ExecutionEventType =
+  | 'ORDER_INTENT_CREATED'
+  | 'ORDER_RISK_APPROVED'
+  | 'ORDER_SUBMISSION_PENDING'
+  | 'ORDER_SUBMISSION_UNKNOWN'
   | 'ORDER_SUBMITTED'
   | 'ORDER_REPLAYED'
   | 'ORDER_REJECTED'
@@ -34,6 +39,7 @@ export interface TrackedExecutionOrder {
   symbol: string;
   lastEventType: ExecutionEventType;
   status?: string;
+  intentState?: OrderIntentState;
   updatedAt: string;
 }
 
@@ -212,6 +218,14 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       const head = fromDocument(headDoc);
       const indexResponse = await request('/' + indexPath);
       const indexDoc = indexResponse.ok ? await indexResponse.json() as any : null;
+      const indexFields = fromDocument(indexDoc);
+      const nextIntentState = typeof input.payload.intentState === 'string'
+        ? input.payload.intentState
+        : '';
+      const currentIntentState = String(indexFields.intentState || '');
+      if (nextIntentState && !canTransitionOrderIntent(currentIntentState, nextIntentState)) {
+        throw new ExecutionLedgerConflictError(`Invalid order intent transition ${currentIntentState || 'NONE'} -> ${nextIntentState}.`);
+      }
       const sequence = (Number(head.sequence) || 0) + 1;
       const prevHash = typeof head.entryHash === 'string' ? head.entryHash : GENESIS;
       const base = { ...input, occurredAt, sequence, prevHash };
@@ -238,7 +252,8 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
             brokerOrderId: input.brokerOrderId || String(fromDocument(indexDoc).brokerOrderId || ''),
             symbol: input.symbol,
             lastEventType: input.eventType,
-            status: String(input.payload.status || fromDocument(indexDoc).status || ''),
+            status: String(input.payload.status || indexFields.status || ''),
+            intentState: String(input.payload.intentState || indexFields.intentState || ''),
             updatedAt: occurredAt,
           }),
         },
@@ -563,6 +578,8 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       latestSequence: number;
       status?: string;
       statusSequence: number;
+      intentState?: OrderIntentState;
+      intentStateSequence: number;
     }>();
     const seenCursors = new Set<string>();
     let cursorName = '';
@@ -616,12 +633,18 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
             latestSequence: sequence,
             status: current?.status,
             statusSequence: current?.statusSequence || 0,
+            intentState: current?.intentState,
+            intentStateSequence: current?.intentStateSequence || 0,
           });
         }
         const aggregate = orders.get(match[1])!;
         if (payload.status !== undefined && sequence >= aggregate.statusSequence) {
           aggregate.status = String(payload.status);
           aggregate.statusSequence = sequence;
+        }
+        if (payload.intentState !== undefined && sequence >= aggregate.intentStateSequence) {
+          aggregate.intentState = String(payload.intentState) as OrderIntentState;
+          aggregate.intentStateSequence = sequence;
         }
       }
 
@@ -657,6 +680,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
               symbol: order.symbol,
               lastEventType: order.lastEventType,
               status: order.status || '',
+              intentState: order.intentState || '',
               updatedAt: order.updatedAt || new Date(nowMs).toISOString(),
               backfilledAt: new Date(nowMs).toISOString(),
               backfillSource: 'historical-ledger-events',

@@ -7,6 +7,7 @@ import { verifyExecutionLedgerChain, type createExecutionLedger } from '../servi
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
 import { getBotOrderBlockReason, getBotOptionCapabilityViolation } from '../services/tradingControl.ts';
 import { ExecutionLedgerConflictError, ExecutionLedgerUnavailableError } from '../services/executionLedger.ts';
+import { createOrderIntent, OrderIntentValidationError, type OrderIntentSource } from '../services/orderIntent.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -162,47 +163,134 @@ export function createAlpacaRouter(
     }
   });
 
-  const submitOrder = async (req: Request, res: Response) => {
+  const submitOrder = async (
+    req: Request,
+    res: Response,
+    source: OrderIntentSource = 'MANUAL',
+  ) => {
+    let intent: ReturnType<typeof createOrderIntent> | null = null;
     try {
       if (ledgerRequired && !executionLedger) {
         res.status(503).json({ error: 'Persistent execution ledger is required but not configured.', mode: 'PAPER' });
         return;
       }
-      const result = await alpaca.submitOrder(req.body || {});
+
+      const rawOrder = req.body || {};
       if (executionLedger) {
+        const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+        intent = createOrderIntent({ ownerId, source, order: rawOrder });
+        await executionLedger.append({
+          eventType: 'ORDER_INTENT_CREATED',
+          clientOrderId: intent.clientOrderId,
+          symbol: intent.symbol,
+          occurredAt: intent.createdAt,
+          payload: {
+            intentState: 'CREATED',
+            intentId: intent.intentId,
+            ownerId: intent.ownerId,
+            source: intent.source,
+            assetClass: intent.assetClass,
+            side: intent.side,
+            qty: intent.qty,
+            type: intent.type,
+            timeInForce: intent.timeInForce,
+            limitPrice: intent.limitPrice,
+            stopPrice: intent.stopPrice,
+            orderClass: intent.orderClass,
+            takeProfitLimitPrice: intent.takeProfitLimitPrice,
+            stopLossStopPrice: intent.stopLossStopPrice,
+            stopLossLimitPrice: intent.stopLossLimitPrice,
+          },
+        });
+      }
+
+      const lifecycle = intent && executionLedger ? {
+        onRiskApproved: () => executionLedger.append({
+          eventType: 'ORDER_RISK_APPROVED',
+          clientOrderId: intent!.clientOrderId,
+          symbol: intent!.symbol,
+          occurredAt: new Date().toISOString(),
+          payload: { intentState: 'RISK_APPROVED', intentId: intent!.intentId, source: intent!.source },
+        }),
+        onSubmissionPending: () => executionLedger.append({
+          eventType: 'ORDER_SUBMISSION_PENDING',
+          clientOrderId: intent!.clientOrderId,
+          symbol: intent!.symbol,
+          occurredAt: new Date().toISOString(),
+          payload: { intentState: 'SUBMISSION_PENDING', intentId: intent!.intentId, source: intent!.source },
+        }),
+      } : undefined;
+
+      const result = await alpaca.submitOrder(rawOrder, lifecycle);
+      if (executionLedger && intent) {
         try {
           const order = result.order;
           await executionLedger.append({
-            eventType: 'ORDER_SUBMITTED',
-            clientOrderId: String(order.client_order_id || req.body?.client_order_id || ''),
+            eventType: result.idempotentReplay ? 'ORDER_REPLAYED' : 'ORDER_SUBMITTED',
+            clientOrderId: intent.clientOrderId,
             brokerOrderId: String(order.id),
-            symbol: String(order.symbol || req.body?.symbol || '').toUpperCase(),
+            symbol: String(order.symbol || intent.symbol).toUpperCase(),
             occurredAt: String(order.submitted_at || new Date().toISOString()),
             payload: {
+              intentState: 'SUBMITTED',
+              intentId: intent.intentId,
+              source: intent.source,
               status: String(order.status || 'accepted'),
-              side: String(order.side || req.body?.side || ''),
-              qty: Number(order.qty ?? req.body?.qty ?? 0),
-              type: String(order.type || req.body?.type || ''),
+              side: String(order.side || intent.side),
+              qty: Number(order.qty ?? intent.qty),
+              type: String(order.type || intent.type),
             },
           });
         } catch {
           res.status(503).json({
-            error: 'Order state is known to Alpaca but persistent audit recording failed. Retry with the same client_order_id.',
+            error: 'Order state is known to Alpaca but persistent intent recording failed. Retry with the same client_order_id.',
             mode: 'PAPER',
             brokerOrderId: result.order.id,
-            clientOrderId: result.order.client_order_id || req.body?.client_order_id,
+            clientOrderId: result.order.client_order_id || intent.clientOrderId,
           });
           return;
         }
       }
       res.json(result);
     } catch (err) {
+      if (err instanceof OrderIntentValidationError) {
+        res.status(400).json({ error: err.message, mode: 'PAPER' });
+        return;
+      }
+      if (err instanceof ExecutionLedgerConflictError) {
+        res.status(409).json({ error: err.message, code: 'ORDER_INTENT_STATE_CONFLICT', mode: 'PAPER' });
+        return;
+      }
+      if (err instanceof ExecutionLedgerUnavailableError) {
+        handleAlpacaError(res, err);
+        return;
+      }
+      if (intent && executionLedger) {
+        const isDefinitiveRejection = err instanceof AlpacaApiError && err.status >= 400 && err.status < 500;
+        try {
+          await executionLedger.append({
+            eventType: isDefinitiveRejection ? 'ORDER_REJECTED' : 'ORDER_SUBMISSION_UNKNOWN',
+            clientOrderId: intent.clientOrderId,
+            symbol: intent.symbol,
+            occurredAt: new Date().toISOString(),
+            payload: {
+              intentState: isDefinitiveRejection ? 'REJECTED' : 'UNKNOWN',
+              intentId: intent.intentId,
+              source: intent.source,
+              error: err instanceof Error ? err.message.slice(0, 500) : 'Unknown submission failure',
+            },
+          });
+        } catch (ledgerError) {
+          handleAlpacaError(res, ledgerError);
+          return;
+        }
+      }
       handleAlpacaError(res, err);
     }
   };
 
   // Manual order entry remains separate. Autonomous bots must use the gated route below.
-  router.post('/api/alpaca/orders', submitOrder);
+  router.post('/api/alpaca/orders', (req: Request, res: Response) => submitOrder(req, res, 'MANUAL'));
 
   router.post('/api/alpaca/bot/orders', async (req: Request, res: Response) => {
     const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
@@ -248,7 +336,7 @@ export function createAlpacaRouter(
       });
       return;
     }
-    await submitOrder(req, res);
+    await submitOrder(req, res, isOptionOrder ? 'OPTION_BOT' : 'STOCK_BOT');
   });
 
   router.get('/api/alpaca/reconciliation/alerts', async (req: Request, res: Response) => {

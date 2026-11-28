@@ -71,6 +71,12 @@ export function createExecutionReconciliationWorker(options: {
     const eventType = status === 'canceled' || status === 'cancelled'
       ? 'ORDER_CANCELED' as const
       : status === 'rejected' ? 'ORDER_REJECTED' as const : 'RECONCILIATION' as const;
+    const intentState = status === 'filled' ? 'FILLED'
+      : status === 'partially_filled' ? 'PARTIALLY_FILLED'
+      : status === 'canceled' || status === 'cancelled' ? 'CANCELED'
+      : status === 'expired' ? 'EXPIRED'
+      : status === 'rejected' ? 'REJECTED'
+      : 'SUBMITTED';
     await options.ledger.append({
       eventType,
       clientOrderId,
@@ -78,6 +84,7 @@ export function createExecutionReconciliationWorker(options: {
       symbol,
       occurredAt: String(order.updated_at || order.filled_at || order.canceled_at || order.submitted_at || new Date().toISOString()),
       payload: {
+        intentState,
         status,
         qty: Number(order.qty || 0),
         filledQty: brokerFilledQty,
