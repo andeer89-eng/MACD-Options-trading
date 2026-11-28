@@ -447,7 +447,67 @@ export type WalkForwardAggregateReport = {
   accuracyFoldStdDev: number | null;
   multiclassBrierFoldStdDev: number | null;
   folds: Array<{ foldId: string; testSampleSize: number; accuracy: number | null; multiclassBrierScore: number | null; logLoss: number | null }>;
+  degradation: TemporalDegradationAssessment;
 };
+
+export type TemporalDegradationAssessment = {
+  status: 'INSUFFICIENT_DATA' | 'NO_CLEAR_DEGRADATION' | 'POTENTIAL_DEGRADATION';
+  baselineFoldCount: number;
+  baselineSampleSize: number;
+  latestFoldId: string | null;
+  latestSampleSize: number;
+  accuracyDelta: number | null;
+  multiclassBrierDelta: number | null;
+  logLossDelta: number | null;
+  triggeredBy: Array<'ACCURACY_DROP' | 'BRIER_INCREASE' | 'LOG_LOSS_INCREASE'>;
+};
+
+/**
+ * Compares the latest chronological test fold with the sample-weighted prior-fold baseline.
+ * Thresholds are deliberately conservative operational heuristics, not hypothesis tests.
+ */
+export function assessTemporalDegradation(
+  folds: WalkForwardAggregateReport['folds'],
+  minimumSampleSize = 30,
+): TemporalDegradationAssessment {
+  if (!Number.isInteger(minimumSampleSize) || minimumSampleSize < 1) {
+    throw new RangeError('minimumSampleSize must be a positive integer');
+  }
+  if (!Array.isArray(folds) || folds.some(fold => !fold || !text(fold.foldId) ||
+      !Number.isInteger(fold.testSampleSize) || fold.testSampleSize < 0 ||
+      [fold.accuracy, fold.multiclassBrierScore, fold.logLoss].some(value => value !== null && !finite(value)))) {
+    throw new RangeError('Temporal degradation folds contain invalid metrics');
+  }
+  const latest = folds.at(-1);
+  const baseline = folds.slice(0, -1).filter(fold => fold.testSampleSize > 0 &&
+    fold.accuracy !== null && fold.multiclassBrierScore !== null && fold.logLoss !== null);
+  const baselineSampleSize = baseline.reduce((sum, fold) => sum + fold.testSampleSize, 0);
+  const latestSampleSize = latest?.testSampleSize ?? 0;
+  const weighted = (key: 'accuracy' | 'multiclassBrierScore' | 'logLoss'): number | null => {
+    if (!baselineSampleSize) return null;
+    return baseline.reduce((sum, fold) => sum + (fold[key] as number) * fold.testSampleSize, 0) / baselineSampleSize;
+  };
+  const latestHasMetrics = !!latest && latest.testSampleSize > 0 && latest.accuracy !== null &&
+    latest.multiclassBrierScore !== null && latest.logLoss !== null;
+  const baselineAccuracy = weighted('accuracy');
+  const baselineBrier = weighted('multiclassBrierScore');
+  const baselineLogLoss = weighted('logLoss');
+  const accuracyDelta = latestHasMetrics && baselineAccuracy !== null ? latest!.accuracy! - baselineAccuracy : null;
+  const multiclassBrierDelta = latestHasMetrics && baselineBrier !== null ? latest!.multiclassBrierScore! - baselineBrier : null;
+  const logLossDelta = latestHasMetrics && baselineLogLoss !== null ? latest!.logLoss! - baselineLogLoss : null;
+  const enoughData = baselineSampleSize >= minimumSampleSize && latestSampleSize >= minimumSampleSize && latestHasMetrics;
+  const triggeredBy: TemporalDegradationAssessment['triggeredBy'] = [];
+  if (enoughData) {
+    if (accuracyDelta !== null && accuracyDelta <= -0.10) triggeredBy.push('ACCURACY_DROP');
+    if (multiclassBrierDelta !== null && multiclassBrierDelta >= 0.05) triggeredBy.push('BRIER_INCREASE');
+    if (logLossDelta !== null && logLossDelta >= 0.10) triggeredBy.push('LOG_LOSS_INCREASE');
+  }
+  return {
+    status: !enoughData ? 'INSUFFICIENT_DATA' : triggeredBy.length ? 'POTENTIAL_DEGRADATION' : 'NO_CLEAR_DEGRADATION',
+    baselineFoldCount: baseline.length, baselineSampleSize, latestFoldId: latest?.foldId ?? null,
+    latestSampleSize, accuracyDelta, multiclassBrierDelta, logLossDelta, triggeredBy,
+  };
+}
 
 /**
  * Summarizes independent, non-overlapping test folds. Metrics are weighted
@@ -476,7 +536,7 @@ export function summarizeWalkForwardCalibration(
       throw new RangeError('Test windows must not overlap when aggregating folds');
     }
   }
-  const folds = reports.map(report => {
+  const folds = ordered.map(report => {
     const calibration = report.test.calibration;
     const sampleSize = calibration?.sampleSize ?? 0;
     return {
@@ -510,5 +570,6 @@ export function summarizeWalkForwardCalibration(
     accuracyFoldStdDev: deviation('accuracy'),
     multiclassBrierFoldStdDev: deviation('multiclassBrierScore'),
     folds,
+    degradation: assessTemporalDegradation(folds, minimumSampleSize),
   };
 }
