@@ -222,3 +222,49 @@ test('blocks semantic outcome labeling when persisted journal integrity fails', 
   await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, outcome),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
 });
+
+
+test('builds separate STOCK and OPTION calibration reports only from integrity-verified persisted outcomes', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  const optionPrediction: PredictionSnapshot = { ...prediction, predictionId: 'pred-option-calibration',
+    assetClass: 'OPTION', contractId: 'AAPL261218C00200000' };
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  await journal.labelOutcome('owner_1', prediction.predictionId, { assetClass: 'STOCK', realizedAt: 3000,
+    observedAt: 3100, outcome: 'POSITIVE', totalReturnPct: 12, benchmarkReturnPct: 5, labelSource: 'test-fixture' });
+  await journal.labelOutcome('owner_1', optionPrediction.predictionId, { assetClass: 'OPTION', realizedAt: 3000,
+    observedAt: 3100, outcome: 'NEGATIVE', contractReturnPct: -20, underlyingReturnPct: -3,
+    exitMethod: 'CLOSED', entryPremium: 2, exitValue: 1.6, labelSource: 'test-fixture' });
+  const report = await journal.getCalibrationReport('owner_1', 2);
+  assert.deepEqual(report.integrity, { valid: true, headMatches: true, length: 4,
+    headHash: (await journal.verify('owner_1')).headHash });
+  assert.equal(report.stock.assetClass, 'STOCK');
+  assert.equal(report.stock.overall.sampleSize, 1);
+  assert.equal(report.stock.benchmark.sampleSize, 1);
+  assert.equal(report.stock.benchmark.meanExcessReturnPct, 7);
+  assert.equal(report.option.assetClass, 'OPTION');
+  assert.equal(report.option.overall.sampleSize, 1);
+  assert.equal(report.option.exitMethodCohorts.find(cohort => cohort.key === 'CLOSED')?.report.sampleSize, 1);
+  assert.equal(report.stock.horizonCohorts[0].belowMinimumSample, true);
+});
+
+test('blocks persisted calibration reports when the event chain is tampered', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.tamperFirstEvent();
+  await assert.rejects(() => journal.getCalibrationReport('owner_1'),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
+});
+
+test('returns valid empty per-asset reports for a new owner and rejects invalid cohort thresholds', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  const empty = await journal.getCalibrationReport('owner_1');
+  assert.equal(empty.integrity.valid, true);
+  assert.equal(empty.stock.overall.sampleSize, 0);
+  assert.equal(empty.option.overall.sampleSize, 0);
+  await assert.rejects(() => journal.getCalibrationReport('owner_1', 0),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
+});
