@@ -206,12 +206,36 @@ export function createFirestorePredictionJournal(options: {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) {
       throw new FirestorePredictionJournalError('Invalid prediction journal owner.', 400);
     }
-    // Validate against one integrity-checked domain history before creating the next immutable snapshot.
+
+    // Validate malformed new inputs before any network or Firestore request.
+    try {
+      new InMemoryPredictionJournal(now).record(input);
+    } catch (error) {
+      if (error instanceof PredictionJournalError) {
+        const status = error.code === 'PREDICTION_ID_COLLISION' ? 409 : 400;
+        throw new FirestorePredictionJournalError(`Prediction validation failed: ${error.code}.`, status);
+      }
+      throw error;
+    }
+
     const events = await readEvents(ownerId);
     const chain = await verifyEventsForOwner(ownerId, events);
     if (!chain.valid || !chain.headMatches) {
       throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; prediction recording is blocked.', 409);
     }
+
+    // A retry resolves to the original immutable event, independent of the current clock.
+    const existing = events.find(event => event.eventType === 'PREDICTION_RECORDED' &&
+      event.prediction.predictionId === input.predictionId);
+    const inputSha256 = hash(canonical(input));
+    if (existing && existing.eventType === 'PREDICTION_RECORDED') {
+      if (existing.prediction.inputSha256 !== inputSha256) {
+        throw new FirestorePredictionJournalError('Prediction journal prediction identity collision.', 409);
+      }
+      return { event: existing, replayed: true };
+    }
+
+    // Rehydrate all existing semantic records before allowing a new prediction write.
     const domain = new InMemoryPredictionJournal(now);
     try {
       for (const event of events) {
@@ -223,8 +247,12 @@ export function createFirestorePredictionJournal(options: {
           domain.label(event.predictionId, event.outcome);
         }
       }
-      const snapshot = domain.record(input);
-      return appendEvent(ownerId, { eventType: 'PREDICTION_RECORDED', prediction: snapshot });
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; prediction recording is blocked.', 409);
+    }
+    let snapshot: PredictionSnapshot;
+    try {
+      snapshot = domain.record(input);
     } catch (error) {
       if (error instanceof PredictionJournalError) {
         const status = error.code === 'PREDICTION_ID_COLLISION' ? 409 : 400;
@@ -232,6 +260,7 @@ export function createFirestorePredictionJournal(options: {
       }
       throw error;
     }
+    return appendEvent(ownerId, { eventType: 'PREDICTION_RECORDED', prediction: snapshot });
   }
 
   async function labelOutcome(ownerId: string, predictionId: string, outcome: PredictionOutcome): Promise<{ event: PredictionEvent; replayed: boolean }> {
