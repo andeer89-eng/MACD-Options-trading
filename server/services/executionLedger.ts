@@ -548,6 +548,25 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     return commit.ok;
   }
 
+  async function isTradingCycleLeaseValid(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    fencingToken: number;
+  }): Promise<boolean> {
+    if (!Number.isInteger(input.fencingToken) || input.fencingToken < 1) return false;
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    const response = await request(path);
+    if (response.status === 404) return false;
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Trading cycle lease could not be verified.');
+    const current = fromDocument(await response.json());
+    return current.ownerId === input.ownerId &&
+      current.botId === input.botId &&
+      current.workerId === input.workerId &&
+      Number(current.fencingToken) === input.fencingToken &&
+      Number(current.expiresAt || 0) > now();
+  }
+
   async function releaseTradingCycleLease(input: {
     ownerId: string;
     botId: 'STOCK' | 'OPTION';
@@ -1000,5 +1019,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, getBotPortfolioState, setBotPortfolioState, acquireTradingCycleLease, renewTradingCycleLease, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, getBotPortfolioState, setBotPortfolioState, acquireTradingCycleLease, renewTradingCycleLease, isTradingCycleLeaseValid, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
