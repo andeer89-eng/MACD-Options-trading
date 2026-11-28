@@ -76,3 +76,15 @@ test('persistent trading control normalization never trusts missing or malformed
   assert.equal(state.optionBotEnabled, false);
   assert.equal(state.killSwitchEnabled, false);
 });
+
+test('persistent trading control normalization forces both bots off while kill switch is active', () => {
+  const state = normalizeTradingControlState('owner-1', {
+    stockBotEnabled: true,
+    optionBotEnabled: true,
+    killSwitchEnabled: true,
+    version: 4,
+  }, '2026-11-28T12:00:00.000Z');
+  assert.equal(state.stockBotEnabled, false);
+  assert.equal(state.optionBotEnabled, false);
+  assert.equal(state.killSwitchEnabled, true);
+});
