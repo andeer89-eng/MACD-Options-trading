@@ -212,3 +212,8 @@ signals, read or modify bot queues, submit orders, or connect research
 predictions to broker executions. Any future adapter must be separately
 authorized, read-only at the execution boundary, and preserve independent
 STOCK and OPTION records.
+
+
+## P1.42 — Origin-based calibration cohorts
+
+The integrity-gated calibration snapshot now partitions labeled predictions by their immutable origin kind, independently for STOCK and OPTION. Supported cohorts are STOCK_BOT, OPTION_BOT, WATCHLIST, SCANNER, CHART, MANUAL, RESEARCH, and LEGACY_UNATTRIBUTED for historical predictions without origin metadata. Each cohort reports the existing multiclass calibration metrics and thin-sample warning. Cohort counts must sum exactly to the asset-class overall sample size; the client parser rejects unknown, duplicate, cross-asset, or incomplete origin partitions. Internal source/run IDs are not exposed in aggregate responses. These are observational cohorts, not causal estimates or proof of strategy performance. No bot signal capture, broker access, order routing, or autotrading behavior is introduced.
