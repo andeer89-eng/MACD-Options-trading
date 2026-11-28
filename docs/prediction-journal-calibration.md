@@ -242,3 +242,9 @@ This is a research-only workflow. It does not change either autotrading bot, por
 ### P1.48 — Explicit realization timestamp
 
 The manual review form captures the actual outcome realization date/time separately from the server observation timestamp. The client rejects invalid or future realization timestamps; the server continues to enforce target maturity and semantic validity. This avoids silently assigning the review submission time as the historical realization time.
+
+## P1.49 — Trusted bot prediction capture boundary
+
+The Firestore adapter exposes a server-only `recordBotPrediction(ownerId, assetClass, input)` boundary for future integration with the autonomous STOCK and OPTION decision pipelines. It requires the origin kind to match the requested asset class (`STOCK_BOT` or `OPTION_BOT`) and requires strategy, decision and run identifiers before delegating to the existing integrity-checked, idempotent prediction write path.
+
+The authenticated browser capture route remains restricted to MANUAL and RESEARCH origins; clients cannot self-assert bot provenance. The new method is not exposed through an HTTP route and is not wired into either bot in this milestone. It records research decision snapshots only; it does not submit, modify, cancel, reconcile or import broker orders/fills, and does not change bot execution, risk limits, scheduling or portfolio state. A future bot integration must call this method only from trusted server-side decision code after the committee and independent judge have completed.
