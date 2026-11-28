@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import { calculateCohortCalibration, InMemoryPredictionJournal, verifyPredictionJournal, type PredictionEvent, type PredictionOutcome, type PredictionSnapshot, type PredictionSnapshotInput } from './predictionJournal.ts';
+import { calculateCohortCalibration, calculateWalkForwardCalibration, summarizeWalkForwardCalibration, InMemoryPredictionJournal, verifyPredictionJournal, type WalkForwardFold, type PredictionEvent, type PredictionOutcome, type PredictionSnapshot, type PredictionSnapshotInput } from './predictionJournal.ts';
 
 type FetchLike = typeof fetch;
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
@@ -327,6 +327,67 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, labelOutcome, readEvents, verify, getCalibrationReport };
+
+  async function getWalkForwardCalibrationReport(ownerId: string, minimumSampleSize = 30) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !Number.isSafeInteger(minimumSampleSize) || minimumSampleSize < 1) {
+      throw new FirestorePredictionJournalError('Invalid walk-forward report input.', 400);
+    }
+    const events = await readEvents(ownerId);
+    const integrity = await verifyEventsForOwner(ownerId, events);
+    if (!integrity.valid || !integrity.headMatches) {
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; walk-forward report is blocked.', 409);
+    }
+    const domain = new InMemoryPredictionJournal(() => Number.MAX_SAFE_INTEGER);
+    const predictions = new Map<string, PredictionSnapshot>();
+    const records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }> = [];
+    try {
+      for (const event of events) {
+        if (event.eventType === 'PREDICTION_RECORDED') {
+          const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+            snapshotSha256: _snapshotSha256, ...input } = event.prediction;
+          domain.record(input as PredictionSnapshotInput);
+          predictions.set(event.prediction.predictionId, event.prediction);
+        } else {
+          domain.label(event.predictionId, event.outcome);
+          const savedPrediction = predictions.get(event.predictionId);
+          if (!savedPrediction) throw new Error('Outcome references a missing prediction.');
+          records.push({ prediction: savedPrediction, outcome: event.outcome });
+        }
+      }
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; walk-forward report is blocked.', 409);
+    }
+
+    const buildAssetReport = (assetClass: 'STOCK' | 'OPTION') => {
+      const rows = records.filter(row => row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
+      const timestamps = [...new Set(rows.map(row => row.prediction.createdAt))].sort((a, b) => a - b);
+      if (timestamps.length < 5) {
+        return {
+          assetClass, available: false, reason: 'At least five distinct prediction timestamps are required to form three chronological test folds.',
+          distinctTimestamps: timestamps.length, folds: [], aggregate: null,
+        };
+      }
+      const boundaries = Array.from({ length: 5 }, (_, index) => timestamps[Math.floor(index * timestamps.length / 5)]);
+      const endAt = timestamps[timestamps.length - 1] + 1;
+      const foldSpecs: WalkForwardFold[] = [
+        { foldId: 'WF-1', train: { startAt: boundaries[0], endAt: boundaries[1] }, calibration: { startAt: boundaries[1], endAt: boundaries[2] }, test: { startAt: boundaries[2], endAt: boundaries[3] }, evaluationAsOf: now() },
+        { foldId: 'WF-2', train: { startAt: boundaries[0], endAt: boundaries[2] }, calibration: { startAt: boundaries[2], endAt: boundaries[3] }, test: { startAt: boundaries[3], endAt: boundaries[4] }, evaluationAsOf: now() },
+        { foldId: 'WF-3', train: { startAt: boundaries[0], endAt: boundaries[3] }, calibration: { startAt: boundaries[3], endAt: boundaries[4] }, test: { startAt: boundaries[4], endAt }, evaluationAsOf: now() },
+      ];
+      const folds = calculateWalkForwardCalibration(rows, assetClass, foldSpecs);
+      const aggregate = summarizeWalkForwardCalibration(folds, minimumSampleSize);
+      return { assetClass, available: true, reason: null, distinctTimestamps: timestamps.length, folds, aggregate };
+    };
+
+    return {
+      integrity: { valid: true as const, headMatches: true as const, length: integrity.length, headHash: integrity.headHash },
+      minimumSampleSize,
+      methodology: 'chronological-five-bin-expanding-window-v1',
+      stock: buildAssetReport('STOCK'),
+      option: buildAssetReport('OPTION'),
+    };
+  }
+
+  return { append, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport };
 
 }
