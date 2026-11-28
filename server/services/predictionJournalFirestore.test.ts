@@ -308,3 +308,15 @@ test('returns valid empty per-asset reports for a new owner and rejects invalid 
   await assert.rejects(() => journal.getCalibrationReport('owner_1', 0),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
 });
+
+
+test('P1.43 rejects semantically invalid prediction snapshots at the public append boundary', async () => {
+  const { journal, fetchMock } = createJournalFixture();
+  const valid = createPrediction('invalid-risk');
+  const invalid = { ...valid, riskMultiplier: 1.5 };
+  await assert.rejects(
+    () => journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: invalid }),
+    (error: any) => error.status === 400 && /domain or hash validation/.test(error.message),
+  );
+  assert.equal(fetchMock.calls.length, 0, 'invalid prediction must be rejected before any Firestore request');
+});
