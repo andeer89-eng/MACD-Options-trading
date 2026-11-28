@@ -217,3 +217,8 @@ STOCK and OPTION records.
 ## P1.42 — Origin-based calibration cohorts
 
 The integrity-gated calibration snapshot now partitions labeled predictions by their immutable origin kind, independently for STOCK and OPTION. Supported cohorts are STOCK_BOT, OPTION_BOT, WATCHLIST, SCANNER, CHART, MANUAL, RESEARCH, and LEGACY_UNATTRIBUTED for historical predictions without origin metadata. Each cohort reports the existing multiclass calibration metrics and thin-sample warning. Cohort counts must sum exactly to the asset-class overall sample size; the client parser rejects unknown, duplicate, cross-asset, or incomplete origin partitions. Internal source/run IDs are not exposed in aggregate responses. These are observational cohorts, not causal estimates or proof of strategy performance. No bot signal capture, broker access, order routing, or autotrading behavior is introduced.
+
+
+## P1.44 — Authenticated semantic outcome-labeling API
+
+The research router exposes `POST /api/research/predictions/:predictionId/outcome`. It requires a verified Firebase ID token and derives journal ownership exclusively from the verified UID. Request bodies are strictly allowlisted and must match the STOCK or OPTION outcome schema. The Firestore adapter verifies the complete journal chain and rehydrates the domain journal before applying a label, enforcing prediction existence, asset-class agreement, target maturity, valid outcome values, and immutable one-label semantics. New labels return HTTP 201; exact retries return HTTP 200; semantic conflicts retain HTTP 409. This is a manual research workflow only: no automatic labeling, broker execution inspection, or autotrading-bot connection is introduced.
