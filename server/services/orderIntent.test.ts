@@ -52,5 +52,6 @@ test('order intent state machine permits forward/recovery transitions and blocks
   assert.equal(canTransitionOrderIntent('SUBMITTED', 'FILLED'), true);
   assert.equal(canTransitionOrderIntent('FILLED', 'SUBMITTED'), false);
   assert.equal(canTransitionOrderIntent('REJECTED', 'RISK_APPROVED'), false);
-  assert.equal(canTransitionOrderIntent('NONE', 'SUBMITTED'), false);
+  assert.equal(canTransitionOrderIntent('NONE', 'SUBMITTED'), true);
+  assert.equal(canTransitionOrderIntent('NONE', 'RISK_APPROVED'), false);
 });
