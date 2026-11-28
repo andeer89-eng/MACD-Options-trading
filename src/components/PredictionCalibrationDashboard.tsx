@@ -126,7 +126,7 @@ function formatInterval(interval: WilsonInterval): string {
   return interval ? `${(interval.lower * 100).toFixed(1)}–${(interval.upper * 100).toFixed(1)}%` : '—';
 }
 
-function WalkForwardPanel({ report }: { report: WalkForwardAssetReport | undefined }) {
+function WalkForwardPanel({ report, minimumSampleSize }: { report: WalkForwardAssetReport | undefined; minimumSampleSize: number }) {
   if (!report) return null;
   if (!report.available || !report.aggregate) {
     return (
@@ -145,7 +145,7 @@ function WalkForwardPanel({ report }: { report: WalkForwardAssetReport | undefin
           <h3 className="text-sm font-semibold text-white">Walk-forward test stability</h3>
           <span className="text-[10px] text-zinc-500">{aggregate.foldCount} chronological folds · N={aggregate.testSampleSize}</span>
         </div>
-        {aggregate.belowMinimumSample && <p className="mt-2 text-[11px] text-amber-300">Thin test sample: below configured minimum of {report.aggregate ? report.aggregate.testSampleSize < 30 ? 30 : 1 : 30} observations. Interpret cautiously.</p>}
+        {aggregate.belowMinimumSample && <p className="mt-2 text-[11px] text-amber-300">Thin test sample: below configured minimum of {minimumSampleSize} observations. Interpret cautiously.</p>}
         <div className="grid grid-cols-2 xl:grid-cols-5 gap-2 mt-3">
           <MetricCard label="Weighted test accuracy" value={pct(aggregate.weightedMeanAccuracy)} />
           <MetricCard label="Weighted multiclass Brier" value={fixed(aggregate.weightedMeanMulticlassBrierScore)} />
@@ -366,7 +366,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
           </div>
 
           <CohortTable title={`${assetClass === 'OPTION' ? 'Option' : 'Stock'} forecast-horizon cohorts`} cohorts={report.horizonCohorts} />
-          <WalkForwardPanel report={payload.walkForward?.[assetClass.toLowerCase() as 'stock' | 'option']} />
+          <WalkForwardPanel report={payload.walkForward?.[assetClass.toLowerCase() as 'stock' | 'option']} minimumSampleSize={minimumSampleSize} />
           {report.assetClass === 'OPTION' && <CohortTable title="Option exit-method cohorts" cohorts={report.exitMethodCohorts || []} />}
           <p className="text-[10px] leading-relaxed text-zinc-500">
             Interpretation: cohort minimums are operational thin-sample warnings, not significance tests. Calibration scores describe historical probability quality; they do not establish future returns, profitability, or an execution edge. This dashboard does not modify predictions, outcomes, portfolios, broker accounts, or either autotrading bot.
