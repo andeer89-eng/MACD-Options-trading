@@ -3,12 +3,21 @@ import { createHash } from 'node:crypto';
 export type PredictionAssetClass = 'STOCK' | 'OPTION';
 export type PredictionOutcomeClass = 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE';
 export type PredictionProbabilities = { positive: number; neutral: number; negative: number };
+export type PredictionOriginKind = 'STOCK_BOT' | 'OPTION_BOT' | 'WATCHLIST' | 'SCANNER' | 'CHART' | 'MANUAL' | 'RESEARCH';
+export type PredictionOrigin = {
+  kind: PredictionOriginKind;
+  sourceId: string;
+  strategyId?: string;
+  decisionId?: string;
+  candidateId?: string;
+  runId?: string;
+};
 export type PredictionSnapshotInput = {
   predictionId: string; assetClass: PredictionAssetClass; symbol: string; contractId?: string;
   createdAt: number; targetAt: number; evidencePackId: string; evidencePackSha256: string;
   committeeGeneratedAt: number; judgeGeneratedAt: number; disposition: 'APPROVE' | 'REDUCE' | 'REJECT';
   riskMultiplier: number; confidence: number; probabilities: PredictionProbabilities;
-  sourceRefs: string[]; model?: { provider: string; model: string; promptVersion: string };
+  sourceRefs: string[]; origin?: PredictionOrigin; model?: { provider: string; model: string; promptVersion: string };
 };
 export type StockOutcome = { assetClass: 'STOCK'; realizedAt: number; observedAt: number; outcome: PredictionOutcomeClass; totalReturnPct: number; benchmarkReturnPct?: number; labelSource: string };
 export type OptionOutcome = { assetClass: 'OPTION'; realizedAt: number; observedAt: number; outcome: PredictionOutcomeClass; contractReturnPct: number; underlyingReturnPct: number; exitMethod: 'CLOSED' | 'MARK_TO_MARKET' | 'EXPIRED'; entryPremium: number; exitValue: number; labelSource: string };
@@ -47,6 +56,12 @@ function validatePrediction(p: PredictionSnapshotInput, now: number): void {
       p.riskMultiplier < 0 || p.riskMultiplier > 1 || !finite(p.confidence) || p.confidence < 0 || p.confidence > 1 ||
       !validProbabilities(p.probabilities) || !Array.isArray(p.sourceRefs) || !p.sourceRefs.length || !p.sourceRefs.every(text) ||
       (p.assetClass === 'OPTION' && !text(p.contractId)) || (p.assetClass === 'STOCK' && p.contractId !== undefined) ||
+      (p.origin !== undefined && (!p.origin || !['STOCK_BOT', 'OPTION_BOT', 'WATCHLIST', 'SCANNER', 'CHART', 'MANUAL', 'RESEARCH'].includes(p.origin.kind) ||
+        !text(p.origin.sourceId) || p.origin.sourceId.length > 128 ||
+        ['strategyId', 'decisionId', 'candidateId', 'runId'].some(key => p.origin?.[key as keyof typeof p.origin] !== undefined &&
+          (!text(p.origin[key as keyof typeof p.origin]) || (p.origin[key as keyof typeof p.origin] as string).length > 128)) ||
+        (p.origin.kind === 'STOCK_BOT' && p.assetClass !== 'STOCK') ||
+        (p.origin.kind === 'OPTION_BOT' && p.assetClass !== 'OPTION'))) ||
       (p.model && (!text(p.model.provider) || !text(p.model.model) || !text(p.model.promptVersion)))) {
     throw new PredictionJournalError('INVALID_PREDICTION');
   }
