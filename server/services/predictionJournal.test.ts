@@ -115,6 +115,7 @@ test('P1.28 builds disjoint horizon cohorts and flags small samples', async () =
     const prediction = journal.record({
       ...stockInput(`horizon-${index}`), createdAt,
       targetAt: createdAt + days * 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
     });
     const outcome = journal.label(`horizon-${index}`, {
       ...stockOutcome(), realizedAt: clock - 1, observedAt: clock,
@@ -143,6 +144,7 @@ test('P1.28 separates OPTION exit methods and never mixes STOCK records', async 
     const prediction = journal.record({
       ...optionInput(`exit-${index}`), createdAt,
       targetAt: createdAt + 2 * 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
     });
     const outcome = journal.label(`exit-${index}`, {
       ...optionOutcome(), exitMethod: method, realizedAt: clock - 1, observedAt: clock,
@@ -150,7 +152,7 @@ test('P1.28 separates OPTION exit methods and never mixes STOCK records', async 
     return { prediction, outcome };
   });
   const oldCreatedAt = clock - 2 * 86_400_000;
-  const stockPrediction = journal.record({ ...stockInput('unrelated-stock'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000 });
+  const stockPrediction = journal.record({ ...stockInput('unrelated-stock'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
   const stockOutcomeLabel = journal.label('unrelated-stock', {
     ...stockOutcome(), realizedAt: clock - 1, observedAt: clock,
   });
@@ -167,7 +169,7 @@ test('P1.28 handles absent benchmark observations and validates minimum sample s
   const { calculateCohortCalibration } = await import('./predictionJournal.ts');
   const journal = new InMemoryPredictionJournal(() => clock);
   const oldCreatedAt = clock - 2 * 86_400_000;
-  const prediction = journal.record({ ...stockInput('no-benchmark'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000 });
+  const prediction = journal.record({ ...stockInput('no-benchmark'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
   const outcome = journal.label('no-benchmark', {
     ...stockOutcome(), benchmarkReturnPct: undefined, realizedAt: clock - 1, observedAt: clock,
   });
