@@ -50,8 +50,8 @@ function parseUserOutcome(value: unknown): PredictionOutcome | null {
   const common = ['assetClass', 'realizedAt', 'observedAt', 'outcome', 'labelSource'];
   const allowed = value.assetClass === 'STOCK' ? [...common, 'totalReturnPct', 'benchmarkReturnPct']
     : [...common, 'contractReturnPct', 'underlyingReturnPct', 'exitMethod', 'entryPremium', 'exitValue'];
-  if (!hasOnlyKeys(value, allowed) || !Number.isSafeInteger(value.realizedAt) ||
-      !Number.isSafeInteger(value.observedAt) || !['POSITIVE', 'NEUTRAL', 'NEGATIVE'].includes(String(value.outcome)) ||
+  if (!hasOnlyKeys(value, allowed) || typeof value.realizedAt !== 'number' || !Number.isSafeInteger(value.realizedAt) ||
+      typeof value.observedAt !== 'number' || !Number.isSafeInteger(value.observedAt) || !['POSITIVE', 'NEUTRAL', 'NEGATIVE'].includes(String(value.outcome)) ||
       typeof value.labelSource !== 'string' || !value.labelSource.trim() || value.labelSource.length > 128) return null;
   const finite = (item: unknown) => typeof item === 'number' && Number.isFinite(item);
   if (value.assetClass === 'STOCK') {
