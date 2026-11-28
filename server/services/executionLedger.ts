@@ -437,7 +437,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     const next = {
       ownerId: input.ownerId,
       botId: input.botId,
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       version: currentVersion + 1,
       portfolio,
       updatedAt,
