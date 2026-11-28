@@ -15,6 +15,8 @@ function createLeaseStore(overrides: Partial<TradingCycleLeaseStore> = {}) {
     },
     renewTradingCycleLease: async ({ ownerId, botId, fencingToken }) =>
       active.get(ownerId + ':' + botId) === fencingToken,
+    isTradingCycleLeaseValid: async ({ ownerId, botId, fencingToken }) =>
+      active.get(ownerId + ':' + botId) === fencingToken,
     releaseTradingCycleLease: async ({ ownerId, botId, fencingToken }) => {
       const key = ownerId + ':' + botId;
       if (active.get(key) !== fencingToken) return false;
@@ -71,6 +73,7 @@ test('orchestrator aborts result when lease renewal is lost', async () => {
   let intervalCallback: (() => void) | null = null;
   const leaseStore = createLeaseStore({
     renewTradingCycleLease: async () => false,
+    isTradingCycleLeaseValid: async () => false,
   });
   const orchestrator = createTradingOrchestrator({
     leaseStore,
@@ -107,4 +110,39 @@ test('orchestrator always releases the lease after adapter failure', async () =>
     execute: async () => { throw new Error('adapter failed'); },
   }), /adapter failed/);
   assert.equal(released, 1);
+});
+
+test('strategy adapter can verify the persisted fencing token immediately before an order', async () => {
+  let verified = 0;
+  const leaseStore = createLeaseStore({
+    isTradingCycleLeaseValid: async ({ fencingToken }) => {
+      verified++;
+      return fencingToken === 1;
+    },
+  });
+  const orchestrator = createTradingOrchestrator({ leaseStore, workerId: 'worker-test' });
+  const result = await orchestrator.runCycle({
+    ownerId: 'owner-a', botId: 'STOCK', isArmed: async () => true,
+    execute: async ({ verifyLease }) => {
+      await verifyLease();
+      return 'ready-to-submit';
+    },
+  });
+  assert.equal(result.status, 'completed');
+  assert.equal(verified, 2, 'adapter pre-submit verification plus final completion verification');
+});
+
+test('orchestrator fences a stale worker when persisted lease verification fails', async () => {
+  const leaseStore = createLeaseStore({
+    isTradingCycleLeaseValid: async () => false,
+  });
+  const orchestrator = createTradingOrchestrator({ leaseStore, workerId: 'worker-test' });
+  const result = await orchestrator.runCycle({
+    ownerId: 'owner-a', botId: 'STOCK', isArmed: async () => true,
+    execute: async ({ verifyLease }) => {
+      await assert.rejects(() => verifyLease(), /lease was lost/);
+      return 'must-not-be-accepted';
+    },
+  });
+  assert.deepEqual(result, { status: 'aborted', reason: 'LEASE_LOST' });
 });
