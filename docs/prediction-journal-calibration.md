@@ -171,3 +171,22 @@ The Prediction Calibration dashboard surfaces the existing walk-forward temporal
 The dashboard consumes the assessment already included in each integrity-gated aggregate; it does not calculate a second diagnostic or perform another Firestore read. The parser validates status, sample counts, finite deltas, and allowed trigger identifiers before rendering. STOCK and OPTION assessments remain separate. Option calibration remains based on contract outcomes; stock benchmark-adjusted performance remains limited to rows with benchmark observations in the existing STOCK cohort report.
 
 POTENTIAL_DEGRADATION is an operational monitoring heuristic (accuracy drop of at least 10 percentage points, multiclass Brier increase of at least 0.05, or log-loss increase of at least 0.10), not a statistical significance test, causal attribution, or proof of lost edge. If either baseline or latest sample is below the configured minimum, the status is INSUFFICIENT_DATA and no signal is emitted. This is a read-only dashboard enhancement: it does not alter strategy parameters, risk limits, predictions, outcomes, broker connectivity, order routing, or either autotrading bot.
+
+
+## P1.40 — Walk-forward payload accounting invariants
+
+The client parser now validates cross-field sample accounting before displaying
+walk-forward diagnostics:
+
+- Every segment must satisfy assigned = eligible + purged.
+- Training segments must not expose calibration metrics or uncertainty intervals.
+- Calibration and test segments must have metrics and uncertainty when eligible
+  sample size is nonzero, and both must be absent for empty eligible segments.
+- Segment metric sample size must equal the eligible sample count.
+- Fold IDs must be unique.
+- Aggregate fold count and test sample size must match the supplied folds, and
+  the thin-sample flag must agree with the configured minimum sample threshold.
+
+These checks reject internally inconsistent or partially fabricated API
+payloads at the UI boundary. They do not replace server-side journal integrity
+verification and do not change STOCK/OPTION evaluation or execution behavior.

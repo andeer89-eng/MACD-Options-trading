@@ -5,9 +5,9 @@ import {
   selectCalibrationReport,
 } from './predictionCalibrationView';
 
-const metrics = (assetClass: 'STOCK' | 'OPTION') => ({
+const metrics = (assetClass: 'STOCK' | 'OPTION', sampleSize = 12) => ({
   assetClass,
-  sampleSize: 12,
+  sampleSize,
   brierScore: 0.18,
   multiclassBrierScore: 0.31,
   logLoss: 0.72,
@@ -110,8 +110,8 @@ const wfAsset = (assetClass: 'STOCK' | 'OPTION') => ({
   assetClass, available: true, reason: null, distinctTimestamps: 8,
   folds: [{ foldId: 'WF-1',
     train: { assignedSampleSize: 8, eligibleSampleSize: 8, purgedSampleSize: 0, calibration: null, uncertainty: null },
-    calibration: { assignedSampleSize: 3, eligibleSampleSize: 2, purgedSampleSize: 1, calibration: metrics(assetClass), uncertainty: null },
-    test: { assignedSampleSize: 3, eligibleSampleSize: 3, purgedSampleSize: 0, calibration: metrics(assetClass),
+    calibration: { assignedSampleSize: 3, eligibleSampleSize: 2, purgedSampleSize: 1, calibration: metrics(assetClass, 2), uncertainty: { accuracy: { lower: 0.3, upper: 0.9 }, positiveOutcomeRate: null } },
+    test: { assignedSampleSize: 3, eligibleSampleSize: 3, purgedSampleSize: 0, calibration: metrics(assetClass, 3),
       uncertainty: { accuracy: { lower: 0.4, upper: 0.9 }, positiveOutcomeRate: null } } }],
   aggregate: { foldCount: 1, testSampleSize: 3, belowMinimumSample: true, weightedMeanAccuracy: 0.75,
     weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0,
@@ -175,4 +175,30 @@ test('parses temporal degradation separately for STOCK and OPTION and rejects ma
   const missingDiagnostics = payload();
   delete (missingDiagnostics.walkForward.stock.aggregate as any).degradation;
   assert.equal(parseCalibrationPayload(missingDiagnostics), null);
+});
+
+test('rejects inconsistent walk-forward sample accounting and aggregate metadata', () => {
+  const incompleteSegment = payload();
+  incompleteSegment.walkForward.stock.folds[0].test.assignedSampleSize = 4;
+  assert.equal(parseCalibrationPayload(incompleteSegment), null);
+
+  const mismatchedMetrics = payload();
+  mismatchedMetrics.walkForward.option.folds[0].calibration.calibration.sampleSize = 1;
+  assert.equal(parseCalibrationPayload(mismatchedMetrics), null);
+
+  const wrongAggregateCount = payload();
+  wrongAggregateCount.walkForward.stock.aggregate.foldCount = 2;
+  assert.equal(parseCalibrationPayload(wrongAggregateCount), null);
+
+  const wrongAggregateSample = payload();
+  wrongAggregateSample.walkForward.option.aggregate.testSampleSize = 4;
+  assert.equal(parseCalibrationPayload(wrongAggregateSample), null);
+
+  const wrongThinSampleFlag = payload();
+  wrongThinSampleFlag.walkForward.stock.aggregate.belowMinimumSample = false;
+  assert.equal(parseCalibrationPayload(wrongThinSampleFlag), null);
+
+  const duplicateFoldIds = payload();
+  duplicateFoldIds.walkForward.stock.folds.push(duplicateFoldIds.walkForward.stock.folds[0]);
+  assert.equal(parseCalibrationPayload(duplicateFoldIds), null);
 });
