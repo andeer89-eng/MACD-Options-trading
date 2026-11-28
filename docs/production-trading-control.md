@@ -48,3 +48,9 @@ silently fall back to historical close prices or a market order. Alpaca's
 snapshots endpoint provides latest quote, trade, Greeks and implied volatility;
 the feed must be explicitly available under the account's market-data
 entitlement.
+
+The server independently repeats the OPRA snapshot check immediately before
+submitting a new short put. It rejects stale/missing/crossed quotes, zero-size
+markets, spreads above 20%, absolute delta outside 0.08–0.16, market orders,
+and limit prices outside the current NBBO. Client-side quote selection is not
+treated as an execution authorization.
