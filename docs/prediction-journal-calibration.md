@@ -222,3 +222,11 @@ The integrity-gated calibration snapshot now partitions labeled predictions by t
 ## P1.44 — Authenticated semantic outcome-labeling API
 
 The research router exposes `POST /api/research/predictions/:predictionId/outcome`. It requires a verified Firebase ID token and derives journal ownership exclusively from the verified UID. Request bodies are strictly allowlisted and must match the STOCK or OPTION outcome schema. The Firestore adapter verifies the complete journal chain and rehydrates the domain journal before applying a label, enforcing prediction existence, asset-class agreement, target maturity, valid outcome values, and immutable one-label semantics. New labels return HTTP 201; exact retries return HTTP 200; semantic conflicts retain HTTP 409. This is a manual research workflow only: no automatic labeling, broker execution inspection, or autotrading-bot connection is introduced.
+
+## P1.46 — Integrity-gated pending prediction review queue
+
+The server exposes an authenticated, read-only `GET /api/research/predictions/pending` endpoint. Ownership is derived exclusively from the verified Firebase UID. The Firestore adapter reads one complete event history, verifies its append-only hash chain and persisted head, then rehydrates semantic prediction/outcome records before identifying predictions that do not yet have an immutable outcome label.
+
+The endpoint supports an optional exact `STOCK` or `OPTION` filter and bounded offset pagination (limit 1–100; offset 0–100,000). Results are ordered deterministically by target time, creation time and prediction ID. The response exposes only review metadata needed by the queue; evidence source references, journal event hashes, and raw Firestore records are not returned. Integrity or semantic validation failures block the listing.
+
+The queue is manual research workflow infrastructure. It does not label outcomes, infer results, read broker executions, alter portfolios, activate scheduled jobs, route orders, or control either stock or options autotrading bot. STOCK and OPTION remain separately filterable and are never pooled.
