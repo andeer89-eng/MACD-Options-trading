@@ -106,6 +106,7 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
       openOrders: overview.orders || [],
       equityHistory: overview.portfolioHistory || [],
       fetchedAt: overview.fetchedAt,
+      now: new Date(now()),
     });
     const candidates = selectAlpacaEquityCandidates(
       overview as AlpacaOverviewDTO,
