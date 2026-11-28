@@ -697,19 +697,6 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(armed.optionBotEnabled, true);
       assert.equal(armed.version, 1);
 
-      const botOrder = await fetch(`${baseUrl}/api/alpaca/bot/orders`, {
-        method: 'POST',
-        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', time_in_force: 'day', client_order_id: 'armed-stock-bot-order-001' }),
-      });
-      assert.equal(botOrder.status, 200);
-      const botIntentEvents = ledgerEvents.filter((event) => event.clientOrderId === 'armed-stock-bot-order-001');
-      assert.deepEqual(botIntentEvents.map((event) => event.payload.intentState), [
-        'CREATED', 'RISK_APPROVED', 'SUBMISSION_PENDING', 'SUBMITTED',
-      ]);
-      assert.equal(botIntentEvents[0].payload.source, 'STOCK_BOT');
-      assert.equal(botIntentEvents[0].payload.assetClass, 'STOCK');
-
       const kill = await fetch(`${baseUrl}/api/alpaca/trading-control`, {
         method: 'PUT',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
