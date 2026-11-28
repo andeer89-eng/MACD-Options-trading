@@ -6,6 +6,7 @@ import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
 import { getBotOrderBlockReason, getBotOptionCapabilityViolation } from '../services/tradingControl.ts';
+import { ExecutionLedgerConflictError } from '../services/executionLedger.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -46,6 +47,63 @@ export function createAlpacaRouter(
       const overview = await alpaca.getOverview();
       res.json(overview);
     } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
+  router.get('/api/alpaca/trading-control', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent trading control storage is required.', mode: 'PAPER' });
+      return;
+    }
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const state = await executionLedger.getTradingControl(ownerId);
+      res.json({ mode: 'PAPER', state });
+    } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
+  router.put('/api/alpaca/trading-control', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent trading control storage is required.', mode: 'PAPER' });
+      return;
+    }
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    const body = req.body || {};
+    if (typeof body.stockBotEnabled !== 'boolean' ||
+        typeof body.optionBotEnabled !== 'boolean' ||
+        typeof body.killSwitchEnabled !== 'boolean' ||
+        !Number.isInteger(body.expectedVersion) || body.expectedVersion < 0) {
+      res.status(400).json({ error: 'Trading control requires boolean bot states and an integer expectedVersion.', mode: 'PAPER' });
+      return;
+    }
+    if ((body.stockBotEnabled || body.optionBotEnabled) && body.confirmArm !== 'ARM') {
+      res.status(400).json({ error: 'Explicit confirmArm="ARM" is required to enable an autonomous bot.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const state = await executionLedger.setTradingControl(ownerId, {
+        stockBotEnabled: body.stockBotEnabled,
+        optionBotEnabled: body.optionBotEnabled,
+        killSwitchEnabled: body.killSwitchEnabled,
+        expectedVersion: body.expectedVersion,
+      });
+      res.json({ mode: 'PAPER', state });
+    } catch (err) {
+      if (err instanceof ExecutionLedgerConflictError) {
+        res.status(409).json({ error: err.message, code: 'TRADING_CONTROL_VERSION_CONFLICT', mode: 'PAPER' });
+        return;
+      }
       handleAlpacaError(res, err);
     }
   });
@@ -144,9 +202,28 @@ export function createAlpacaRouter(
   router.post('/api/alpaca/orders', submitOrder);
 
   router.post('/api/alpaca/bot/orders', async (req: Request, res: Response) => {
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent trading control storage is required for bot orders.', mode: 'PAPER' });
+      return;
+    }
+    let ownerControl;
+    try {
+      ownerControl = await executionLedger.getTradingControl(ownerId);
+    } catch {
+      res.status(503).json({ error: 'Trading control state is unavailable; autonomous orders are disabled.', mode: 'PAPER' });
+      return;
+    }
+    const symbol = String(req.body?.symbol || '').toUpperCase();
+    const isOptionOrder = /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(symbol);
+    const ownerArmed = isOptionOrder ? ownerControl.optionBotEnabled : ownerControl.stockBotEnabled;
     const blockReason = getBotOrderBlockReason({
-      enabled: botExecutionEnabled,
-      killSwitchEnabled: botKillSwitchEnabled,
+      enabled: botExecutionEnabled && ownerArmed,
+      killSwitchEnabled: botKillSwitchEnabled || ownerControl.killSwitchEnabled,
     });
     if (blockReason === 'KILL_SWITCH') {
       res.status(423).json({ error: 'Autonomous trading is blocked by the server kill switch.', code: blockReason, mode: 'PAPER' });
