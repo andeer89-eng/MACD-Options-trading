@@ -29,6 +29,8 @@ test('order intent is deterministic, owner-scoped and records source/asset class
   assert.equal(first.symbol, 'SPY261218P00570000');
   assert.equal(first.qty, 2);
   assert.equal(first.limitPrice, 2.1);
+  assert.equal(first.orderClass, 'simple');
+  assert.equal(first.takeProfitLimitPrice, null);
   assert.notEqual(first.intentId, createOrderIntent({ ...input, ownerId: 'owner-2' }).intentId);
 });
 
@@ -54,4 +56,25 @@ test('order intent state machine permits forward/recovery transitions and blocks
   assert.equal(canTransitionOrderIntent('REJECTED', 'RISK_APPROVED'), false);
   assert.equal(canTransitionOrderIntent('NONE', 'SUBMITTED'), true);
   assert.equal(canTransitionOrderIntent('NONE', 'RISK_APPROVED'), false);
+});
+
+test('order intent captures bracket exits as part of the immutable payload', () => {
+  const intent = createOrderIntent({
+    ownerId: 'owner-1',
+    source: 'MANUAL',
+    order: {
+      client_order_id: 'bracket-001',
+      symbol: 'AAPL',
+      side: 'buy',
+      qty: 2,
+      type: 'market',
+      order_class: 'bracket',
+      take_profit: { limit_price: 210 },
+      stop_loss: { stop_price: 190, limit_price: 189.5 },
+    },
+  });
+  assert.equal(intent.orderClass, 'bracket');
+  assert.equal(intent.takeProfitLimitPrice, 210);
+  assert.equal(intent.stopLossStopPrice, 190);
+  assert.equal(intent.stopLossLimitPrice, 189.5);
 });
