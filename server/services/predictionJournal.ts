@@ -200,6 +200,16 @@ function horizonBand(prediction: PredictionSnapshot): string {
  */
 export function calculateCohortCalibration(
   records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
+  assetClass: 'STOCK',
+  minimumSampleSize?: number,
+): Extract<CohortCalibrationReport, { assetClass: 'STOCK' }>;
+export function calculateCohortCalibration(
+  records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
+  assetClass: 'OPTION',
+  minimumSampleSize?: number,
+): Extract<CohortCalibrationReport, { assetClass: 'OPTION' }>;
+export function calculateCohortCalibration(
+  records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
   assetClass: PredictionAssetClass,
   minimumSampleSize = 30,
 ): CohortCalibrationReport {
