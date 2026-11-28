@@ -93,7 +93,7 @@ export function createPredictionCalibrationRouter(options: {
       return;
     }
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) {
       res.status(401).json({ error: 'Firebase authentication required.' });
       return;
@@ -117,7 +117,7 @@ export function createPredictionCalibrationRouter(options: {
     }
     const parseInteger = (raw: unknown, fallback: number, max: number): number | null => {
       if (raw === undefined) return fallback;
-      if (typeof raw !== 'string' || !/^\\d{1,6}$/.test(raw)) return null;
+      if (typeof raw !== 'string' || !/^\d{1,6}$/.test(raw)) return null;
       const value = Number(raw);
       return Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null;
     };
