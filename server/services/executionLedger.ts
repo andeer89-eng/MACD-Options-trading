@@ -578,6 +578,8 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       latestSequence: number;
       status?: string;
       statusSequence: number;
+      intentState?: OrderIntentState;
+      intentStateSequence: number;
     }>();
     const seenCursors = new Set<string>();
     let cursorName = '';
@@ -631,12 +633,18 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
             latestSequence: sequence,
             status: current?.status,
             statusSequence: current?.statusSequence || 0,
+            intentState: current?.intentState,
+            intentStateSequence: current?.intentStateSequence || 0,
           });
         }
         const aggregate = orders.get(match[1])!;
         if (payload.status !== undefined && sequence >= aggregate.statusSequence) {
           aggregate.status = String(payload.status);
           aggregate.statusSequence = sequence;
+        }
+        if (payload.intentState !== undefined && sequence >= aggregate.intentStateSequence) {
+          aggregate.intentState = String(payload.intentState) as OrderIntentState;
+          aggregate.intentStateSequence = sequence;
         }
       }
 
@@ -672,6 +680,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
               symbol: order.symbol,
               lastEventType: order.lastEventType,
               status: order.status || '',
+              intentState: order.intentState || '',
               updatedAt: order.updatedAt || new Date(nowMs).toISOString(),
               backfilledAt: new Date(nowMs).toISOString(),
               backfillSource: 'historical-ledger-events',
