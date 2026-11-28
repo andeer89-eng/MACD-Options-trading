@@ -229,3 +229,78 @@ test('P1.29 reports 95% Wilson uncertainty without pooling asset classes', async
   assert.deepEqual(empty.reliability, []);
   assert.equal('benchmarkPositiveExcessRate' in empty, false);
 });
+
+
+test('P1.30 enforces chronological walk-forward maturity and keeps asset classes separate', async () => {
+  const { calculateWalkForwardCalibration } = await import('./predictionJournal.ts');
+  const now = clock + 500 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const day = 86_400_000;
+  const makeStock = (id: string, createdAt: number, observedAt: number) => {
+    const prediction = journal.record({
+      ...stockInput(id), createdAt, targetAt: createdAt + day,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+    });
+    const outcome = journal.label(id, {
+      ...stockOutcome(), realizedAt: observedAt - 1000, observedAt,
+    });
+    return { prediction, outcome };
+  };
+  const makeOption = (id: string, createdAt: number, observedAt: number) => {
+    const prediction = journal.record({
+      ...optionInput(id), createdAt, targetAt: createdAt + day,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+    });
+    const outcome = journal.label(id, {
+      ...optionOutcome(), realizedAt: observedAt - 1000, observedAt,
+    });
+    return { prediction, outcome };
+  };
+  const trainRow = makeStock('wf-train', now - 110 * day, now - 95 * day);
+  const calibrationRow = makeStock('wf-calibration', now - 80 * day, now - 65 * day);
+  const purgedCalibrationRow = makeStock('wf-calibration-late', now - 75 * day, now - 50 * day);
+  const testRow = makeStock('wf-test', now - 50 * day, now - 40 * day);
+  const unrelatedOption = makeOption('wf-option', now - 50 * day, now - 40 * day);
+  const report = calculateWalkForwardCalibration(
+    [trainRow, calibrationRow, purgedCalibrationRow, testRow, unrelatedOption],
+    'STOCK',
+    [{
+      foldId: 'fold-1',
+      train: { startAt: now - 120 * day, endAt: now - 100 * day },
+      calibration: { startAt: now - 90 * day, endAt: now - 60 * day },
+      test: { startAt: now - 60 * day, endAt: now - 35 * day },
+      evaluationAsOf: now - 30 * day,
+      embargoMs: day,
+    }],
+  )[0];
+  assert.equal(report.train.assignedSampleSize, 1);
+  assert.equal(report.train.eligibleSampleSize, 1);
+  assert.equal(report.train.calibration, null);
+  assert.equal(report.calibration.assignedSampleSize, 2);
+  assert.equal(report.calibration.eligibleSampleSize, 1);
+  assert.equal(report.calibration.purgedSampleSize, 1);
+  assert.equal(report.calibration.calibration?.sampleSize, 1);
+  assert.equal(report.test.assignedSampleSize, 1);
+  assert.equal(report.test.eligibleSampleSize, 1);
+  assert.equal(report.test.calibration?.sampleSize, 1);
+  assert.equal(report.assetClass, 'STOCK');
+});
+
+test('P1.30 rejects invalid or overlapping walk-forward boundaries', async () => {
+  const { calculateWalkForwardCalibration } = await import('./predictionJournal.ts');
+  const fold = {
+    foldId: 'invalid-fold',
+    train: { startAt: 1, endAt: 10 },
+    calibration: { startAt: 9, endAt: 20 },
+    test: { startAt: 20, endAt: 30 },
+    evaluationAsOf: 30,
+  };
+  assert.throws(() => calculateWalkForwardCalibration([], 'STOCK', [fold]), RangeError);
+  assert.throws(() => calculateWalkForwardCalibration([], 'STOCK', [{
+    ...fold, foldId: 'negative-embargo', train: { startAt: 1, endAt: 9 }, embargoMs: -1,
+  }]), RangeError);
+  assert.throws(() => calculateWalkForwardCalibration([], 'STOCK', [
+    { ...fold, train: { startAt: 1, endAt: 8 }, foldId: 'duplicate' },
+    { ...fold, train: { startAt: 1, endAt: 8 }, foldId: 'duplicate' },
+  ]), RangeError);
+});

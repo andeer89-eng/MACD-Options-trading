@@ -90,3 +90,17 @@ This milestone adds only pure research calculations and tests. It does not add A
 `calculateCalibrationUncertainty(records, assetClass)` reports two-sided 95% Wilson score intervals for observed classification accuracy and positive-outcome frequency. It also reports intervals for observed positive rates inside each positive-probability reliability bucket. STOCK reports additionally include the interval for benchmark outperformance frequency, using only observations with a benchmark return. OPTION results use option contract outcomes and are never pooled with STOCK.
 
 Intervals are `null` for empty samples. These are sampling-uncertainty intervals for proportions, not confidence bounds on expected returns, proof of predictive edge, or a substitute for out-of-sample validation. The calculation is deterministic and read-only; no journal writes, outcome labeling, scheduler, broker, or autotrading integration is added.
+
+
+## P1.30 — Chronological walk-forward calibration evaluation
+
+calculateWalkForwardCalibration(records, assetClass, folds) evaluates each asset class independently over explicitly supplied train, calibration and test windows. Windows use half-open prediction-creation intervals (startAt <= createdAt < endAt) and must be strictly chronological and non-overlapping.
+
+- Training observations are counted only when their outcomes were observable by calibration.startAt minus embargoMs; training metrics are deliberately omitted.
+- Calibration observations are scored only when outcomes were observable by test.startAt minus embargoMs.
+- Test observations are scored only when outcomes were observable by the fold's explicit evaluationAsOf.
+- Late observations are reported as purged rather than silently included. The optional non-negative embargo is applied at the train/calibration and calibration/test boundaries.
+- Calibration and test segments report multiclass calibration metrics and the P1.29 uncertainty intervals. Each fold reports assigned, eligible and purged sample sizes.
+- Folds require unique IDs, valid finite time boundaries and an evaluation cutoff no earlier than test-window end. Invalid early outcome labels are rejected.
+
+These are chronological evaluation cohorts, not a fitted probability calibrator or a claim of out-of-sample alpha. The caller must supply economically meaningful, pre-registered windows and a cutoff consistent with the data's actual availability. STOCK and OPTION are never pooled. This remains a pure read-only research calculation: no journal writes, automatic labeling, API/UI, scheduler, broker, order routing or autotrading integration.

@@ -341,3 +341,96 @@ export function calculateCalibrationUncertainty(
       : {}),
   };
 }
+
+
+export type WalkForwardPeriod = { startAt: number; endAt: number };
+export type WalkForwardFold = {
+  foldId: string;
+  train: WalkForwardPeriod;
+  calibration: WalkForwardPeriod;
+  test: WalkForwardPeriod;
+  evaluationAsOf: number;
+  embargoMs?: number;
+};
+export type WalkForwardSegmentReport = {
+  period: WalkForwardPeriod;
+  assignedSampleSize: number;
+  eligibleSampleSize: number;
+  purgedSampleSize: number;
+  calibration: CalibrationReport | null;
+  uncertainty: CalibrationUncertaintyReport | null;
+};
+export type WalkForwardFoldReport = {
+  foldId: string;
+  assetClass: PredictionAssetClass;
+  train: WalkForwardSegmentReport;
+  calibration: WalkForwardSegmentReport;
+  test: WalkForwardSegmentReport;
+};
+
+/**
+ * Evaluates strictly chronological train/calibration/test windows.
+ * Training labels must be observable before calibration begins; calibration
+ * labels before test begins; test labels by evaluationAsOf. Embargo is applied
+ * at each boundary to purge overlapping/late observations. Training metrics
+ * are intentionally omitted to avoid presenting in-sample fit as validation.
+ */
+export function calculateWalkForwardCalibration(
+  records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
+  assetClass: PredictionAssetClass,
+  folds: WalkForwardFold[],
+): WalkForwardFoldReport[] {
+  if (!Array.isArray(folds) || !folds.length) throw new RangeError('At least one walk-forward fold is required');
+  const ids = new Set<string>();
+  const rows = records.filter(row =>
+    row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
+  const validatePeriod = (period: WalkForwardPeriod): void => {
+    if (!period || !finite(period.startAt) || !finite(period.endAt) ||
+        period.startAt <= 0 || period.endAt <= period.startAt) {
+      throw new RangeError('Walk-forward periods require finite startAt < endAt');
+    }
+  };
+  return folds.map(fold => {
+    if (!fold || !text(fold.foldId) || ids.has(fold.foldId) || !finite(fold.evaluationAsOf)) {
+      throw new RangeError('Walk-forward fold requires a unique ID and finite evaluationAsOf');
+    }
+    ids.add(fold.foldId);
+    validatePeriod(fold.train);
+    validatePeriod(fold.calibration);
+    validatePeriod(fold.test);
+    const embargoMs = fold.embargoMs ?? 0;
+    if (!finite(embargoMs) || embargoMs < 0 ||
+        fold.train.endAt > fold.calibration.startAt ||
+        fold.calibration.endAt > fold.test.startAt ||
+        fold.test.endAt > fold.evaluationAsOf) {
+      throw new RangeError('Walk-forward windows must be chronological and embargo must be non-negative');
+    }
+    const segment = (
+      period: WalkForwardPeriod,
+      maturityCutoff: number,
+      includeMetrics: boolean,
+    ): WalkForwardSegmentReport => {
+      const assigned = rows.filter(row =>
+        row.prediction.createdAt >= period.startAt && row.prediction.createdAt < period.endAt);
+      if (assigned.some(row => row.outcome.realizedAt < row.prediction.targetAt)) {
+        throw new PredictionJournalError('OUTCOME_BEFORE_TARGET');
+      }
+      const eligible = assigned.filter(row => row.outcome.observedAt <= maturityCutoff);
+      return {
+        period: { ...period },
+        assignedSampleSize: assigned.length,
+        eligibleSampleSize: eligible.length,
+        purgedSampleSize: assigned.length - eligible.length,
+        calibration: includeMetrics && eligible.length ? calculateCalibration(eligible, assetClass) : null,
+        uncertainty: includeMetrics && eligible.length ? calculateCalibrationUncertainty(eligible, assetClass) : null,
+      };
+    };
+    return {
+      foldId: fold.foldId,
+      assetClass,
+      train: segment(fold.train, fold.calibration.startAt - embargoMs, false),
+      calibration: segment(fold.calibration, fold.test.startAt - embargoMs, true),
+      test: segment(fold.test, fold.evaluationAsOf, true),
+    };
+  });
+}
