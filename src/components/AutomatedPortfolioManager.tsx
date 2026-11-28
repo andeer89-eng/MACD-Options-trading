@@ -463,7 +463,7 @@ export const AutomatedPortfolioManager: React.FC<AutomatedPortfolioManagerProps>
             entryMarketContext:
               contextByOrderKey.get(payload.client_order_id || payload.symbol) ??
               buildEntryMarketContextFromReport(activeHealth, { assetMode: 'EQUITY' }),
-          }),
+          }, 'BOT'),
       });
 
       // Record & evaluate Shadow / Counterfactual signals for blocked setups
