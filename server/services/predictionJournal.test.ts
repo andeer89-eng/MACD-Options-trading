@@ -108,17 +108,18 @@ test('multiclass calibration scores the realized NEUTRAL and NEGATIVE classes', 
 
 test('P1.28 builds disjoint horizon cohorts and flags small samples', async () => {
   const { calculateCohortCalibration } = await import('./predictionJournal.ts');
-  const journal = new InMemoryPredictionJournal(() => clock);
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
   const horizons = [0.5, 5, 20, 60, 120];
   const rows = horizons.map((days, index) => {
-    const createdAt = clock - 200 * 86_400_000;
+    const createdAt = clock - 1000;
     const prediction = journal.record({
       ...stockInput(`horizon-${index}`), createdAt,
       targetAt: createdAt + days * 86_400_000,
       committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
     });
     const outcome = journal.label(`horizon-${index}`, {
-      ...stockOutcome(), realizedAt: clock - 1, observedAt: clock,
+      ...stockOutcome(), realizedAt: now - 1, observedAt: now,
       totalReturnPct: index + 2, benchmarkReturnPct: index,
     });
     return { prediction, outcome };
@@ -137,24 +138,25 @@ test('P1.28 builds disjoint horizon cohorts and flags small samples', async () =
 
 test('P1.28 separates OPTION exit methods and never mixes STOCK records', async () => {
   const { calculateCohortCalibration } = await import('./predictionJournal.ts');
-  const journal = new InMemoryPredictionJournal(() => clock);
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
   const methods: OptionOutcome['exitMethod'][] = ['CLOSED', 'MARK_TO_MARKET', 'EXPIRED'];
   const optionRows = methods.map((method, index) => {
-    const createdAt = clock - 10 * 86_400_000;
+    const createdAt = clock - 1000;
     const prediction = journal.record({
       ...optionInput(`exit-${index}`), createdAt,
       targetAt: createdAt + 2 * 86_400_000,
       committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
     });
     const outcome = journal.label(`exit-${index}`, {
-      ...optionOutcome(), exitMethod: method, realizedAt: clock - 1, observedAt: clock,
+      ...optionOutcome(), exitMethod: method, realizedAt: now - 1, observedAt: now,
     });
     return { prediction, outcome };
   });
-  const oldCreatedAt = clock - 2 * 86_400_000;
+  const oldCreatedAt = clock - 1000;
   const stockPrediction = journal.record({ ...stockInput('unrelated-stock'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
   const stockOutcomeLabel = journal.label('unrelated-stock', {
-    ...stockOutcome(), realizedAt: clock - 1, observedAt: clock,
+    ...stockOutcome(), realizedAt: now - 1, observedAt: now,
   });
   const report = calculateCohortCalibration([
     ...optionRows, { prediction: stockPrediction, outcome: stockOutcomeLabel },
