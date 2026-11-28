@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { generateKeyPairSync, sign as signJwt } from 'node:crypto';
 import { createApp } from '../server.ts';
+import { ExecutionLedgerConflictError } from './services/executionLedger.ts';
 import type { Candle } from '../src/utils/trullasStrategy.ts';
 import { createAlpacaService, isValidAlpacaPaperUrl, resolveAlpacaConfig } from './services/alpaca.ts';
 
@@ -332,7 +333,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         setBotPortfolioState: async (input: any) => {
           const key = input.ownerId + ':' + input.botId;
           const current = botPortfolios.get(key) || { version: 0 };
-          if (current.version !== input.expectedVersion) throw new Error('Bot portfolio changed concurrently.');
+          if (current.version !== input.expectedVersion) throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently.');
           const portfolio = { ...input.portfolio, isAutoPilotActive: false };
           const next = {
             ownerId: input.ownerId, botId: input.botId, schemaVersion: 1,
