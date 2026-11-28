@@ -175,6 +175,122 @@ function CohortTable({ title, cohorts }: { title: string; cohorts: Cohort[] }) {
   );
 }
 
+
+type PendingPrediction = {
+  predictionId: string; assetClass: 'STOCK' | 'OPTION'; symbol: string; contractId?: string;
+  createdAt: number; targetAt: number; disposition: string; confidence: number;
+  probabilities: { positive: number; neutral: number; negative: number };
+  origin: { kind: string } | null;
+};
+
+function PendingPredictionReviewQueue() {
+  const { user } = useAuth();
+  const [assetClass, setAssetClass] = useState<'STOCK' | 'OPTION'>('STOCK');
+  const [rows, setRows] = useState<PendingPrediction[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<PendingPrediction | null>(null);
+  const [outcome, setOutcome] = useState<'POSITIVE' | 'NEUTRAL' | 'NEGATIVE'>('POSITIVE');
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [exitMethod, setExitMethod] = useState<'CLOSED' | 'MARK_TO_MARKET' | 'EXPIRED'>('CLOSED');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pageSize = 25;
+  const load = useCallback(async (nextOffset = 0) => {
+    if (!user) return;
+    setLoading(true); setError(null);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/research/predictions/pending?assetClass=${assetClass}&limit=${pageSize}&offset=${nextOffset}`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || `Queue request failed (HTTP ${response.status}).`);
+      if (body?.integrity?.valid !== true || body?.integrity?.headMatches !== true || !Array.isArray(body.predictions)) throw new Error('Journal integrity is unverified; rows withheld.');
+      setRows(body.predictions); setTotal(body.total); setOffset(nextOffset); setSelected(null);
+    } catch (e) { setRows([]); setTotal(0); setError(e instanceof Error ? e.message : 'Queue unavailable.'); }
+    finally { setLoading(false); }
+  }, [user, assetClass]);
+  useEffect(() => { void load(0); }, [load]);
+  const setField = (key: string, value: string) => setFields(prev => ({ ...prev, [key]: value }));
+  const submit = async () => {
+    if (!user || !selected) return;
+    const required = assetClass === 'STOCK' ? ['totalReturnPct'] : ['contractReturnPct','underlyingReturnPct','entryPremium','exitValue'];
+    const numeric: Record<string, number> = {};
+    for (const key of required) {
+      const n = Number(fields[key]);
+      if (fields[key]?.trim() === '' || !Number.isFinite(n)) { setError(`Enter a valid ${key}.`); return; }
+      numeric[key] = n;
+    }
+    if (assetClass === 'STOCK' && fields.benchmarkReturnPct?.trim()) {
+      const n = Number(fields.benchmarkReturnPct);
+      if (!Number.isFinite(n)) { setError('Enter a valid benchmark return.'); return; }
+      numeric.benchmarkReturnPct = n;
+    }
+    setSaving(true); setError(null); setNotice(null);
+    try {
+      const token = await user.getIdToken(); const now = Date.now();
+      const payload = { assetClass, realizedAt: now, observedAt: now, outcome, labelSource: 'manual-review',
+        ...numeric, ...(assetClass === 'OPTION' ? { exitMethod } : {}) };
+      const response = await fetch(`/api/research/predictions/${encodeURIComponent(selected.predictionId)}/outcome`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || `Outcome label failed (HTTP ${response.status}).`);
+      setNotice(`Outcome recorded for ${selected.predictionId}.`); setFields({}); await load(offset);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to label outcome.'); }
+    finally { setSaving(false); }
+  };
+  const matured = (row: PendingPrediction) => row.targetAt <= Date.now();
+  const input = (key: string, label: string, optional = false) => (
+    <label key={key} className="text-[10px] text-zinc-400">{label}{optional ? ' (optional)' : ''}
+      <input type="number" step="any" value={fields[key] || ''} onChange={e => setField(key,e.target.value)}
+        className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-xs text-white" />
+    </label>
+  );
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h3 className="text-sm font-semibold text-white">Pending outcome review</h3>
+          <p className="mt-1 text-[10px] text-zinc-500">Manual labeling of integrity-verified predictions. No bot or order controls.</p></div>
+        <div className="flex gap-2">
+          {(['STOCK','OPTION'] as const).map(a => <button key={a} onClick={() => setAssetClass(a)} className={`rounded-lg px-3 py-2 text-[10px] ${a===assetClass?'bg-indigo-600 text-white':'bg-zinc-800 text-zinc-400'}`}>{a}</button>)}
+          <button onClick={() => void load(offset)} disabled={loading} className="rounded-lg border border-zinc-700 px-3 py-2 text-[10px] text-white">{loading?'Loading…':'Refresh'}</button>
+        </div>
+      </div>
+      {error && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">{error}</div>}
+      {notice && <div role="status" className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3 text-xs text-emerald-200">{notice}</div>}
+      <div className="text-[10px] text-zinc-500">{total} pending {assetClass.toLowerCase()} predictions</div>
+      {rows.length===0 && !loading && <p className="py-5 text-center text-xs text-zinc-500">No pending predictions on this page.</p>}
+      <div className="space-y-2">{rows.map(row => <button key={row.predictionId} onClick={() => {setSelected(row);setError(null);}}
+        className={`w-full rounded-lg border p-3 text-left ${selected?.predictionId===row.predictionId?'border-indigo-400 bg-indigo-950/20':'border-zinc-800 bg-zinc-950/50'}`}>
+        <div className="flex flex-wrap justify-between gap-2"><b className="text-xs text-white">{row.symbol} {row.contractId||''}</b>
+          <span className={`text-[9px] ${matured(row)?'text-emerald-300':'text-amber-300'}`}>{matured(row)?'Horizon reached':'Awaiting target date'}</span></div>
+        <div className="mt-2 flex flex-wrap gap-4 text-[10px] text-zinc-400"><span>Target {new Date(row.targetAt).toLocaleDateString()}</span>
+          <span>Confidence {(row.confidence*100).toFixed(1)}%</span><span>P+ {(row.probabilities.positive*100).toFixed(1)}%</span>
+          <span>P0 {(row.probabilities.neutral*100).toFixed(1)}%</span><span>P− {(row.probabilities.negative*100).toFixed(1)}%</span></div>
+        <div className="mt-1 text-[9px] text-zinc-600">{row.predictionId} · {row.disposition} · {row.origin?.kind||'unknown'}</div>
+      </button>)}</div>
+      <div className="flex justify-between"><button disabled={loading||offset===0} onClick={()=>void load(Math.max(0,offset-pageSize)} className="text-[10px] text-zinc-400 disabled:opacity-30">Previous</button>
+        <button disabled={loading||offset+pageSize>=total} onClick={()=>void load(offset+pageSize)} className="text-[10px] text-zinc-400 disabled:opacity-30">Next</button></div>
+      {selected && <div className="rounded-xl border border-zinc-700 bg-zinc-950/70 p-4 space-y-3">
+        <div className="text-xs font-semibold text-white">Label outcome · {selected.symbol}</div>
+        {!matured(selected) && <p className="text-[10px] text-amber-300">Target time has not been reached. Server-side maturity validation will reject premature labels.</p>}
+        <label className="block text-[10px] text-zinc-400">Realized class<select value={outcome} onChange={e=>setOutcome(e.target.value as typeof outcome)} className="mt-1 block w-full rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-xs text-white">
+          <option>POSITIVE</option><option>NEUTRAL</option><option>NEGATIVE</option></select></label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{assetClass==='STOCK' ?
+          <>{input('totalReturnPct','Total return (%)')}{input('benchmarkReturnPct','Benchmark return (%)',true)}</> :
+          <>{input('contractReturnPct','Contract return (%)')}{input('underlyingReturnPct','Underlying return (%)')}{input('entryPremium','Entry premium')}{input('exitValue','Exit value')}
+            <label className="text-[10px] text-zinc-400">Exit method<select value={exitMethod} onChange={e=>setExitMethod(e.target.value as typeof exitMethod)} className="mt-1 block w-full rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-xs text-white">
+              <option value="CLOSED">Closed</option><option value="MARK_TO_MARKET">Mark to market</option><option value="EXPIRED">Expired</option></select></label></>}</div>
+        <button onClick={()=>void submit()} disabled={saving||loading} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving?'Saving…':'Record immutable outcome'}</button>
+        <p className="text-[9px] text-zinc-600">Append-only immutable label. Verify realized values manually; no broker execution import.</p>
+      </div>}
+    </section>
+  );
+}
+
 export const PredictionCalibrationDashboard: React.FC = () => {
   const { user, loading: authLoading } = useAuth();
   const [assetClass, setAssetClass] = useState<AssetClass>('STOCK');
@@ -269,6 +385,8 @@ export const PredictionCalibrationDashboard: React.FC = () => {
         <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-3 text-xs text-rose-200">{error}</div>
       )}
       {loading && !payload && <div className="text-sm text-zinc-400 py-8 text-center">Loading integrity-verified report…</div>}
+
+      <PendingPredictionReviewQueue />
 
       {payload && report && (
         <>
