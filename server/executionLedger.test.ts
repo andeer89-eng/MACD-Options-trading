@@ -212,6 +212,12 @@ describe('Persistent Firestore execution ledger', () => {
     });
     assert.ok(stockLease);
     assert.equal(stockLease.fencingToken, 1);
+    assert.equal(await ledger.isTradingCycleLeaseValid({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1,
+    }), true);
+    assert.equal(await ledger.isTradingCycleLeaseValid({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', fencingToken: 1,
+    }), false);
     assert.equal(await ledger.acquireTradingCycleLease({
       ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', leaseMs: 30_000,
     }), null);
@@ -234,6 +240,12 @@ describe('Persistent Firestore execution ledger', () => {
     });
     assert.ok(takeover);
     assert.equal(takeover.fencingToken, 2);
+    assert.equal(await ledger.isTradingCycleLeaseValid({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1,
+    }), false);
+    assert.equal(await ledger.isTradingCycleLeaseValid({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', fencingToken: 2,
+    }), true);
     assert.equal(await ledger.releaseTradingCycleLease({
       ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1,
     }), false, 'stale worker cannot release a successor lease');
