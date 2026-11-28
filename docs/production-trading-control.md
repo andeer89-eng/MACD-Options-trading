@@ -54,3 +54,24 @@ submitting a new short put. It rejects stale/missing/crossed quotes, zero-size
 markets, spreads above 20%, absolute delta outside 0.08–0.16, market orders,
 and limit prices outside the current NBBO. Client-side quote selection is not
 treated as an execution authorization.
+
+## Persistent owner-scoped trading control
+
+The server now stores STOCK/OPTION arming and the owner kill switch in the
+Firestore execution-control collection. Each update uses an expected version
+and Firestore update-time precondition to reject concurrent stale writes.
+The verified Firebase UID determines the control document; client-supplied
+owner IDs are never accepted.
+
+To arm either bot, the authenticated owner must send `confirmArm: "ARM"`.
+The deployment-level `ALPACA_BOT_EXECUTION_ENABLED=true` remains a separate
+master gate. The owner kill switch disables both bot flags in the same
+transaction and takes precedence over the deployment enable flag. If control
+storage is missing or unreadable, bot orders fail closed with HTTP 503.
+
+API:
+- `GET /api/alpaca/trading-control` — read the verified owner's state
+- `PUT /api/alpaca/trading-control` — update bot flags using `expectedVersion`
+
+A server-side UI for this API and audited operator notifications are still
+required before declaring the trading control plane complete.
