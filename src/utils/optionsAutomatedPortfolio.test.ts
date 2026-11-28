@@ -401,3 +401,22 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs in localStorage and f
   }
 });
 
+
+test('legacy options portfolio with persisted autopilot opt-in is migrated to disarmed', () => {
+  const stored = { ...initDefaultOptionsPortfolio(2000), isAutoPilotActive: true };
+  let saved = '';
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { localStorage: {
+      getItem: () => JSON.stringify(stored),
+      setItem: (_key: string, value: string) => { saved = value; },
+    } },
+  });
+  try {
+    const loaded = loadOptionsPortfolio();
+    assert.strictEqual(loaded.isAutoPilotActive, false);
+    assert.strictEqual(JSON.parse(saved).isAutoPilotActive, false);
+  } finally {
+    delete (globalThis as any).window;
+  }
+});
