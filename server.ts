@@ -43,6 +43,7 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   watchlistEvaluationMaxMarketDataAgeMsOverride?: number;
   firebaseServiceAccountJsonOverride?: string;
   executionLedgerOverride?: ReturnType<typeof createExecutionLedger>;
+  stockBotShadowStrategyOverride?: { evaluate: (portfolio: any) => Promise<any> };
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
@@ -114,7 +115,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const botKillSwitchEnabled = options.alpacaTradingKillSwitchOverride ??
     process.env.ALPACA_TRADING_KILL_SWITCH === 'true';
 
-  const stockBotShadowStrategy = createStockBotShadowStrategy({
+  const stockBotShadowStrategy = options.stockBotShadowStrategyOverride ?? createStockBotShadowStrategy({
     getOverview: () => alpaca.getOverview(),
     fetchCandles: (symbol) => marketData.fetchYahooData(symbol, '1d', '6mo', 30),
     getMarketHealth: () => marketData.fetchMarketHealthReport(false),
