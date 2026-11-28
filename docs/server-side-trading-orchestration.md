@@ -45,6 +45,14 @@ The endpoints require Firebase authentication and use the verified owner UID. Th
 - The portfolio API does not bypass server-side arming, global kill switch, option capability restrictions, portfolio risk checks, or the order-intent ledger.
 - The lease store now exposes persisted fencing-token verification, and the orchestrator supplies `verifyLease()` to adapters. The current browser-driven order route is not yet lease-fenced and no server strategy adapter calls this method yet; this remains a required integration before production orchestration.
 
+## STOCK shadow decision adapter
+
+The authenticated endpoint `POST /api/alpaca/bot/cycles/STOCK/shadow` runs a server-side, read-only evaluation using the persisted STOCK portfolio configuration, Alpaca Paper account/positions/orders, Yahoo Finance daily candles, Trullas indicators/divergence filters, the shared equity candidate selector, and the portfolio risk engine.
+
+The result includes a deterministic configuration digest, broker snapshot timestamp, evaluated/requested symbol counts, per-symbol data errors, risk-gate reasons, entry candidates, exit candidates and explicit execution metadata showing zero submitted orders and no broker side effects. It blocks evaluation when Alpaca Paper is unavailable or broker order/portfolio history is incomplete.
+
+This is a shadow adapter only. It does not require arming, does not place orders, and does not replace the browser strategy yet. It is the first server-side parity surface against which the current browser STOCK bot can be compared.
+
 ## Next Wave 2 work
 
 1. Add final order-submission fencing so stale cycles cannot submit after lease loss.
