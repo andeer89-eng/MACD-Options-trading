@@ -882,7 +882,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
         String(previouslySubmitted?.type || '') === validated.payload.type &&
         String(previouslySubmitted?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
         toNullableNum(previouslySubmitted?.limit_price) === (validated.payload.limit_price ?? null) &&
-        toNullableNum(previouslySubmitted?.stop_price) === (validated.payload.stop_price ?? null);
+        toNullableNum(previouslySubmitted?.stop_price) === (validated.payload.stop_price ?? null) &&
+        String(previouslySubmitted?.order_class || 'simple') === String(validated.payload.order_class || 'simple') &&
+        toNullableNum(previouslySubmitted?.take_profit?.limit_price) === (validated.payload.take_profit?.limit_price ?? null) &&
+        toNullableNum(previouslySubmitted?.stop_loss?.stop_price) === (validated.payload.stop_loss?.stop_price ?? null) &&
+        toNullableNum(previouslySubmitted?.stop_loss?.limit_price) === (validated.payload.stop_loss?.limit_price ?? null);
       if (!sameIntent) {
         throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
       }
@@ -1028,7 +1032,11 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
             String(recovered?.type || '') === validated.payload.type &&
             String(recovered?.time_in_force || '') === (validated.payload.time_in_force || 'day') &&
             toNullableNum(recovered?.limit_price) === (validated.payload.limit_price ?? null) &&
-            toNullableNum(recovered?.stop_price) === (validated.payload.stop_price ?? null);
+            toNullableNum(recovered?.stop_price) === (validated.payload.stop_price ?? null) &&
+            String(recovered?.order_class || 'simple') === String(validated.payload.order_class || 'simple') &&
+            toNullableNum(recovered?.take_profit?.limit_price) === (validated.payload.take_profit?.limit_price ?? null) &&
+            toNullableNum(recovered?.stop_loss?.stop_price) === (validated.payload.stop_loss?.stop_price ?? null) &&
+            toNullableNum(recovered?.stop_loss?.limit_price) === (validated.payload.stop_loss?.limit_price ?? null);
           if (!sameIntent) {
             throw new AlpacaApiError(409, 'client_order_id is already bound to a different order payload; use a new ID for a new order intent.');
           }
