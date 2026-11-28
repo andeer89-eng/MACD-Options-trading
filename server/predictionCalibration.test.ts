@@ -245,4 +245,88 @@ describe('authenticated prediction calibration read API', () => {
     });
   });
 
+  it('labels outcomes through the authenticated semantic boundary and supports idempotent retries', async () => {
+    const calls: Array<{ ownerId: string; predictionId: string; outcome: unknown }> = [];
+    let replayed = false;
+    const stockOutcome = { assetClass: 'STOCK', realizedAt: 3_000, observedAt: 3_100,
+      outcome: 'POSITIVE', totalReturnPct: 8.5, benchmarkReturnPct: 2.5, labelSource: 'manual-review' };
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project', verifyToken: async () => ({ uid: 'verified_user_2' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async (ownerId: string, predictionId: string, outcome: unknown) => {
+          calls.push({ ownerId, predictionId, outcome });
+          return { replayed, event: { eventType: 'OUTCOME_LABELED', predictionId, outcome } };
+        },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const request = () => fetch(baseUrl + '/api/research/predictions/manual-prediction-1/outcome', {
+        method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify(stockOutcome),
+      });
+      const first = await request();
+      assert.equal(first.status, 201);
+      assert.equal((await first.json() as any).replayed, false);
+      replayed = true;
+      const retry = await request();
+      assert.equal(retry.status, 200);
+      assert.equal((await retry.json() as any).replayed, true);
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].ownerId, 'verified_user_2');
+      assert.equal(calls[0].predictionId, 'manual-prediction-1');
+      assert.deepEqual(calls[0].outcome, stockOutcome);
+    });
+  });
+
+  it('rejects unauthenticated, malformed, cross-shape, and owner-overridden outcome payloads before storage', async () => {
+    let calls = 0;
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project', verifyToken: async () => ({ uid: 'verified_user_2' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async () => { calls++; throw new Error('must not be called'); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const url = baseUrl + '/api/research/predictions/manual-prediction-1/outcome';
+      const validOption = { assetClass: 'OPTION', realizedAt: 3_000, observedAt: 3_100, outcome: 'POSITIVE',
+        contractReturnPct: 20, underlyingReturnPct: 4, exitMethod: 'CLOSED', entryPremium: 2, exitValue: 2.4, labelSource: 'manual-review' };
+      const missingAuth = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(validOption) });
+      assert.equal(missingAuth.status, 401);
+      for (const invalid of [
+        { ...validOption, ownerId: 'attacker' }, { ...validOption, extra: true },
+        { ...validOption, exitMethod: 'UNKNOWN' }, { ...validOption, realizedAt: '3000' },
+        { ...validOption, assetClass: 'STOCK' },
+      ]) {
+        const response = await fetch(url, { method: 'POST',
+          headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' }, body: JSON.stringify(invalid) });
+        assert.equal(response.status, 400);
+      }
+      assert.equal(calls, 0);
+    });
+  });
+
+  it('maps semantic maturity and journal integrity conflicts to HTTP 409', async () => {
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project', verifyToken: async () => ({ uid: 'verified_user_2' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async () => { throw new FirestorePredictionJournalError('Outcome is premature or journal integrity failed.', 409); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const response = await fetch(baseUrl + '/api/research/predictions/manual-prediction-1/outcome', {
+        method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assetClass: 'STOCK', realizedAt: 3_000, observedAt: 3_100,
+          outcome: 'POSITIVE', totalReturnPct: 8, labelSource: 'manual-review' }),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    });
+  });
+
 });
