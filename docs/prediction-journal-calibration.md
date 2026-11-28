@@ -217,3 +217,8 @@ STOCK and OPTION records.
 ## P1.42 — Origin-based calibration cohorts
 
 The integrity-gated calibration snapshot now partitions labeled predictions by their immutable origin kind, independently for STOCK and OPTION. Supported cohorts are STOCK_BOT, OPTION_BOT, WATCHLIST, SCANNER, CHART, MANUAL, RESEARCH, and LEGACY_UNATTRIBUTED for historical predictions without origin metadata. Each cohort reports the existing multiclass calibration metrics and thin-sample warning. Cohort counts must sum exactly to the asset-class overall sample size; the client parser rejects unknown, duplicate, cross-asset, or incomplete origin partitions. Internal source/run IDs are not exposed in aggregate responses. These are observational cohorts, not causal estimates or proof of strategy performance. No bot signal capture, broker access, order routing, or autotrading behavior is introduced.
+
+
+## P1.43 — Semantic prediction write boundary
+
+The Firestore adapter's public prediction append now rehydrates each supplied immutable snapshot through the domain journal at its original `recordedAt` timestamp and compares the complete canonical snapshot, including `inputSha256` and `snapshotSha256`, before any Firestore request. Invalid prediction fields, malformed snapshot metadata, or mismatched canonical hashes are rejected with HTTP 400. Raw outcome events remain rejected by this method and must use the semantic `labelOutcome` boundary. This prevents callers of the persistence adapter from bypassing prediction-domain validation. It does not create an API route or capture bot signals.
