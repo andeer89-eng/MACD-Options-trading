@@ -238,3 +238,7 @@ Quant Lab's Prediction Calibration view now includes a separate pending-outcome 
 Outcome labels are entered manually. STOCK requires total return and optionally benchmark return. OPTION requires contract return, underlying return, entry premium, exit value and exit method. The UI submits the existing authenticated semantic outcome endpoint; the server remains authoritative for ownership, maturity, asset-class consistency, hash-chain integrity and immutable idempotency. The panel does not infer realized classes or returns and does not import broker fills.
 
 This is a research-only workflow. It does not change either autotrading bot, portfolio state, broker connectivity, order routing, execution scheduling, or risk limits. Users must verify realized values before recording a label.
+
+### P1.48 — Explicit realization timestamp
+
+The manual review form captures the actual outcome realization date/time separately from the server observation timestamp. The client rejects invalid or future realization timestamps; the server continues to enforce target maturity and semantic validity. This avoids silently assigning the review submission time as the historical realization time.
