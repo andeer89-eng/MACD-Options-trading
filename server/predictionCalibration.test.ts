@@ -75,6 +75,8 @@ describe('authenticated prediction calibration read API', () => {
       assert.equal(body.readOnly, true);
       assert.equal(body.stock.assetClass, 'STOCK');
       assert.equal(body.option.assetClass, 'OPTION');
+      assert.equal(body.walkForward.minimumSampleSize, 55);
+      assert.equal(body.walkForward.ownerId, 'firebase_user_123');
       assert.deepEqual(calls, [{ ownerId: 'firebase_user_123', minimumSampleSize: 55 }]);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       assert.equal(response.headers.get('vary'), 'Authorization');
