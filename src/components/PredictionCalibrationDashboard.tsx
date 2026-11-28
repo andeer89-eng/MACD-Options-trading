@@ -315,6 +315,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
           </div>
 
           <CohortTable title={`${assetClass === 'OPTION' ? 'Option' : 'Stock'} forecast-horizon cohorts`} cohorts={report.horizonCohorts} />
+          <CohortTable title={`${assetClass === 'OPTION' ? 'Option' : 'Stock'} prediction-origin cohorts`} cohorts={report.originCohorts} />
           <WalkForwardPanel report={payload.walkForward?.[assetClass.toLowerCase() as 'stock' | 'option']} minimumSampleSize={minimumSampleSize} />
           {report.assetClass === 'OPTION' && <CohortTable title="Option exit-method cohorts" cohorts={report.exitMethodCohorts || []} />}
           <p className="text-[10px] leading-relaxed text-zinc-500">
