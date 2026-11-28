@@ -74,8 +74,8 @@ export function normalizeTradingControlState(
 ): PersistentTradingControlState {
   return {
     ownerId,
-    stockBotEnabled: stored.stockBotEnabled === true,
-    optionBotEnabled: stored.optionBotEnabled === true,
+    stockBotEnabled: stored.killSwitchEnabled !== true && stored.stockBotEnabled === true,
+    optionBotEnabled: stored.killSwitchEnabled !== true && stored.optionBotEnabled === true,
     killSwitchEnabled: stored.killSwitchEnabled === true,
     version: Math.max(0, Math.floor(Number(stored.version) || 0)),
     createdAt: String(stored.createdAt || fallbackTimestamp),
