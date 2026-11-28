@@ -150,29 +150,6 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
   return { assetClass, overall, horizonCohorts, exitMethodCohorts, minimumSampleSize: value.minimumSampleSize as number };
 }
 
-/** Strictly validate the authenticated API response before rendering untrusted JSON. */
-export function parseCalibrationPayload(value: unknown): CalibrationPayload | null {
-  if (!isRecord(value) || value.readOnly !== true || !isRecord(value.integrity) ||
-      value.integrity.valid !== true || value.integrity.headMatches !== true ||
-      !Number.isSafeInteger(value.integrity.length) || (value.integrity.length as number) < 0 ||
-      typeof value.integrity.headHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.integrity.headHash)) return null;
-
-  const stock = parseAssetReport(value.stock, 'STOCK');
-  const option = parseAssetReport(value.option, 'OPTION');
-  if (!stock || !option) return null;
-  return {
-    integrity: {
-      valid: true,
-      headMatches: true,
-      length: value.integrity.length as number,
-      headHash: value.integrity.headHash,
-    },
-    stock,
-    option,
-    readOnly: true,
-  };
-}
-
 export function selectCalibrationReport(
   payload: CalibrationPayload,
   assetClass: CalibrationAssetClass,
