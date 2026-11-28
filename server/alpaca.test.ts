@@ -758,9 +758,12 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
     it('exposes authenticated read-only STOCK shadow cycles using persisted owner portfolio state', async () => {
       const headers = { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' };
+      const currentPortfolio = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, { headers });
+      assert.equal(currentPortfolio.status, 200);
+      const expectedVersion = ((await currentPortfolio.json()) as any).state.version;
       const save = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, {
         method: 'PUT', headers,
-        body: JSON.stringify({ expectedVersion: 0, portfolio: { maxOpenPositions: 3, isAutoPilotActive: true } }),
+        body: JSON.stringify({ expectedVersion, portfolio: { maxOpenPositions: 3, isAutoPilotActive: true } }),
       });
       assert.equal(save.status, 200);
 
