@@ -20,6 +20,7 @@ import { createWatchlistEvaluationRouter } from './server/routes/watchlistEvalua
 import { createPredictionCalibrationRouter } from './server/routes/predictionCalibration.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
+import { createStockBotShadowStrategy } from './server/services/stockBotShadowStrategy.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -113,11 +114,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const botKillSwitchEnabled = options.alpacaTradingKillSwitchOverride ??
     process.env.ALPACA_TRADING_KILL_SWITCH === 'true';
 
+  const stockBotShadowStrategy = createStockBotShadowStrategy({
+    getOverview: () => alpaca.getOverview(),
+    fetchCandles: (symbol) => marketData.fetchYahooData(symbol, '1d', '6mo', 30),
+    getMarketHealth: () => marketData.fetchMarketHealthReport(false),
+  });
+
   app.use(createAlpacaRouter(alpaca, {
     projectId: firebaseProjectId,
     allowedUids: allowedAlpacaUids,
     fetchImpl: options.firebaseAuthFetchOverride,
-  }, executionLedger, executionLedgerRequired, reconciliationWorker, botExecutionEnabled, botKillSwitchEnabled));
+  }, executionLedger, executionLedgerRequired, reconciliationWorker, botExecutionEnabled, botKillSwitchEnabled, stockBotShadowStrategy));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {
