@@ -1,4 +1,11 @@
 import { createHash, createSign } from 'node:crypto';
+import {
+  createDefaultTradingControlState,
+  normalizeTradingControlState,
+  applyTradingControlUpdate,
+  type PersistentTradingControlState,
+  type PersistentTradingControlUpdate,
+} from './tradingControl.ts';
 
 export type ExecutionEventType =
   | 'ORDER_SUBMITTED'
@@ -51,23 +58,8 @@ export class ExecutionLedgerConflictError extends Error {
   }
 }
 
-export interface TradingControlState {
-  ownerId: string;
-  stockBotEnabled: boolean;
-  optionBotEnabled: boolean;
-  killSwitchEnabled: boolean;
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-  updatedBy: string;
-}
-
-export interface TradingControlUpdate {
-  stockBotEnabled: boolean;
-  optionBotEnabled: boolean;
-  killSwitchEnabled: boolean;
-  expectedVersion: number;
-}
+export type TradingControlState = PersistentTradingControlState;
+export type TradingControlUpdate = PersistentTradingControlUpdate;
 
 const GENESIS = '0'.repeat(64);
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
@@ -306,17 +298,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
   }
 
   function defaultTradingControl(ownerId: string): TradingControlState {
-    const timestamp = new Date(now()).toISOString();
-    return {
-      ownerId,
-      stockBotEnabled: false,
-      optionBotEnabled: false,
-      killSwitchEnabled: false,
-      version: 0,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      updatedBy: ownerId,
-    };
+    return createDefaultTradingControlState(ownerId, new Date(now()).toISOString());
   }
 
   async function getTradingControl(ownerId: string): Promise<TradingControlState> {
@@ -326,16 +308,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (!response.ok) throw new ExecutionLedgerUnavailableError('Trading control state could not be read.');
     const document = await response.json() as any;
     const stored = fromDocument(document);
-    return {
-      ownerId,
-      stockBotEnabled: stored.stockBotEnabled === true,
-      optionBotEnabled: stored.optionBotEnabled === true,
-      killSwitchEnabled: stored.killSwitchEnabled === true,
-      version: Math.max(0, Math.floor(Number(stored.version) || 0)),
-      createdAt: String(stored.createdAt || new Date(now()).toISOString()),
-      updatedAt: String(stored.updatedAt || new Date(now()).toISOString()),
-      updatedBy: String(stored.updatedBy || ownerId),
-    };
+    return normalizeTradingControlState(ownerId, stored, new Date(now()).toISOString());
   }
 
   async function setTradingControl(ownerId: string, update: TradingControlUpdate): Promise<TradingControlState> {
@@ -356,16 +329,8 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (currentVersion !== update.expectedVersion) throw new ExecutionLedgerConflictError();
 
     const timestamp = new Date(now()).toISOString();
-    const next: TradingControlState = {
-      ownerId,
-      stockBotEnabled: update.killSwitchEnabled ? false : update.stockBotEnabled,
-      optionBotEnabled: update.killSwitchEnabled ? false : update.optionBotEnabled,
-      killSwitchEnabled: update.killSwitchEnabled,
-      version: currentVersion + 1,
-      createdAt: String(current.createdAt || timestamp),
-      updatedAt: timestamp,
-      updatedBy: ownerId,
-    };
+    const currentState = normalizeTradingControlState(ownerId, current, timestamp);
+    const next: TradingControlState = applyTradingControlUpdate(currentState, update, timestamp);
     const commit = await request(':commit', {
       method: 'POST',
       body: JSON.stringify({ writes: [{
