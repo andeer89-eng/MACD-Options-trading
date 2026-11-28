@@ -184,3 +184,48 @@ test('P1.28 handles absent benchmark observations and validates minimum sample s
   assert.equal(report.benchmark.belowMinimumSample, true);
   assert.throws(() => calculateCohortCalibration([], 'STOCK', 0), RangeError);
 });
+
+
+test('P1.29 reports 95% Wilson uncertainty without pooling asset classes', async () => {
+  const { calculateCalibrationUncertainty } = await import('./predictionJournal.ts');
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const createdAt = clock - 1000;
+  const stockPredictions = [
+    journal.record({ ...stockInput('uncertainty-1'), createdAt, targetAt: createdAt + 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+      probabilities: { positive: 0.7, neutral: 0.2, negative: 0.1 } }),
+    journal.record({ ...stockInput('uncertainty-2'), createdAt, targetAt: createdAt + 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+      probabilities: { positive: 0.7, neutral: 0.2, negative: 0.1 } }),
+  ];
+  const stockOutcomes = [
+    journal.label('uncertainty-1', { ...stockOutcome(), realizedAt: now - 1, observedAt: now,
+      outcome: 'POSITIVE', totalReturnPct: 4, benchmarkReturnPct: 2 }),
+    journal.label('uncertainty-2', { ...stockOutcome(), realizedAt: now - 1, observedAt: now,
+      outcome: 'NEGATIVE', totalReturnPct: 1, benchmarkReturnPct: 2 }),
+  ];
+  const optionPrediction = journal.record({ ...optionInput('uncertainty-option'), createdAt,
+    targetAt: createdAt + 86_400_000, committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750 });
+  const optionOutcomeLabel = journal.label('uncertainty-option', {
+    ...optionOutcome(), realizedAt: now - 1, observedAt: now,
+  });
+  const stockRows = stockPredictions.map((prediction, index) => ({ prediction, outcome: stockOutcomes[index] }));
+  const stock = calculateCalibrationUncertainty([...stockRows, { prediction: optionPrediction, outcome: optionOutcomeLabel }], 'STOCK');
+  assert.equal(stock.sampleSize, 2);
+  assert.equal(stock.confidenceLevel, 0.95);
+  assert.ok(stock.accuracy);
+  assert.ok(stock.accuracy.lower < 0.5 && stock.accuracy.upper > 0.5);
+  assert.ok(stock.positiveOutcomeRate);
+  assert.equal(stock.reliability[0].sampleSize, 2);
+  assert.ok(stock.reliability[0].confidenceInterval.lower < 0.5);
+  assert.ok(stock.benchmarkPositiveExcessRate);
+  assert.equal(stock.benchmarkPositiveExcessRate.lower, 0);
+  assert.equal(stock.benchmarkPositiveExcessRate.upper, 1);
+  const empty = calculateCalibrationUncertainty([], 'OPTION');
+  assert.equal(empty.sampleSize, 0);
+  assert.equal(empty.accuracy, null);
+  assert.equal(empty.positiveOutcomeRate, null);
+  assert.deepEqual(empty.reliability, []);
+  assert.equal('benchmarkPositiveExcessRate' in empty, false);
+});
