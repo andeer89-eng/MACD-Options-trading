@@ -23,7 +23,9 @@ export function createAlpacaRouter(
   authOptions: FirebaseAuthOptions,
   executionLedger?: ExecutionLedger,
   ledgerRequired = false,
-  reconciliationWorker?: { getStatus: () => unknown }
+  reconciliationWorker?: { getStatus: () => unknown },
+  botExecutionEnabled = false,
+  botKillSwitchEnabled = false
 ): Router {
   const router = Router();
   router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
@@ -78,7 +80,7 @@ export function createAlpacaRouter(
     }
   });
 
-  router.post('/api/alpaca/orders', async (req: Request, res: Response) => {
+  const submitOrder = async (req: Request, res: Response) => {
     try {
       if (ledgerRequired && !executionLedger) {
         res.status(503).json({ error: 'Persistent execution ledger is required but not configured.', mode: 'PAPER' });
@@ -102,9 +104,6 @@ export function createAlpacaRouter(
             },
           });
         } catch {
-          // The broker may already have accepted the order. Return 503 so the
-          // caller retries with the same client_order_id and broker idempotency
-          // recovers the order while the ledger write is retried.
           res.status(503).json({
             error: 'Order state is known to Alpaca but persistent audit recording failed. Retry with the same client_order_id.',
             mode: 'PAPER',
@@ -118,6 +117,21 @@ export function createAlpacaRouter(
     } catch (err) {
       handleAlpacaError(res, err);
     }
+  };
+
+  // Manual order entry remains separate. Autonomous bots must use the gated route below.
+  router.post('/api/alpaca/orders', submitOrder);
+
+  router.post('/api/alpaca/bot/orders', async (req: Request, res: Response) => {
+    if (botKillSwitchEnabled) {
+      res.status(423).json({ error: 'Autonomous trading is blocked by the server kill switch.', mode: 'PAPER' });
+      return;
+    }
+    if (!botExecutionEnabled) {
+      res.status(423).json({ error: 'Autonomous trading is not armed on the server. Bot orders are disabled.', mode: 'PAPER' });
+      return;
+    }
+    await submitOrder(req, res);
   });
 
   router.get('/api/alpaca/reconciliation/alerts', async (req: Request, res: Response) => {
