@@ -5,6 +5,7 @@ import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts'
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
+import { getBotOrderBlockReason } from '../services/tradingControl.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -23,7 +24,9 @@ export function createAlpacaRouter(
   authOptions: FirebaseAuthOptions,
   executionLedger?: ExecutionLedger,
   ledgerRequired = false,
-  reconciliationWorker?: { getStatus: () => unknown }
+  reconciliationWorker?: { getStatus: () => unknown },
+  botExecutionEnabled = false,
+  botKillSwitchEnabled = false
 ): Router {
   const router = Router();
   router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
@@ -78,7 +81,7 @@ export function createAlpacaRouter(
     }
   });
 
-  router.post('/api/alpaca/orders', async (req: Request, res: Response) => {
+  const submitOrder = async (req: Request, res: Response) => {
     try {
       if (ledgerRequired && !executionLedger) {
         res.status(503).json({ error: 'Persistent execution ledger is required but not configured.', mode: 'PAPER' });
@@ -102,9 +105,6 @@ export function createAlpacaRouter(
             },
           });
         } catch {
-          // The broker may already have accepted the order. Return 503 so the
-          // caller retries with the same client_order_id and broker idempotency
-          // recovers the order while the ledger write is retried.
           res.status(503).json({
             error: 'Order state is known to Alpaca but persistent audit recording failed. Retry with the same client_order_id.',
             mode: 'PAPER',
@@ -118,6 +118,25 @@ export function createAlpacaRouter(
     } catch (err) {
       handleAlpacaError(res, err);
     }
+  };
+
+  // Manual order entry remains separate. Autonomous bots must use the gated route below.
+  router.post('/api/alpaca/orders', submitOrder);
+
+  router.post('/api/alpaca/bot/orders', async (req: Request, res: Response) => {
+    const blockReason = getBotOrderBlockReason({
+      enabled: botExecutionEnabled,
+      killSwitchEnabled: botKillSwitchEnabled,
+    });
+    if (blockReason === 'KILL_SWITCH') {
+      res.status(423).json({ error: 'Autonomous trading is blocked by the server kill switch.', code: blockReason, mode: 'PAPER' });
+      return;
+    }
+    if (blockReason === 'NOT_ARMED') {
+      res.status(423).json({ error: 'Autonomous trading is not armed on the server. Bot orders are disabled.', code: blockReason, mode: 'PAPER' });
+      return;
+    }
+    await submitOrder(req, res);
   });
 
   router.get('/api/alpaca/reconciliation/alerts', async (req: Request, res: Response) => {

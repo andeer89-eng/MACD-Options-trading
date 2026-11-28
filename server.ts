@@ -31,6 +31,8 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   alpacaEnvOverride?: Record<string, string | undefined>;
   firebaseProjectIdOverride?: string;
   alpacaAllowedUidsOverride?: string[];
+  alpacaBotExecutionEnabledOverride?: boolean;
+  alpacaTradingKillSwitchOverride?: boolean;
   firebaseAuthFetchOverride?: typeof fetch;
   executionLedgerRequiredOverride?: boolean;
   reconciliationIntervalMs?: number;
@@ -105,11 +107,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     maxMarketDataAgeMs: options.watchlistEvaluationMaxMarketDataAgeMsOverride,
   }));
 
+  const botExecutionEnabled = options.alpacaBotExecutionEnabledOverride ??
+    process.env.ALPACA_BOT_EXECUTION_ENABLED === 'true';
+  const botKillSwitchEnabled = options.alpacaTradingKillSwitchOverride ??
+    process.env.ALPACA_TRADING_KILL_SWITCH === 'true';
+
   app.use(createAlpacaRouter(alpaca, {
     projectId: firebaseProjectId,
     allowedUids: allowedAlpacaUids,
     fetchImpl: options.firebaseAuthFetchOverride,
-  }, executionLedger, executionLedgerRequired, reconciliationWorker));
+  }, executionLedger, executionLedgerRequired, reconciliationWorker, botExecutionEnabled, botKillSwitchEnabled));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {
