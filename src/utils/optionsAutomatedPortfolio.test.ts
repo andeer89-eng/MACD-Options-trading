@@ -345,6 +345,7 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs in localStorage and f
 
   try {
     const seed = initDefaultOptionsPortfolio(2000);
+    seed.isAutoPilotActive = true; // legacy browser state must not arm the bot
     const dupId = 'rich-opt-live-1794587680533';
     seed.tradeHistory = [
       {
@@ -395,6 +396,7 @@ test('loadOptionsPortfolio repairs persisted duplicate IDs in localStorage and f
     storageMap.set('rich_sp500_options_portfolio_v1', JSON.stringify(seed));
 
     const loaded = loadOptionsPortfolio();
+    assert.strictEqual(loaded.isAutoPilotActive, false, 'Persisted autopilot state must be disarmed');
     assert.strictEqual(loaded.tradeHistory.length, 2, 'All trades preserved after repair');
     const uniqueIds = new Set(loaded.tradeHistory.map((t) => t.id));
     assert.strictEqual(uniqueIds.size, 2, 'Duplicate IDs must be repaired to unique values on load');
