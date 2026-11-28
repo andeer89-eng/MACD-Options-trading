@@ -59,7 +59,7 @@ import {
 import { analyzeTradingWarzSetup, CandleOHLC } from '../utils/tradingWarzEngine';
 import { analyzeMarketStructuralContext } from '../utils/marketStructuralContext';
 import type { Candle } from '../utils/trullasStrategy';
-import { useAlpacaPaper, fetchAlpacaOptionContracts } from '../hooks/useAlpacaPaper';
+import { useAlpacaPaper, fetchAlpacaOptionContracts, fetchAlpacaOptionSnapshots } from '../hooks/useAlpacaPaper';
 import { useMarketHealth } from '../hooks/useMarketHealth';
 import { fetchJsonSafe } from '../utils/safeFetchJson';
 import {
@@ -396,8 +396,39 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         const tradable = chainRes.contracts
           .filter((c) => c.tradable && !pendingSymbols.has(c.symbol.toUpperCase()))
           .sort((a, b) => b.strike_price - a.strike_price);
-        const chosen = tradable.find((c) => (c.close_price ?? 0) >= 0.15) || tradable[0];
-        if (!chosen) continue;
+        if (tradable.length === 0) continue;
+
+        const snapshotRes = await fetchAlpacaOptionSnapshots(tradable.slice(0, 100).map((c) => c.symbol), 'opra');
+        if (!snapshotRes.ok) {
+          actionsLog.push(`Skipped ${cand.symbol}: OPRA option quotes unavailable — ${snapshotRes.error || 'feed error'}`);
+          continue;
+        }
+        const snapshotsBySymbol = new Map(snapshotRes.snapshots.map((snapshot) => [snapshot.symbol, snapshot]));
+        const targetDelta = Math.max(0.08, Math.min(0.16, latestAccount.targetDelta || 0.12));
+        const candidates = tradable
+          .map((contract) => ({ contract, quote: snapshotsBySymbol.get(contract.symbol.toUpperCase()) }))
+          .filter((item) => {
+            const quote = item.quote;
+            return Boolean(
+              quote?.isUsable &&
+              quote.bidPrice !== null && quote.bidPrice >= 0.15 &&
+              quote.askPrice !== null && quote.askPrice >= quote.bidPrice &&
+              quote.spreadPercent !== null && quote.spreadPercent <= 20 &&
+              quote.delta !== null && Math.abs(quote.delta) >= Math.max(0.05, targetDelta - 0.04) &&
+              Math.abs(quote.delta) <= Math.min(0.20, targetDelta + 0.04)
+            );
+          })
+          .sort((a, b) =>
+            Math.abs(Math.abs(a.quote!.delta!) - targetDelta) - Math.abs(Math.abs(b.quote!.delta!) - targetDelta) ||
+            (a.quote!.spreadPercent! - b.quote!.spreadPercent!)
+          );
+        const chosenCandidate = candidates[0];
+        if (!chosenCandidate) {
+          actionsLog.push(`Skipped ${cand.symbol}: no fresh, liquid OPRA put quote within delta/spread limits`);
+          continue;
+        }
+        const chosen = chosenCandidate.contract;
+        const chosenQuote = chosenCandidate.quote!;
         const proposedPortfolioRisk = evaluatePortfolioRisk({
           account: activeOverview.account,
           positions: [
@@ -418,7 +449,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
         const orderRisk = evaluateShortPutOrderRisk({
           symbol: chosen.symbol,
           contracts: 1,
-          premiumPerShare: chosen.close_price ?? 0,
+          premiumPerShare: chosenQuote.bidPrice ?? 0,
           equity: portfolioRisk.equity,
         });
         if (!orderRisk.allowed) {
@@ -441,7 +472,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
           symbol: chosen.symbol,
           side: 'sell',
           qty: 1,
-          type: chosen.close_price && chosen.close_price > 0 ? 'limit' : 'market',
+          type: 'limit',
           time_in_force: 'day',
           client_order_id: clientOrderId,
           entryMarketContext: buildEntryMarketContextFromReport(activeHealth, {
@@ -449,9 +480,7 @@ export const OptionsAutomatedPortfolioManager: React.FC<OptionsAutomatedPortfoli
             initialRiskDollars: chosen.strike_price * 100 * 0.05,
             assetMode: 'OPTIONS',
           }),
-          ...(chosen.close_price && chosen.close_price > 0
-            ? { limit_price: Number(chosen.close_price.toFixed(2)) }
-            : {}),
+          limit_price: Number((chosenQuote.bidPrice || 0).toFixed(2)),
         }, 'BOT');
 
         if (orderRes.ok) {

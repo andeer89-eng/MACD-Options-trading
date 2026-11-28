@@ -32,3 +32,25 @@ path; that path remains available when new bot entries are blocked. Any future
 support for covered calls, long options, spreads, or buy-to-close order intents
 must add explicit position-aware risk and lifecycle accounting before expanding
 this allowlist.
+
+## Live option quote requirement
+
+The options bot requests Alpaca option snapshots with the explicit OPRA feed.
+A contract is eligible only when its quote timestamp is within 30 seconds,
+bid/ask prices are positive and non-crossed, both quote sizes are positive,
+the spread is no more than 20%, and delta is within the configured target
+band. The order is a limit sell priced at the current bid; historical
+`close_price` is not used for entry selection or pricing.
+
+If OPRA access is unavailable, the quote is stale/invalid/missing, or the
+Greeks are absent/outside the delta band, the bot skips the entry. It does not
+silently fall back to historical close prices or a market order. Alpaca's
+snapshots endpoint provides latest quote, trade, Greeks and implied volatility;
+the feed must be explicitly available under the account's market-data
+entitlement.
+
+The server independently repeats the OPRA snapshot check immediately before
+submitting a new short put. It rejects stale/missing/crossed quotes, zero-size
+markets, spreads above 20%, absolute delta outside 0.08–0.16, market orders,
+and limit prices outside the current NBBO. Client-side quote selection is not
+treated as an execution authorization.
