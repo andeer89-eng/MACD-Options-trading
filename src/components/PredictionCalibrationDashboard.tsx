@@ -161,10 +161,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
   }, [user, loadReport]);
 
   const report = useMemo(() => payload?.[assetClass.toLowerCase() as 'stock' | 'option'], [payload, assetClass]);
-  const cohorts = report?.assetClass === 'OPTION'
-    ? report.exitMethodCohorts || []
-    : report?.horizonCohorts || [];
-
+  
   if (authLoading) {
     return <div className="p-8 text-sm text-zinc-400">Checking account session…</div>;
   }
@@ -251,6 +248,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
                 {report.assetClass === 'STOCK' && report.benchmark && <>
                   <MetricCard label="Benchmark coverage" value={pct(report.benchmark.coverage)} detail={`${report.benchmark.sampleSize} benchmark-labeled rows`} />
                   <MetricCard label="Mean excess return" value={report.benchmark.meanExcessReturnPct === null ? '—' : `${report.benchmark.meanExcessReturnPct.toFixed(2)}%`} />
+                  <MetricCard label="Positive excess rate" value={pct(report.benchmark.positiveExcessRate)} />
                 </>}
               </div>
               {report.assetClass === 'OPTION' && (
@@ -259,8 +257,8 @@ export const PredictionCalibrationDashboard: React.FC = () => {
             </section>
           </div>
 
-          <CohortTable title={report.assetClass === 'OPTION' ? 'Option exit-method cohorts' : 'Stock forecast-horizon cohorts'} cohorts={cohorts} />
-          {report.assetClass === 'STOCK' && <CohortTable title="Stock forecast-horizon cohorts" cohorts={report.horizonCohorts} />}
+          <CohortTable title={`${assetClass === 'OPTION' ? 'Option' : 'Stock'} forecast-horizon cohorts`} cohorts={report.horizonCohorts} />
+          {report.assetClass === 'OPTION' && <CohortTable title="Option exit-method cohorts" cohorts={report.exitMethodCohorts || []} />}
           <p className="text-[10px] leading-relaxed text-zinc-500">
             Interpretation: cohort minimums are operational thin-sample warnings, not significance tests. Calibration scores describe historical probability quality; they do not establish future returns, profitability, or an execution edge. This dashboard does not modify predictions, outcomes, portfolios, broker accounts, or either autotrading bot.
           </p>
