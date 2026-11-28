@@ -81,8 +81,8 @@ export function createPredictionCalibrationRouter(options: {
 
     try {
       const report = await journal.getCalibrationReport(uid, minimumSampleSize);
-    const walkForward = await journal.getWalkForwardCalibrationReport(uid, minimumSampleSize);
-      res.json({ ...report, readOnly: true });
+      const walkForward = await journal.getWalkForwardCalibrationReport(uid, minimumSampleSize);
+      res.json({ ...report, walkForward, readOnly: true });
     } catch (error) {
       if (error instanceof FirestorePredictionJournalError) {
         res.status(error.status).json({ error: error.message });
