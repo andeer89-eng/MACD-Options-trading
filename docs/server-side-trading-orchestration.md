@@ -19,8 +19,10 @@ The lease store supports acquire, renew and release. A lease takeover increments
 2. Acquires the owner/bot distributed lease.
 3. Runs an injected strategy adapter with an AbortSignal and fencing token.
 4. Renews the lease periodically.
-5. Aborts and refuses to report success if lease renewal fails.
-6. Releases the lease in a finally block.
+5. Exposes `verifyLease()` for a fresh Firestore read immediately before every broker side effect; the adapter must call it at that boundary.
+6. Re-verifies the persisted fencing token before accepting a completed cycle.
+7. Aborts and refuses to report success if lease renewal or verification fails.
+8. Releases the lease in a finally block.
 
 The adapter is deliberately injected. This commit does not move the existing React strategy algorithms to the server, does not schedule bot cycles, and does not activate any new worker. The existing UI-based cycles remain until the STOCK and OPTION decision pipelines have been extracted into server-safe adapters and validated against the same strategy/risk contracts.
 
@@ -41,7 +43,7 @@ The endpoints require Firebase authentication and use the verified owner UID. Th
 - Both autonomous bots remain OFF by default.
 - No scheduler, worker, or broker order path is activated by this change.
 - The portfolio API does not bypass server-side arming, global kill switch, option capability restrictions, portfolio risk checks, or the order-intent ledger.
-- Before any server adapter is connected, its broker side effects must require a valid fencing token at the final order-submission boundary. The current browser-driven order route is not yet lease-fenced; this is a required follow-up before production orchestration.
+- The lease store now exposes persisted fencing-token verification, and the orchestrator supplies `verifyLease()` to adapters. The current browser-driven order route is not yet lease-fenced and no server strategy adapter calls this method yet; this remains a required integration before production orchestration.
 
 ## Next Wave 2 work
 
