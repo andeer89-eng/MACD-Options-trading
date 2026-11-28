@@ -1,4 +1,5 @@
 import { evaluatePortfolioRisk, evaluateShortPutOrderRisk } from '../../src/utils/portfolioRiskEngine.ts';
+import { validateShortPutEntryQuote } from './optionQuotePolicy.ts';
 
 export const ALPACA_PAPER_ENDPOINT = 'https://paper-api.alpaca.markets';
 export const ALPACA_DATA_ENDPOINT = 'https://data.alpaca.markets';
@@ -978,6 +979,17 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       }
     }
     if (isOpeningShortPutSell) {
+      const quoteSnapshot = await getOptionSnapshots({
+        symbols: [validated.payload.symbol],
+        feed: 'opra',
+      });
+      const quotePolicyError = validateShortPutEntryQuote(
+        quoteSnapshot.snapshots[0],
+        validated.payload.limit_price ?? null,
+      );
+      if (quotePolicyError) {
+        throw new AlpacaApiError(409, quotePolicyError);
+      }
       const orderRisk = evaluateShortPutOrderRisk({
         symbol: validated.payload.symbol, contracts: validated.payload.qty,
         premiumPerShare: validated.payload.limit_price ?? 0, equity,
