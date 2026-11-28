@@ -35,6 +35,7 @@ function payload() {
       assetClass: 'STOCK',
       overall: metrics('STOCK'),
       horizonCohorts: [cohort('STOCK', '0-1d')],
+      originCohorts: [cohort('STOCK', 'LEGACY_UNATTRIBUTED')],
       benchmark: {
         assetClass: 'STOCK',
         sampleSize: 10,
@@ -49,6 +50,7 @@ function payload() {
       assetClass: 'OPTION',
       overall: metrics('OPTION'),
       horizonCohorts: [cohort('OPTION', '7-30d')],
+      originCohorts: [cohort('OPTION', 'LEGACY_UNATTRIBUTED')],
       exitMethodCohorts: [cohort('OPTION', 'CLOSED')],
       minimumSampleSize: 30,
     },
@@ -64,6 +66,7 @@ test('parses a valid report and selects STOCK/OPTION without pooling', () => {
   assert.equal(selectCalibrationReport(parsed, 'OPTION').overall.assetClass, 'OPTION');
   assert.equal(parsed.stock.benchmark.sampleSize, 10);
   assert.equal(parsed.option.exitMethodCohorts[0].key, 'CLOSED');
+  assert.equal(parsed.stock.originCohorts[0].key, 'LEGACY_UNATTRIBUTED');
 });
 
 test('rejects an unverified or non-read-only response', () => {
