@@ -132,7 +132,7 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
         !(benchmark.positiveExcessRate === null || isUnitInterval(benchmark.positiveExcessRate)) ||
         typeof benchmark.belowMinimumSample !== 'boolean') return null;
     return {
-      assetClass, overall, horizonCohorts,
+      assetClass: 'STOCK', overall, horizonCohorts,
       benchmark: {
         assetClass: 'STOCK',
         sampleSize: benchmark.sampleSize as number,
@@ -147,7 +147,7 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
 
   const exitMethodCohorts = parseCohorts(value.exitMethodCohorts, assetClass);
   if (!exitMethodCohorts) return null;
-  return { assetClass, overall, horizonCohorts, exitMethodCohorts, minimumSampleSize: value.minimumSampleSize as number };
+  return { assetClass: 'OPTION', overall, horizonCohorts, exitMethodCohorts, minimumSampleSize: value.minimumSampleSize as number };
 }
 
 export function selectCalibrationReport(
