@@ -360,7 +360,8 @@ export function createFirestorePredictionJournal(options: {
 
     const buildAssetReport = (assetClass: 'STOCK' | 'OPTION') => {
       const rows = records.filter(row => row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
-      const timestamps = [...new Set(rows.map(row => row.prediction.createdAt))].sort((a, b) => a - b);
+      const evaluationAsOf = now();
+      const timestamps = [...new Set(rows.map(row => row.prediction.createdAt).filter(timestamp => timestamp < evaluationAsOf))].sort((a, b) => a - b);
       if (timestamps.length < 5) {
         return {
           assetClass, available: false, reason: 'At least five distinct prediction timestamps are required to form three chronological test folds.',
@@ -368,9 +369,9 @@ export function createFirestorePredictionJournal(options: {
         };
       }
       const boundaries = Array.from({ length: 5 }, (_, index) => timestamps[Math.floor(index * timestamps.length / 5)]);
-      const endAt = timestamps[timestamps.length - 1] + 1;
+      const endAt = Math.min(timestamps[timestamps.length - 1] + 1, evaluationAsOf);
       const foldSpecs: WalkForwardFold[] = [
-        { foldId: 'WF-1', train: { startAt: boundaries[0], endAt: boundaries[1] }, calibration: { startAt: boundaries[1], endAt: boundaries[2] }, test: { startAt: boundaries[2], endAt: boundaries[3] }, evaluationAsOf: now() },
+        { foldId: 'WF-1', train: { startAt: boundaries[0], endAt: boundaries[1] }, calibration: { startAt: boundaries[1], endAt: boundaries[2] }, test: { startAt: boundaries[2], endAt: boundaries[3] }, evaluationAsOf },
         { foldId: 'WF-2', train: { startAt: boundaries[0], endAt: boundaries[2] }, calibration: { startAt: boundaries[2], endAt: boundaries[3] }, test: { startAt: boundaries[3], endAt: boundaries[4] }, evaluationAsOf: now() },
         { foldId: 'WF-3', train: { startAt: boundaries[0], endAt: boundaries[3] }, calibration: { startAt: boundaries[3], endAt: boundaries[4] }, test: { startAt: boundaries[4], endAt }, evaluationAsOf: now() },
       ];
