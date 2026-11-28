@@ -104,3 +104,10 @@ calculateWalkForwardCalibration(records, assetClass, folds) evaluates each asset
 - Folds require unique IDs, valid finite time boundaries and an evaluation cutoff no earlier than test-window end. Invalid early outcome labels are rejected.
 
 These are chronological evaluation cohorts, not a fitted probability calibrator or a claim of out-of-sample alpha. The caller must supply economically meaningful, pre-registered windows and a cutoff consistent with the data's actual availability. STOCK and OPTION are never pooled. This remains a pure read-only research calculation: no journal writes, automatic labeling, API/UI, scheduler, broker, order routing or autotrading integration.
+
+
+## P1.31 — Walk-forward fold aggregation and stability
+
+summarizeWalkForwardCalibration(reports, minimumSampleSize = 30) aggregates test-fold results for one asset class only. Test windows must be non-overlapping, preventing the same prediction from being counted more than once in aggregate metrics. The report includes sample-weighted accuracy, multiclass Brier score and log loss, plus unweighted population standard deviation of fold-level accuracy and multiclass Brier score as simple fold-stability diagnostics.
+
+The aggregate reports total eligible test sample size and a configurable minimum-sample warning (default 30). Empty folds remain visible with null metrics; if all folds are empty, aggregate metrics and dispersion are null. Mixed STOCK/OPTION reports, duplicate fold IDs and overlapping test windows are rejected. Fold dispersion is descriptive, not a statistical significance test. Results remain read-only and do not authorize or trigger stock/options autotrading.
