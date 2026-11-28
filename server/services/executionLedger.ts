@@ -329,7 +329,7 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     if (currentVersion !== update.expectedVersion) throw new ExecutionLedgerConflictError();
 
     const timestamp = new Date(now()).toISOString();
-    const currentState = normalizeTradingControlState(ownerId, current, timestamp);
+    const currentState = normalizeTradingControlState(ownerId, current as Record<string, unknown>, timestamp);
     const next: TradingControlState = applyTradingControlUpdate(currentState, update, timestamp);
     const commit = await request(':commit', {
       method: 'POST',
