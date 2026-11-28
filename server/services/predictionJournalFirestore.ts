@@ -263,6 +263,27 @@ export function createFirestorePredictionJournal(options: {
     return appendEvent(ownerId, { eventType: 'PREDICTION_RECORDED', prediction: snapshot });
   }
 
+  /**
+   * Trusted server-side capture boundary for autonomous bot decisions.
+   * This does not execute, modify, or reconcile orders. Browser routes must
+   * continue to reject bot-origin claims and must never expose this method.
+   */
+  async function recordBotPrediction(
+    ownerId: string,
+    assetClass: 'STOCK' | 'OPTION',
+    input: PredictionSnapshotInput,
+  ): Promise<{ event: PredictionEvent; replayed: boolean }> {
+    const expectedKind = assetClass === 'STOCK' ? 'STOCK_BOT' : 'OPTION_BOT';
+    if (!input || input.assetClass !== assetClass || input.origin?.kind !== expectedKind ||
+        !input.origin.strategyId || !input.origin.decisionId || !input.origin.runId) {
+      throw new FirestorePredictionJournalError(
+        'Bot prediction provenance must match the asset class and include strategyId, decisionId and runId.',
+        400,
+      );
+    }
+    return recordPrediction(ownerId, input);
+  }
+
   async function labelOutcome(ownerId: string, predictionId: string, outcome: PredictionOutcome): Promise<{ event: PredictionEvent; replayed: boolean }> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !/^[A-Za-z0-9_-]{1,128}$/.test(predictionId)) {
       throw new FirestorePredictionJournalError('Invalid prediction journal outcome identity.', 400);
@@ -493,6 +514,6 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, recordPrediction, labelOutcome, readEvents, verify, getPendingPredictions, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
+  return { append, recordPrediction, recordBotPrediction, labelOutcome, readEvents, verify, getPendingPredictions, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
 
 }
