@@ -333,7 +333,7 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
     tradeHistory: [],
     legacyHistory: [],
     sessionLogs: [],
-    isAutoPilotActive: true,
+    isAutoPilotActive: false,
     targetDelta: 0.12,
     profitTakePercent: 75.0,
     minDte: 5,
@@ -922,6 +922,12 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.cash === 'number') {
           let dirty = false;
+
+          // Legacy localStorage must never re-arm an autonomous options bot.
+          if (parsed.isAutoPilotActive !== false) {
+            parsed.isAutoPilotActive = false;
+            dirty = true;
+          }
 
           // Purge any pre-seeded static archive records from earlier sessions
           if (Array.isArray(parsed.legacyHistory) && parsed.legacyHistory.some((t: any) => String(t?.id || '').startsWith('rich-opt-log-'))) {
