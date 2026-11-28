@@ -164,11 +164,12 @@ test('parses temporal degradation separately for STOCK and OPTION and rejects ma
   assert.equal(parseCalibrationPayload(inconsistentTrigger), null);
 
   const partialDeltas = payload();
+  partialDeltas.walkForward.stock.aggregate.degradation.accuracyDelta = -0.12;
   partialDeltas.walkForward.stock.aggregate.degradation.logLossDelta = null;
   assert.equal(parseCalibrationPayload(partialDeltas), null);
 
   const emptyBaselineMismatch = payload();
-  emptyBaselineMismatch.walkForward.stock.aggregate.degradation.baselineFoldCount = 0;
+  emptyBaselineMismatch.walkForward.stock.aggregate.degradation.baselineSampleSize = 5;
   assert.equal(parseCalibrationPayload(emptyBaselineMismatch), null);
 
   const missingDiagnostics = payload();
