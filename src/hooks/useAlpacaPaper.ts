@@ -45,6 +45,28 @@ export interface AlpacaOptionContractDTO {
   tradable: boolean;
 }
 
+export interface AlpacaOptionSnapshotDTO {
+  symbol: string;
+  feed: 'opra' | 'indicative';
+  bidPrice: number | null;
+  askPrice: number | null;
+  bidSize: number;
+  askSize: number;
+  quoteTimestamp: string | null;
+  quoteAgeMs: number | null;
+  spreadPercent: number | null;
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  impliedVolatility: number | null;
+  tradePrice: number | null;
+  tradeSize: number;
+  tradeTimestamp: string | null;
+  quoteStatus: 'FRESH' | 'STALE' | 'INVALID' | 'MISSING';
+  isUsable: boolean;
+}
+
 export interface AlpacaOrderInput {
   symbol: string;
   side: 'buy' | 'sell';
@@ -196,6 +218,28 @@ export async function fetchAlpacaOptionContracts(params: {
     ok: true,
     contracts: Array.isArray(resp.data?.contracts) ? resp.data.contracts : [],
   };
+}
+
+export async function fetchAlpacaOptionSnapshots(
+  symbols: string[],
+  feed: 'opra' | 'indicative' = 'opra',
+): Promise<{ ok: boolean; snapshots: AlpacaOptionSnapshotDTO[]; error?: string }> {
+  const normalizedSymbols = [...new Set(symbols.map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean))];
+  if (normalizedSymbols.length < 1 || normalizedSymbols.length > 100) {
+    return { ok: false, snapshots: [], error: 'Between 1 and 100 option symbols are required.' };
+  }
+  let headers: Record<string, string>;
+  try {
+    headers = await getAlpacaAuthorizationHeaders();
+  } catch (error) {
+    return { ok: false, snapshots: [], error: error instanceof Error ? error.message : 'Alpaca authentication failed.' };
+  }
+  const qs = new URLSearchParams({ symbols: normalizedSymbols.join(','), feed });
+  const resp = await fetchJsonSafe<{ snapshots?: AlpacaOptionSnapshotDTO[]; error?: string }>(
+    `/api/alpaca/options/snapshots?${qs.toString()}`, { headers },
+  );
+  if (!resp.ok) return { ok: false, snapshots: [], error: resp.error || `HTTP ${resp.status}` };
+  return { ok: true, snapshots: Array.isArray(resp.data?.snapshots) ? resp.data.snapshots : [] };
 }
 
 export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: MarketHealthReport | null } = {}) {
