@@ -110,7 +110,7 @@ const wfAsset = (assetClass: 'STOCK' | 'OPTION') => ({
   assetClass, available: true, reason: null, distinctTimestamps: 8,
   folds: [{ foldId: 'WF-1',
     train: { assignedSampleSize: 8, eligibleSampleSize: 8, purgedSampleSize: 0, calibration: null, uncertainty: null },
-    calibration: { assignedSampleSize: 3, eligibleSampleSize: 2, purgedSampleSize: 1, calibration: metrics(assetClass, 2), uncertainty: null },
+    calibration: { assignedSampleSize: 3, eligibleSampleSize: 2, purgedSampleSize: 1, calibration: metrics(assetClass, 2), uncertainty: { accuracy: { lower: 0.3, upper: 0.9 }, positiveOutcomeRate: null } },
     test: { assignedSampleSize: 3, eligibleSampleSize: 3, purgedSampleSize: 0, calibration: metrics(assetClass, 3),
       uncertainty: { accuracy: { lower: 0.4, upper: 0.9 }, positiveOutcomeRate: null } } }],
   aggregate: { foldCount: 1, testSampleSize: 3, belowMinimumSample: true, weightedMeanAccuracy: 0.75,
