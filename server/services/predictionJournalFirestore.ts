@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import { calculateCohortCalibration, calculateWalkForwardCalibration, summarizeWalkForwardCalibration, InMemoryPredictionJournal, verifyPredictionJournal, type WalkForwardFold, type PredictionEvent, type PredictionOutcome, type PredictionSnapshot, type PredictionSnapshotInput } from './predictionJournal.ts';
+import { calculateCohortCalibration, calculateWalkForwardCalibration, summarizeWalkForwardCalibration, InMemoryPredictionJournal, PredictionJournalError, verifyPredictionJournal, type WalkForwardFold, type PredictionEvent, type PredictionOutcome, type PredictionSnapshot, type PredictionSnapshotInput } from './predictionJournal.ts';
 
 type FetchLike = typeof fetch;
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
@@ -198,11 +198,69 @@ export function createFirestorePredictionJournal(options: {
   }
 
   // Raw outcome events must never bypass domain validation. Only labelOutcome may persist them.
-  async function append(ownerId: string, body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
-    if (body?.eventType === 'OUTCOME_LABELED') {
-      throw new FirestorePredictionJournalError('Outcome labels must use labelOutcome().', 400);
+  async function append(_ownerId: string, _body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
+    throw new FirestorePredictionJournalError('Raw journal appends are disabled; use recordPrediction() or labelOutcome().', 400);
+  }
+
+  async function recordPrediction(ownerId: string, input: PredictionSnapshotInput): Promise<{ event: PredictionEvent; replayed: boolean }> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) {
+      throw new FirestorePredictionJournalError('Invalid prediction journal owner.', 400);
     }
-    return appendEvent(ownerId, body);
+
+    // Validate malformed new inputs before any network or Firestore request.
+    try {
+      new InMemoryPredictionJournal(now).record(input);
+    } catch (error) {
+      if (error instanceof PredictionJournalError) {
+        const status = error.code === 'PREDICTION_ID_COLLISION' ? 409 : 400;
+        throw new FirestorePredictionJournalError(`Prediction validation failed: ${error.code}.`, status);
+      }
+      throw error;
+    }
+
+    const events = await readEvents(ownerId);
+    const chain = await verifyEventsForOwner(ownerId, events);
+    if (!chain.valid || !chain.headMatches) {
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; prediction recording is blocked.', 409);
+    }
+
+    // A retry resolves to the original immutable event, independent of the current clock.
+    const existing = events.find(event => event.eventType === 'PREDICTION_RECORDED' &&
+      event.prediction.predictionId === input.predictionId);
+    const inputSha256 = hash(canonical(input));
+    if (existing && existing.eventType === 'PREDICTION_RECORDED') {
+      if (existing.prediction.inputSha256 !== inputSha256) {
+        throw new FirestorePredictionJournalError('Prediction journal prediction identity collision.', 409);
+      }
+      return { event: existing, replayed: true };
+    }
+
+    // Rehydrate all existing semantic records before allowing a new prediction write.
+    const domain = new InMemoryPredictionJournal(now);
+    try {
+      for (const event of events) {
+        if (event.eventType === 'PREDICTION_RECORDED') {
+          const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+            snapshotSha256: _snapshotSha256, ...savedInput } = event.prediction;
+          domain.record(savedInput as PredictionSnapshotInput);
+        } else {
+          domain.label(event.predictionId, event.outcome);
+        }
+      }
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; prediction recording is blocked.', 409);
+    }
+    let snapshot: PredictionSnapshot;
+    try {
+      snapshot = domain.record(input);
+    } catch (error) {
+      if (error instanceof PredictionJournalError) {
+        const status = error.code === 'PREDICTION_ID_COLLISION' ? 409 : 400;
+        throw new FirestorePredictionJournalError(`Prediction validation failed: ${error.code}.`, status);
+      }
+      throw error;
+    }
+    return appendEvent(ownerId, { eventType: 'PREDICTION_RECORDED', prediction: snapshot });
   }
 
   async function labelOutcome(ownerId: string, predictionId: string, outcome: PredictionOutcome): Promise<{ event: PredictionEvent; replayed: boolean }> {
@@ -376,6 +434,6 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
+  return { append, recordPrediction, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
 
 }
