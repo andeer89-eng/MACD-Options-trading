@@ -150,7 +150,7 @@ export function createPredictionCalibrationRouter(options: {
       return;
     }
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) {
       res.status(401).json({ error: 'Firebase authentication required.' });
       return;
