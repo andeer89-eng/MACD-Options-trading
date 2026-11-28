@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   initDefaultPortfolio,
+  loadAutomatedPortfolio,
   calculatePortfolioStats,
   calculatePositionSize,
   processAutonomousCycle,
@@ -193,4 +194,23 @@ test('initDefaultPortfolio(0) yields 0% drawdown and 0% return when Alpaca Paper
 
 test('stock autopilot default remains disarmed after portfolio reset', () => {
   assert.equal(initDefaultPortfolio(25000).isAutoPilotActive, false);
+});
+
+test('legacy stock portfolio with persisted autopilot opt-in is migrated to disarmed', () => {
+  const stored = { ...initDefaultPortfolio(10000), isAutoPilotActive: true };
+  let saved = '';
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { localStorage: {
+      getItem: () => JSON.stringify(stored),
+      setItem: (_key: string, value: string) => { saved = value; },
+    } },
+  });
+  try {
+    const loaded = loadAutomatedPortfolio();
+    assert.equal(loaded.isAutoPilotActive, false);
+    assert.equal(JSON.parse(saved).isAutoPilotActive, false);
+  } finally {
+    delete (globalThis as any).window;
+  }
 });
