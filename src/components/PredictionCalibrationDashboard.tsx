@@ -272,7 +272,7 @@ function PendingPredictionReviewQueue() {
           <span>P0 {(row.probabilities.neutral*100).toFixed(1)}%</span><span>P− {(row.probabilities.negative*100).toFixed(1)}%</span></div>
         <div className="mt-1 text-[9px] text-zinc-600">{row.predictionId} · {row.disposition} · {row.origin?.kind||'unknown'}</div>
       </button>)}</div>
-      <div className="flex justify-between"><button disabled={loading||offset===0} onClick={()=>void load(Math.max(0,offset-pageSize)} className="text-[10px] text-zinc-400 disabled:opacity-30">Previous</button>
+      <div className="flex justify-between"><button disabled={loading||offset===0} onClick={()=>void load(Math.max(0,offset-pageSize))} className="text-[10px] text-zinc-400 disabled:opacity-30">Previous</button>
         <button disabled={loading||offset+pageSize>=total} onClick={()=>void load(offset+pageSize)} className="text-[10px] text-zinc-400 disabled:opacity-30">Next</button></div>
       {selected && <div className="rounded-xl border border-zinc-700 bg-zinc-950/70 p-4 space-y-3">
         <div className="text-xs font-semibold text-white">Label outcome · {selected.symbol}</div>
