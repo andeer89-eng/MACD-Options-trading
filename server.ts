@@ -44,7 +44,7 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   watchlistEvaluationMaxMarketDataAgeMsOverride?: number;
   firebaseServiceAccountJsonOverride?: string;
   executionLedgerOverride?: ReturnType<typeof createExecutionLedger>;
-  stockBotShadowStrategyOverride?: { evaluate: (portfolio: any) => Promise<any> };
+  stockBotShadowStrategyOverride?: { evaluate: (portfolio: any, options?: { signal?: AbortSignal }) => Promise<any> };
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
