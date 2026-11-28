@@ -280,6 +280,43 @@ describe('authenticated prediction calibration read API', () => {
     });
   });
 
+  it('labels OPTION contract outcomes without substituting underlying returns', async () => {
+    const calls: Array<{ ownerId: string; predictionId: string; outcome: any }> = [];
+    const optionOutcome = {
+      assetClass: 'OPTION', realizedAt: 4_000, observedAt: 4_100, outcome: 'POSITIVE',
+      contractReturnPct: 35, underlyingReturnPct: 4.5, exitMethod: 'CLOSED',
+      entryPremium: 2, exitValue: 2.7, labelSource: 'manual-contract-review',
+    };
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async () => ({ uid: 'option_owner_1' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async (ownerId: string, predictionId: string, outcome: any) => {
+          calls.push({ ownerId, predictionId, outcome });
+          return { replayed: false, event: { eventType: 'OUTCOME_LABELED', predictionId, outcome } };
+        },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const response = await fetch(baseUrl + '/api/research/predictions/option-prediction-1/outcome', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify(optionOutcome),
+      });
+      assert.equal(response.status, 201);
+      const body = await response.json() as any;
+      assert.equal(body.outcome.contractReturnPct, 35);
+      assert.equal(body.outcome.underlyingReturnPct, 4.5);
+      assert.equal(body.outcome.exitMethod, 'CLOSED');
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].ownerId, 'option_owner_1');
+      assert.equal(calls[0].predictionId, 'option-prediction-1');
+      assert.deepEqual(calls[0].outcome, optionOutcome);
+    });
+  });
+
   it('rejects unauthenticated, malformed, cross-shape, and owner-overridden outcome payloads before storage', async () => {
     let calls = 0;
     const router = createPredictionCalibrationRouter({
