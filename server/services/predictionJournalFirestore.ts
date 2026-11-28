@@ -197,10 +197,28 @@ export function createFirestorePredictionJournal(options: {
     throw new FirestorePredictionJournalError('Prediction journal remained contended after retry limit.', 409);
   }
 
-  // Raw outcome events must never bypass domain validation. Only labelOutcome may persist them.
+  // Prediction writes must pass the same domain validation as the in-memory journal.
+  // Reconstruct at the original recordedAt so the immutable hashes remain reproducible.
   async function append(ownerId: string, body: EventBody): Promise<{ event: PredictionEvent; replayed: boolean }> {
-    if (body?.eventType === 'OUTCOME_LABELED') {
-      throw new FirestorePredictionJournalError('Outcome labels must use labelOutcome().', 400);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !body || body.eventType !== 'PREDICTION_RECORDED') {
+      throw new FirestorePredictionJournalError('Prediction records must use the validated prediction append boundary.', 400);
+    }
+    const prediction = body.prediction;
+    if (!prediction || prediction.schemaVersion !== '1.0.0' || !Number.isSafeInteger(prediction.recordedAt) ||
+        prediction.recordedAt <= 0 || !/^[a-f0-9]{64}$/.test(prediction.inputSha256) ||
+        !/^[a-f0-9]{64}$/.test(prediction.snapshotSha256)) {
+      throw new FirestorePredictionJournalError('Prediction snapshot metadata is invalid.', 400);
+    }
+    const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+      snapshotSha256: _snapshotSha256, ...input } = prediction;
+    try {
+      const domain = new InMemoryPredictionJournal(() => prediction.recordedAt);
+      const validated = domain.record(input as PredictionSnapshotInput);
+      if (canonical(validated) !== canonical(prediction)) {
+        throw new Error('Prediction snapshot hashes or canonical fields do not match.');
+      }
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction snapshot failed domain or hash validation.', 400);
     }
     return appendEvent(ownerId, body);
   }
