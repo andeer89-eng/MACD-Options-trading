@@ -116,6 +116,8 @@ function parseCohorts(value: unknown, assetClass: CalibrationAssetClass): Calibr
   return cohorts.some(row => row === null) ? null : cohorts as CalibrationCohort[];
 }
 
+function parseAssetReport(value: unknown, assetClass: 'STOCK'): Extract<CalibrationAssetReport, { assetClass: 'STOCK' }> | null;
+function parseAssetReport(value: unknown, assetClass: 'OPTION'): Extract<CalibrationAssetReport, { assetClass: 'OPTION' }> | null;
 function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): CalibrationAssetReport | null {
   if (!isRecord(value) || value.assetClass !== assetClass ||
       !Number.isSafeInteger(value.minimumSampleSize) || (value.minimumSampleSize as number) < 1) return null;
