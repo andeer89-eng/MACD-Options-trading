@@ -114,7 +114,7 @@ const wfAsset = (assetClass: 'STOCK' | 'OPTION') => ({
     test: { assignedSampleSize: 3, eligibleSampleSize: 3, purgedSampleSize: 0, calibration: metrics(assetClass),
       uncertainty: { accuracy: { lower: 0.4, upper: 0.9 }, positiveOutcomeRate: null } } }],
   aggregate: { foldCount: 1, testSampleSize: 3, belowMinimumSample: true, weightedMeanAccuracy: 0.75,
-    weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0 },
+    weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0,\n    degradation: { status: 'INSUFFICIENT_DATA', baselineFoldCount: 0, baselineSampleSize: 0, latestFoldId: 'WF-1', latestSampleSize: 3, accuracyDelta: null, multiclassBrierDelta: null, logLossDelta: null, triggeredBy: [] } },
 });
 
 test('validates walk-forward reports and rejects cross-asset contamination', () => {
@@ -126,4 +126,34 @@ test('validates walk-forward reports and rejects cross-asset contamination', () 
   assert.equal(parseCalibrationPayload(mixed), null);
   const malformed = payload(); malformed.walkForward.stock.folds[0].test.uncertainty.accuracy = { lower: 0.9, upper: 0.2 };
   assert.equal(parseCalibrationPayload(malformed), null);
+});
+
+test('parses temporal degradation separately for STOCK and OPTION and rejects malformed diagnostics', () => {
+  const valid = payload();
+  valid.walkForward.stock.aggregate.degradation = {
+    status: 'POTENTIAL_DEGRADATION', baselineFoldCount: 2, baselineSampleSize: 80,
+    latestFoldId: 'WF-3', latestSampleSize: 35, accuracyDelta: -0.12,
+    multiclassBrierDelta: 0.06, logLossDelta: 0.11,
+    triggeredBy: ['ACCURACY_DROP', 'BRIER_INCREASE', 'LOG_LOSS_INCREASE'],
+  };
+  valid.walkForward.option.aggregate.degradation = {
+    status: 'NO_CLEAR_DEGRADATION', baselineFoldCount: 2, baselineSampleSize: 60,
+    latestFoldId: 'WF-3', latestSampleSize: 32, accuracyDelta: -0.02,
+    multiclassBrierDelta: 0.01, logLossDelta: 0.02, triggeredBy: [],
+  };
+  const parsed = parseCalibrationPayload(valid);
+  assert.ok(parsed);
+  assert.equal(parsed.walkForward.stock.aggregate?.degradation.status, 'POTENTIAL_DEGRADATION');
+  assert.deepEqual(parsed.walkForward.stock.aggregate?.degradation.triggeredBy, ['ACCURACY_DROP', 'BRIER_INCREASE', 'LOG_LOSS_INCREASE']);
+  assert.equal(parsed.walkForward.option.aggregate?.degradation.status, 'NO_CLEAR_DEGRADATION');
+
+  const invalidTrigger = payload();
+  invalidTrigger.walkForward.stock.aggregate.degradation.triggeredBy = ['UNKNOWN_TRIGGER'];
+  assert.equal(parseCalibrationPayload(invalidTrigger), null);
+  const invalidDelta = payload();
+  invalidDelta.walkForward.option.aggregate.degradation.accuracyDelta = 1.5;
+  assert.equal(parseCalibrationPayload(invalidDelta), null);
+  const missingDiagnostics = payload();
+  delete (missingDiagnostics.walkForward.stock.aggregate as any).degradation;
+  assert.equal(parseCalibrationPayload(missingDiagnostics), null);
 });
