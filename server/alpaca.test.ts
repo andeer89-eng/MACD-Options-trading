@@ -767,7 +767,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       const shadow = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, {
         method: 'POST', headers,
       });
-      assert.equal(shadow.status, 200);
+      assert.equal(shadow.status, 200, JSON.stringify(await shadow.clone().json()));
       const body = await shadow.json() as any;
       assert.equal(body.cycle.status, 'completed');
       assert.equal(body.cycle.value.result.mode, 'SHADOW');
