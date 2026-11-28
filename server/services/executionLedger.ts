@@ -364,6 +364,102 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     return next;
   }
 
+  async function botPortfolioDocumentPath(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<string> {
+    const cleanOwner = String(ownerId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
+    const ownerKey = createHash('sha256').update(cleanOwner).digest('hex');
+    return `/alpacaExecutionPortfolios/portfolio_${ownerKey}_${botId}`;
+  }
+
+  async function getBotPortfolioState(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<{
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    schemaVersion: 1;
+    version: number;
+    portfolio: Record<string, unknown> | null;
+    updatedAt: string;
+  }> {
+    const path = await botPortfolioDocumentPath(ownerId, botId);
+    const response = await request(path);
+    if (response.status === 404) {
+      return { ownerId, botId, schemaVersion: 1, version: 0, portfolio: null, updatedAt: new Date(now()).toISOString() };
+    }
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be read.');
+    const stored = fromDocument(await response.json());
+    return {
+      ownerId,
+      botId,
+      schemaVersion: 1,
+      version: Math.max(0, Math.floor(Number(stored.version) || 0)),
+      portfolio: stored.portfolio && typeof stored.portfolio === 'object' && !Array.isArray(stored.portfolio)
+        ? stored.portfolio as Record<string, unknown>
+        : null,
+      updatedAt: String(stored.updatedAt || new Date(now()).toISOString()),
+    };
+  }
+
+  async function setBotPortfolioState(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    expectedVersion: number;
+    portfolio: Record<string, unknown>;
+  }): Promise<{
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    schemaVersion: 1;
+    version: number;
+    portfolio: Record<string, unknown>;
+    updatedAt: string;
+  }> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 ||
+        !input.portfolio || typeof input.portfolio !== 'object' || Array.isArray(input.portfolio)) {
+      throw new Error('Invalid bot portfolio update.');
+    }
+    const serialized = JSON.stringify(input.portfolio);
+    if (Buffer.byteLength(serialized, 'utf8') > 512 * 1024) {
+      throw new Error('Bot portfolio payload exceeds the 512 KiB safety limit.');
+    }
+    const portfolio = JSON.parse(serialized) as Record<string, unknown>;
+    // Portfolio preferences are never an authorization source for autonomous execution.
+    if ('isAutoPilotActive' in portfolio) portfolio.isAutoPilotActive = false;
+    const path = await botPortfolioDocumentPath(input.ownerId, input.botId);
+    const response = await request(path);
+    const doc = response.ok ? await response.json() as any : null;
+    if (!doc && response.status !== 404) {
+      throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be checked before update.');
+    }
+    const current = fromDocument(doc);
+    const currentVersion = Math.max(0, Math.floor(Number(current.version) || 0));
+    if (currentVersion !== input.expectedVersion) {
+      throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently. Reload and retry.');
+    }
+    const updatedAt = new Date(now()).toISOString();
+    const next = {
+      ownerId: input.ownerId,
+      botId: input.botId,
+      schemaVersion: 1,
+      version: currentVersion + 1,
+      portfolio,
+      updatedAt,
+    };
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(next) },
+        currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+      }] }),
+    });
+    if (!commit.ok) {
+      const errorBody = commit.status === 400 ? await commit.clone().json().catch(() => null) as any : null;
+      if (commit.status === 409 || commit.status === 412 ||
+          errorBody?.error?.status === 'FAILED_PRECONDITION' || errorBody?.error?.status === 'ALREADY_EXISTS') {
+        throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently. Reload and retry.');
+      }
+      throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be persisted.');
+    }
+    return next;
+  }
+
   async function tradingCycleLeasePath(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<string> {
     const cleanOwner = String(ownerId || '').trim();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
@@ -904,5 +1000,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, acquireTradingCycleLease, renewTradingCycleLease, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, getBotPortfolioState, setBotPortfolioState, acquireTradingCycleLease, renewTradingCycleLease, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
