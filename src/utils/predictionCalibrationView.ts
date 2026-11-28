@@ -231,7 +231,9 @@ function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass
     for (const key of ['weightedMeanAccuracy','weightedMeanMulticlassBrierScore','weightedMeanLogLoss','accuracyFoldStdDev','multiclassBrierFoldStdDev']) {
       if (!(a[key] === null || (isFiniteNumber(a[key]) && (a[key] as number) >= 0))) return null;
     }
-    const degradation = parseTemporalDegradation(a.degradation);\n    if (!degradation) return null;\n    if ((a.weightedMeanAccuracy !== null && !isUnitInterval(a.weightedMeanAccuracy)) ||
+    const degradation = parseTemporalDegradation(a.degradation);
+    if (!degradation) return null;
+    if ((a.weightedMeanAccuracy !== null && !isUnitInterval(a.weightedMeanAccuracy)) ||
         (a.weightedMeanMulticlassBrierScore !== null && (a.weightedMeanMulticlassBrierScore as number) > 2) ||
         (a.accuracyFoldStdDev !== null && (a.accuracyFoldStdDev as number) > 1)) return null;
     aggregate = { foldCount: a.foldCount as number, testSampleSize: a.testSampleSize as number, belowMinimumSample: a.belowMinimumSample,
