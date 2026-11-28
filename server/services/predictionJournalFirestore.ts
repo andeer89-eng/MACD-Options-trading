@@ -349,6 +349,65 @@ export function createFirestorePredictionJournal(options: {
   }
 
 
+  async function getPendingPredictions(ownerId: string, options: { assetClass?: 'STOCK' | 'OPTION'; limit?: number; offset?: number } = {}) {
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) ||
+        (options.assetClass !== undefined && !['STOCK', 'OPTION'].includes(options.assetClass)) ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+        !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) {
+      throw new FirestorePredictionJournalError('Invalid pending prediction query.', 400);
+    }
+    const events = await readEvents(ownerId);
+    const integrity = await verifyEventsForOwner(ownerId, events);
+    if (!integrity.valid || !integrity.headMatches) {
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; pending predictions are blocked.', 409);
+    }
+    const domain = new InMemoryPredictionJournal(() => Number.MAX_SAFE_INTEGER);
+    const predictions = new Map<string, PredictionSnapshot>();
+    const labeled = new Set<string>();
+    try {
+      for (const event of events) {
+        if (event.eventType === 'PREDICTION_RECORDED') {
+          const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+            snapshotSha256: _snapshotSha256, ...input } = event.prediction;
+          domain.record(input as PredictionSnapshotInput);
+          predictions.set(event.prediction.predictionId, event.prediction);
+        } else {
+          domain.label(event.predictionId, event.outcome);
+          labeled.add(event.predictionId);
+        }
+      }
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; pending prediction listing is blocked.', 409);
+    }
+    const pending = [...predictions.values()]
+      .filter(prediction => !labeled.has(prediction.predictionId) &&
+        (!options.assetClass || prediction.assetClass === options.assetClass))
+      .sort((a, b) => a.targetAt - b.targetAt || a.createdAt - b.createdAt || a.predictionId.localeCompare(b.predictionId));
+    return {
+      integrity: { valid: true as const, headMatches: true as const, length: integrity.length, headHash: integrity.headHash },
+      assetClass: options.assetClass ?? 'ALL',
+      total: pending.length,
+      limit,
+      offset,
+      hasMore: offset + limit < pending.length,
+      predictions: pending.slice(offset, offset + limit).map(prediction => ({
+        predictionId: prediction.predictionId,
+        assetClass: prediction.assetClass,
+        symbol: prediction.symbol,
+        ...(prediction.assetClass === 'OPTION' ? { contractId: prediction.contractId } : {}),
+        createdAt: prediction.createdAt,
+        targetAt: prediction.targetAt,
+        disposition: prediction.disposition,
+        riskMultiplier: prediction.riskMultiplier,
+        confidence: prediction.confidence,
+        probabilities: { ...prediction.probabilities },
+        origin: prediction.origin ? { kind: prediction.origin.kind } : null,
+      })),
+    };
+  }
+
   async function getCalibrationSnapshot(ownerId: string, minimumSampleSize = 30) {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !Number.isSafeInteger(minimumSampleSize) || minimumSampleSize < 1) {
       throw new FirestorePredictionJournalError('Invalid calibration snapshot input.', 400);
@@ -434,6 +493,6 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, recordPrediction, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
+  return { append, recordPrediction, labelOutcome, readEvents, verify, getPendingPredictions, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
 
 }
