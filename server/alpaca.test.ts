@@ -505,6 +505,31 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
             });
           }
 
+          if (url.includes('/v1beta1/options/snapshots')) {
+            const requestUrl = new URL(url);
+            const symbols = (requestUrl.searchParams.get('symbols') || '').split(',').filter(Boolean);
+            const quoteTimestamp = new Date(Date.now() - 1000).toISOString();
+            const snapshots = Object.fromEntries(symbols.map((symbol) => {
+              const isSpy = symbol.startsWith('SPY');
+              return [symbol, {
+                latestQuote: {
+                  bp: isSpy ? 2.40 : 0.10,
+                  ap: isSpy ? 2.50 : 0.11,
+                  bs: 10,
+                  as: 10,
+                  t: quoteTimestamp,
+                },
+                latestTrade: { p: isSpy ? 2.45 : 0.105, s: 5, t: quoteTimestamp },
+                greeks: { delta: -0.12, gamma: 0.01, theta: -0.03, vega: 0.05 },
+                impliedVolatility: 0.30,
+              }];
+            }));
+            return new Response(JSON.stringify({ snapshots }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
           if (url.includes('/v2/options/contracts')) {
             return new Response(
               JSON.stringify({
