@@ -162,3 +162,12 @@ The authenticated calibration endpoint now calls one owner-scoped Firestore read
 The evaluation cutoff is captured once and shared by STOCK and OPTION walk-forward calculations. The response therefore has one integrity length/head hash and one event-history revision for both report families. If the persisted head changes during the history read/verification window, integrity validation fails closed instead of returning mixed or unverified sections. Legacy report methods remain available as compatibility wrappers, but the HTTP endpoint uses only the combined snapshot method.
 
 Tests assert one history read and one head verification for a combined report, separate STOCK/OPTION results, and rejection of a tampered journal. This is a read-only consistency and efficiency improvement: no journal writes, outcome labeling, scheduled work, portfolio changes, broker/Alpaca calls, order routing, or control of either autotrading bot is introduced.
+
+
+## P1.38 — Temporal degradation diagnostics in Quant Lab
+
+The Prediction Calibration dashboard surfaces the existing walk-forward temporal degradation assessment independently for STOCK and OPTION. It compares the latest chronological test fold with the sample-weighted prior-fold baseline and displays baseline/latest sample counts, fold identity, accuracy delta, multiclass Brier delta, log-loss delta, status, and triggered heuristic thresholds.
+
+The dashboard consumes the assessment already included in each integrity-gated aggregate; it does not calculate a second diagnostic or perform another Firestore read. The parser validates status, sample counts, finite deltas, and allowed trigger identifiers before rendering. STOCK and OPTION assessments remain separate. Option calibration remains based on contract outcomes; stock benchmark-adjusted performance remains limited to rows with benchmark observations in the existing STOCK cohort report.
+
+POTENTIAL_DEGRADATION is an operational monitoring heuristic (accuracy drop of at least 10 percentage points, multiclass Brier increase of at least 0.05, or log-loss increase of at least 0.10), not a statistical significance test, causal attribution, or proof of lost edge. If either baseline or latest sample is below the configured minimum, the status is INSUFFICIENT_DATA and no signal is emitted. This is a read-only dashboard enhancement: it does not alter strategy parameters, risk limits, predictions, outcomes, broker connectivity, order routing, or either autotrading bot.

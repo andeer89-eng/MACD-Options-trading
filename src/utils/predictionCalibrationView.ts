@@ -51,12 +51,18 @@ export type WalkForwardSegment = {
   calibration: CalibrationMetrics | null;
   uncertainty: { accuracy: WilsonInterval; positiveOutcomeRate: WilsonInterval } | null;
 };
+export type TemporalDegradationAssessment = {
+  status: 'INSUFFICIENT_DATA' | 'NO_CLEAR_DEGRADATION' | 'POTENTIAL_DEGRADATION';
+  baselineFoldCount: number; baselineSampleSize: number; latestFoldId: string | null; latestSampleSize: number;
+  accuracyDelta: number | null; multiclassBrierDelta: number | null; logLossDelta: number | null;
+  triggeredBy: Array<'ACCURACY_DROP' | 'BRIER_INCREASE' | 'LOG_LOSS_INCREASE'>;
+};
 export type WalkForwardAssetReport = {
   assetClass: CalibrationAssetClass; available: boolean; reason: string | null; distinctTimestamps: number;
   folds: Array<{ foldId: string; train: WalkForwardSegment; calibration: WalkForwardSegment; test: WalkForwardSegment }>;
   aggregate: null | { foldCount: number; testSampleSize: number; belowMinimumSample: boolean;
     weightedMeanAccuracy: number | null; weightedMeanMulticlassBrierScore: number | null;
-    weightedMeanLogLoss: number | null; accuracyFoldStdDev: number | null; multiclassBrierFoldStdDev: number | null };
+    weightedMeanLogLoss: number | null; accuracyFoldStdDev: number | null; multiclassBrierFoldStdDev: number | null; degradation: TemporalDegradationAssessment };
 };
 export type CalibrationPayload = {
   integrity: { valid: true; headMatches: true; length: number; headHash: string };
@@ -182,6 +188,29 @@ function parseWalkForwardSegment(value: unknown, assetClass: CalibrationAssetCla
   return { assignedSampleSize: value.assignedSampleSize as number, eligibleSampleSize: value.eligibleSampleSize as number,
     purgedSampleSize: value.purgedSampleSize as number, calibration, uncertainty };
 }
+function parseTemporalDegradation(value: unknown): TemporalDegradationAssessment | null {
+  const statuses = ['INSUFFICIENT_DATA', 'NO_CLEAR_DEGRADATION', 'POTENTIAL_DEGRADATION'];
+  const triggers = ['ACCURACY_DROP', 'BRIER_INCREASE', 'LOG_LOSS_INCREASE'];
+  if (!isRecord(value) || !statuses.includes(String(value.status)) ||
+      !Number.isSafeInteger(value.baselineFoldCount) || (value.baselineFoldCount as number) < 0 ||
+      !Number.isSafeInteger(value.baselineSampleSize) || (value.baselineSampleSize as number) < 0 ||
+      !(value.latestFoldId === null || (typeof value.latestFoldId === 'string' && value.latestFoldId.trim().length > 0)) ||
+      !Number.isSafeInteger(value.latestSampleSize) || (value.latestSampleSize as number) < 0 ||
+      !Array.isArray(value.triggeredBy) || value.triggeredBy.some(item => !triggers.includes(String(item))) ||
+      new Set(value.triggeredBy).size !== value.triggeredBy.length) return null;
+  for (const key of ['accuracyDelta', 'multiclassBrierDelta', 'logLossDelta']) {
+    if (!(value[key] === null || isFiniteNumber(value[key]))) return null;
+  }
+  if ((value.accuracyDelta !== null && ((value.accuracyDelta as number) < -1 || (value.accuracyDelta as number) > 1)) ||
+      (value.multiclassBrierDelta !== null && ((value.multiclassBrierDelta as number) < -2 || (value.multiclassBrierDelta as number) > 2))) return null;
+  return {
+    status: value.status as TemporalDegradationAssessment['status'],
+    baselineFoldCount: value.baselineFoldCount as number, baselineSampleSize: value.baselineSampleSize as number,
+    latestFoldId: value.latestFoldId as string | null, latestSampleSize: value.latestSampleSize as number,
+    accuracyDelta: value.accuracyDelta as number | null, multiclassBrierDelta: value.multiclassBrierDelta as number | null,
+    logLossDelta: value.logLossDelta as number | null, triggeredBy: value.triggeredBy as TemporalDegradationAssessment['triggeredBy'],
+  };
+}
 function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass): WalkForwardAssetReport | null {
   if (!isRecord(value) || value.assetClass !== assetClass || typeof value.available !== 'boolean' ||
       !(value.reason === null || typeof value.reason === 'string') ||
@@ -202,13 +231,15 @@ function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass
     for (const key of ['weightedMeanAccuracy','weightedMeanMulticlassBrierScore','weightedMeanLogLoss','accuracyFoldStdDev','multiclassBrierFoldStdDev']) {
       if (!(a[key] === null || (isFiniteNumber(a[key]) && (a[key] as number) >= 0))) return null;
     }
+    const degradation = parseTemporalDegradation(a.degradation);
+    if (!degradation) return null;
     if ((a.weightedMeanAccuracy !== null && !isUnitInterval(a.weightedMeanAccuracy)) ||
         (a.weightedMeanMulticlassBrierScore !== null && (a.weightedMeanMulticlassBrierScore as number) > 2) ||
         (a.accuracyFoldStdDev !== null && (a.accuracyFoldStdDev as number) > 1)) return null;
     aggregate = { foldCount: a.foldCount as number, testSampleSize: a.testSampleSize as number, belowMinimumSample: a.belowMinimumSample,
       weightedMeanAccuracy: a.weightedMeanAccuracy as number | null, weightedMeanMulticlassBrierScore: a.weightedMeanMulticlassBrierScore as number | null,
       weightedMeanLogLoss: a.weightedMeanLogLoss as number | null, accuracyFoldStdDev: a.accuracyFoldStdDev as number | null,
-      multiclassBrierFoldStdDev: a.multiclassBrierFoldStdDev as number | null };
+      multiclassBrierFoldStdDev: a.multiclassBrierFoldStdDev as number | null, degradation };
   }
   if (value.available ? !aggregate || folds.length === 0 : aggregate !== null || folds.length !== 0) return null;
   return { assetClass, available: value.available, reason: value.reason as string | null,

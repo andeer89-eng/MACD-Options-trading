@@ -52,6 +52,29 @@ function formatInterval(interval: WilsonInterval): string {
   return interval ? `${(interval.lower * 100).toFixed(1)}–${(interval.upper * 100).toFixed(1)}%` : '—';
 }
 
+function TemporalDegradationPanel({ assessment }: { assessment: NonNullable<NonNullable<WalkForwardAssetReport['aggregate']>['degradation']> }) {
+  const statusLabel = assessment.status === 'POTENTIAL_DEGRADATION' ? 'Potential degradation' : assessment.status === 'NO_CLEAR_DEGRADATION' ? 'No clear degradation' : 'Insufficient data';
+  const delta = (value: number | null) => value === null ? '—' : String((value * 100).toFixed(1)) + ' pp';
+  return (
+    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold text-white">Temporal degradation monitor</h4>
+        <span className={assessment.status === 'POTENTIAL_DEGRADATION' ? 'text-[10px] font-semibold text-amber-300' : 'text-[10px] text-zinc-400'}>{statusLabel}</span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 xl:grid-cols-4 gap-2 text-[10px]">
+        <div><span className="text-zinc-500">Prior-fold baseline</span><div className="mt-1 font-mono text-zinc-200">N={assessment.baselineSampleSize} · {assessment.baselineFoldCount} folds</div></div>
+        <div><span className="text-zinc-500">Latest fold</span><div className="mt-1 font-mono text-zinc-200">{assessment.latestFoldId || '—'} · N={assessment.latestSampleSize}</div></div>
+        <div><span className="text-zinc-500">Accuracy Δ</span><div className="mt-1 font-mono text-zinc-200">{delta(assessment.accuracyDelta)}</div></div>
+        <div><span className="text-zinc-500">Multiclass Brier Δ</span><div className="mt-1 font-mono text-zinc-200">{assessment.multiclassBrierDelta === null ? '—' : assessment.multiclassBrierDelta.toFixed(3)}</div></div>
+        <div><span className="text-zinc-500">Log-loss Δ</span><div className="mt-1 font-mono text-zinc-200">{assessment.logLossDelta === null ? '—' : assessment.logLossDelta.toFixed(3)}</div></div>
+      </div>
+      {assessment.status === 'POTENTIAL_DEGRADATION' && <p className="mt-2 text-[10px] text-amber-200">Triggered: {assessment.triggeredBy.map(value => value.replace(/_/g, ' ').toLowerCase()).join(', ') || 'threshold review required'}.</p>}
+      {assessment.status === 'INSUFFICIENT_DATA' && <p className="mt-2 text-[10px] text-zinc-500">Both the prior-fold baseline and latest fold must meet the configured minimum sample size before a warning is emitted.</p>}
+      <p className="mt-2 text-[10px] text-zinc-500">Operational heuristic only—not a significance test, causal diagnosis, or proof that a strategy has stopped working. No risk limits or autotrading controls are changed.</p>
+    </div>
+  );
+}
+
 function WalkForwardPanel({ report, minimumSampleSize }: { report: WalkForwardAssetReport | undefined; minimumSampleSize: number }) {
   if (!report) return null;
   if (!report.available || !report.aggregate) {
@@ -79,6 +102,7 @@ function WalkForwardPanel({ report, minimumSampleSize }: { report: WalkForwardAs
           <MetricCard label="Accuracy fold SD" value={pct(aggregate.accuracyFoldStdDev)} />
           <MetricCard label="Brier fold SD" value={fixed(aggregate.multiclassBrierFoldStdDev)} />
         </div>
+        <TemporalDegradationPanel assessment={aggregate.degradation} />
       </div>
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
         <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold text-white">Fold-by-fold chronology and maturity</div>
