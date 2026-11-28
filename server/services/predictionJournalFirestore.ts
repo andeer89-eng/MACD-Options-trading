@@ -291,15 +291,17 @@ export function createFirestorePredictionJournal(options: {
   }
 
 
-  async function getCalibrationReport(ownerId: string, minimumSampleSize = 30) {
+  async function getCalibrationSnapshot(ownerId: string, minimumSampleSize = 30) {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !Number.isSafeInteger(minimumSampleSize) || minimumSampleSize < 1) {
-      throw new FirestorePredictionJournalError('Invalid calibration report input.', 400);
+      throw new FirestorePredictionJournalError('Invalid calibration snapshot input.', 400);
     }
+    // All response sections derive from one immutable event-history read and one verified head.
     const events = await readEvents(ownerId);
     const integrity = await verifyEventsForOwner(ownerId, events);
     if (!integrity.valid || !integrity.headMatches) {
-      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; calibration is blocked.', 409);
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; calibration snapshot is blocked.', 409);
     }
+
     const domain = new InMemoryPredictionJournal(() => Number.MAX_SAFE_INTEGER);
     const predictions = new Map<string, PredictionSnapshot>();
     const records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }> = [];
@@ -318,49 +320,14 @@ export function createFirestorePredictionJournal(options: {
         }
       }
     } catch {
-      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; calibration is blocked.', 409);
-    }
-    return {
-      integrity: { valid: true as const, headMatches: true as const, length: integrity.length, headHash: integrity.headHash },
-      stock: calculateCohortCalibration(records, 'STOCK', minimumSampleSize),
-      option: calculateCohortCalibration(records, 'OPTION', minimumSampleSize),
-    };
-  }
-
-
-  async function getWalkForwardCalibrationReport(ownerId: string, minimumSampleSize = 30) {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !Number.isSafeInteger(minimumSampleSize) || minimumSampleSize < 1) {
-      throw new FirestorePredictionJournalError('Invalid walk-forward report input.', 400);
-    }
-    const events = await readEvents(ownerId);
-    const integrity = await verifyEventsForOwner(ownerId, events);
-    if (!integrity.valid || !integrity.headMatches) {
-      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; walk-forward report is blocked.', 409);
-    }
-    const domain = new InMemoryPredictionJournal(() => Number.MAX_SAFE_INTEGER);
-    const predictions = new Map<string, PredictionSnapshot>();
-    const records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }> = [];
-    try {
-      for (const event of events) {
-        if (event.eventType === 'PREDICTION_RECORDED') {
-          const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
-            snapshotSha256: _snapshotSha256, ...input } = event.prediction;
-          domain.record(input as PredictionSnapshotInput);
-          predictions.set(event.prediction.predictionId, event.prediction);
-        } else {
-          domain.label(event.predictionId, event.outcome);
-          const savedPrediction = predictions.get(event.predictionId);
-          if (!savedPrediction) throw new Error('Outcome references a missing prediction.');
-          records.push({ prediction: savedPrediction, outcome: event.outcome });
-        }
-      }
-    } catch {
-      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; walk-forward report is blocked.', 409);
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; calibration snapshot is blocked.', 409);
     }
 
-    const buildAssetReport = (assetClass: 'STOCK' | 'OPTION') => {
+    // Capture one evaluation cutoff for STOCK and OPTION so both walk-forward reports
+    // represent the same temporal boundary as well as the same journal revision.
+    const evaluationAsOf = now();
+    const buildWalkForwardAssetReport = (assetClass: 'STOCK' | 'OPTION') => {
       const rows = records.filter(row => row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
-      const evaluationAsOf = now();
       const timestamps = [...new Set(rows.map(row => row.prediction.createdAt).filter(timestamp => timestamp < evaluationAsOf))].sort((a, b) => a - b);
       if (timestamps.length < 5) {
         return {
@@ -382,13 +349,33 @@ export function createFirestorePredictionJournal(options: {
 
     return {
       integrity: { valid: true as const, headMatches: true as const, length: integrity.length, headHash: integrity.headHash },
+      stock: calculateCohortCalibration(records, 'STOCK', minimumSampleSize),
+      option: calculateCohortCalibration(records, 'OPTION', minimumSampleSize),
       minimumSampleSize,
       methodology: 'chronological-five-bin-expanding-window-v1',
-      stock: buildAssetReport('STOCK'),
-      option: buildAssetReport('OPTION'),
+      walkForward: {
+        stock: buildWalkForwardAssetReport('STOCK'),
+        option: buildWalkForwardAssetReport('OPTION'),
+      },
     };
   }
 
-  return { append, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport };
+  async function getCalibrationReport(ownerId: string, minimumSampleSize = 30) {
+    const snapshot = await getCalibrationSnapshot(ownerId, minimumSampleSize);
+    return { integrity: snapshot.integrity, stock: snapshot.stock, option: snapshot.option };
+  }
+
+  async function getWalkForwardCalibrationReport(ownerId: string, minimumSampleSize = 30) {
+    const snapshot = await getCalibrationSnapshot(ownerId, minimumSampleSize);
+    return {
+      integrity: snapshot.integrity,
+      minimumSampleSize: snapshot.minimumSampleSize,
+      methodology: snapshot.methodology,
+      stock: snapshot.walkForward.stock,
+      option: snapshot.walkForward.option,
+    };
+  }
+
+  return { append, labelOutcome, readEvents, verify, getCalibrationReport, getWalkForwardCalibrationReport, getCalibrationSnapshot };
 
 }
