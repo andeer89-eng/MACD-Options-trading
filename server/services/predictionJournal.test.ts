@@ -304,3 +304,41 @@ test('P1.30 rejects invalid or overlapping walk-forward boundaries', async () =>
     { ...fold, train: { startAt: 1, endAt: 8 }, foldId: 'duplicate' },
   ]), RangeError);
 });
+
+
+test('P1.31 aggregates disjoint walk-forward test folds with sample weighting and dispersion', async () => {
+  const { summarizeWalkForwardCalibration } = await import('./predictionJournal.ts');
+  const report = (foldId: string, startAt: number, endAt: number, sampleSize: number,
+    accuracy: number, brier: number, logLoss: number) => ({
+    foldId, assetClass: 'STOCK' as const,
+    train: { period: { startAt: startAt - 30, endAt: startAt - 20 }, assignedSampleSize: 0,
+      eligibleSampleSize: 0, purgedSampleSize: 0, calibration: null, uncertainty: null },
+    calibration: { period: { startAt: startAt - 20, endAt: startAt - 10 }, assignedSampleSize: 0,
+      eligibleSampleSize: 0, purgedSampleSize: 0, calibration: null, uncertainty: null },
+    test: { period: { startAt, endAt }, assignedSampleSize: sampleSize,
+      eligibleSampleSize: sampleSize, purgedSampleSize: 0,
+      calibration: { assetClass: 'STOCK' as const, sampleSize, accuracy,
+        multiclassBrierScore: brier, logLoss, brierScore: brier, meanConfidence: 0.7, reliability: [] },
+      uncertainty: null },
+  });
+  const summary = summarizeWalkForwardCalibration([
+    report('fold-a', 100, 200, 10, 0.6, 0.4, 0.8),
+    report('fold-b', 200, 300, 30, 0.8, 0.2, 0.4),
+  ], 50);
+  assert.equal(summary.foldCount, 2);
+  assert.equal(summary.testSampleSize, 40);
+  assert.equal(summary.belowMinimumSample, true);
+  assert.equal(summary.weightedMeanAccuracy, 0.75);
+  assert.equal(summary.weightedMeanMulticlassBrierScore, 0.25);
+  assert.equal(summary.weightedMeanLogLoss, 0.5);
+  assert.ok(summary.accuracyFoldStdDev);
+  assert.ok(summary.multiclassBrierFoldStdDev);
+  assert.throws(() => summarizeWalkForwardCalibration([
+    report('overlap-a', 100, 250, 10, 0.6, 0.4, 0.8),
+    report('overlap-b', 200, 300, 10, 0.8, 0.2, 0.4),
+  ]), RangeError);
+  assert.throws(() => summarizeWalkForwardCalibration([
+    report('stock', 100, 200, 10, 0.6, 0.4, 0.8),
+    { ...report('option', 200, 300, 10, 0.8, 0.2, 0.4), assetClass: 'OPTION' },
+  ]), RangeError);
+});

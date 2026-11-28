@@ -434,3 +434,81 @@ export function calculateWalkForwardCalibration(
     };
   });
 }
+
+
+export type WalkForwardAggregateReport = {
+  assetClass: PredictionAssetClass;
+  foldCount: number;
+  testSampleSize: number;
+  belowMinimumSample: boolean;
+  weightedMeanAccuracy: number | null;
+  weightedMeanMulticlassBrierScore: number | null;
+  weightedMeanLogLoss: number | null;
+  accuracyFoldStdDev: number | null;
+  multiclassBrierFoldStdDev: number | null;
+  folds: Array<{ foldId: string; testSampleSize: number; accuracy: number | null; multiclassBrierScore: number | null; logLoss: number | null }>;
+};
+
+/**
+ * Summarizes independent, non-overlapping test folds. Metrics are weighted
+ * by eligible test sample size; dispersion is the population SD across fold
+ * metrics (unweighted). Overlapping test windows are rejected to prevent
+ * silently double-counting the same predictions in aggregate statistics.
+ */
+export function summarizeWalkForwardCalibration(
+  reports: WalkForwardFoldReport[],
+  minimumSampleSize = 30,
+): WalkForwardAggregateReport {
+  if (!Array.isArray(reports) || !reports.length) throw new RangeError('At least one walk-forward report is required');
+  if (!Number.isInteger(minimumSampleSize) || minimumSampleSize < 1) {
+    throw new RangeError('minimumSampleSize must be a positive integer');
+  }
+  const assetClass = reports[0].assetClass;
+  const ids = new Set<string>();
+  const ordered = [...reports].sort((a, b) => a.test.period.startAt - b.test.period.startAt);
+  for (let i = 0; i < ordered.length; i++) {
+    const report = ordered[i];
+    if (report.assetClass !== assetClass || !text(report.foldId) || ids.has(report.foldId)) {
+      throw new RangeError('Walk-forward reports must have one asset class and unique fold IDs');
+    }
+    ids.add(report.foldId);
+    if (i > 0 && ordered[i - 1].test.period.endAt > report.test.period.startAt) {
+      throw new RangeError('Test windows must not overlap when aggregating folds');
+    }
+  }
+  const folds = reports.map(report => {
+    const calibration = report.test.calibration;
+    const sampleSize = calibration?.sampleSize ?? 0;
+    return {
+      foldId: report.foldId,
+      testSampleSize: sampleSize,
+      accuracy: sampleSize ? calibration!.accuracy : null,
+      multiclassBrierScore: sampleSize ? calibration!.multiclassBrierScore : null,
+      logLoss: sampleSize ? calibration!.logLoss : null,
+    };
+  });
+  const total = folds.reduce((sum, fold) => sum + fold.testSampleSize, 0);
+  const weighted = (key: 'accuracy' | 'multiclassBrierScore' | 'logLoss'): number | null => {
+    if (!total) return null;
+    return folds.reduce((sum, fold) =>
+      sum + (fold[key] ?? 0) * fold.testSampleSize, 0) / total;
+  };
+  const deviation = (key: 'accuracy' | 'multiclassBrierScore'): number | null => {
+    const measured = folds.filter(fold => fold[key] !== null);
+    if (!measured.length) return null;
+    const mean = measured.reduce((sum, fold) => sum + (fold[key] as number), 0) / measured.length;
+    return Math.sqrt(measured.reduce((sum, fold) => sum + ((fold[key] as number) - mean) ** 2, 0) / measured.length);
+  };
+  return {
+    assetClass,
+    foldCount: reports.length,
+    testSampleSize: total,
+    belowMinimumSample: total < minimumSampleSize,
+    weightedMeanAccuracy: weighted('accuracy'),
+    weightedMeanMulticlassBrierScore: weighted('multiclassBrierScore'),
+    weightedMeanLogLoss: weighted('logLoss'),
+    accuracyFoldStdDev: deviation('accuracy'),
+    multiclassBrierFoldStdDev: deviation('multiclassBrierScore'),
+    folds,
+  };
+}
