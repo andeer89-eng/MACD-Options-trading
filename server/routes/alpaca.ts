@@ -196,6 +196,10 @@ export function createAlpacaRouter(
             timeInForce: intent.timeInForce,
             limitPrice: intent.limitPrice,
             stopPrice: intent.stopPrice,
+            orderClass: intent.orderClass,
+            takeProfitLimitPrice: intent.takeProfitLimitPrice,
+            stopLossStopPrice: intent.stopLossStopPrice,
+            stopLossLimitPrice: intent.stopLossLimitPrice,
           },
         });
       }
