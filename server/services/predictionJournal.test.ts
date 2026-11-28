@@ -169,11 +169,12 @@ test('P1.28 separates OPTION exit methods and never mixes STOCK records', async 
 
 test('P1.28 handles absent benchmark observations and validates minimum sample size', async () => {
   const { calculateCohortCalibration } = await import('./predictionJournal.ts');
-  const journal = new InMemoryPredictionJournal(() => clock);
-  const oldCreatedAt = clock - 2 * 86_400_000;
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const oldCreatedAt = clock - 1000;
   const prediction = journal.record({ ...stockInput('no-benchmark'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
   const outcome = journal.label('no-benchmark', {
-    ...stockOutcome(), benchmarkReturnPct: undefined, realizedAt: clock - 1, observedAt: clock,
+    ...stockOutcome(), benchmarkReturnPct: undefined, realizedAt: now - 1, observedAt: now,
   });
   const report = calculateCohortCalibration([{ prediction, outcome }], 'STOCK');
   assert.equal(report.benchmark.sampleSize, 0);
