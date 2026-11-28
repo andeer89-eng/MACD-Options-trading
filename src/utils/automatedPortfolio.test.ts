@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   initDefaultPortfolio,
+  loadAutomatedPortfolio,
   calculatePortfolioStats,
   calculatePositionSize,
   processAutonomousCycle,
@@ -68,6 +69,7 @@ function createAccountWithTestPositions(): PortfolioAccount {
   const invested = jpm.entryPrice * jpm.currentShares + msft.entryPrice * msft.currentShares;
   return {
     ...account,
+    isAutoPilotActive: true,
     cash: Number((10000 - invested).toFixed(2)),
     positions: [jpm, msft],
   };
@@ -79,7 +81,36 @@ test('initDefaultPortfolio starts clean with $10,000 baseline and zero fabricate
   assert.equal(account.cash, 10000);
   assert.equal(account.positions.length, 0);
   assert.equal(account.tradeHistory.length, 0);
-  assert.equal(account.isAutoPilotActive, true);
+  assert.equal(account.isAutoPilotActive, false);
+});
+
+test('loadAutomatedPortfolio disarms a previously armed browser portfolio', () => {
+  const storage = new Map<string, string>();
+  const previousWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
+  };
+  try {
+    const persisted = { ...initDefaultPortfolio(10000), isAutoPilotActive: true };
+    storage.set('trullas_automated_portfolio_v2', JSON.stringify(persisted));
+    const loaded = loadAutomatedPortfolio();
+    assert.equal(loaded.isAutoPilotActive, false);
+    assert.equal(JSON.parse(storage.get('trullas_automated_portfolio_v2')!).isAutoPilotActive, false);
+  } finally {
+    (globalThis as any).window = previousWindow;
+  }
+});
+
+test('disabled STOCK autopilot cycle is a no-op', () => {
+  const account = initDefaultPortfolio(10000);
+  const result = processAutonomousCycle(account, [
+    { symbol: 'AAPL', currentPrice: 250, setups: [{ type: 'BULLISH_DIVERGENCE' }] },
+  ]);
+  assert.strictEqual(result.updatedAccount, account);
+  assert.equal(result.actionsTaken.length, 0);
 });
 
 test('calculatePositionSize strictly enforces 1% risk rule', () => {
