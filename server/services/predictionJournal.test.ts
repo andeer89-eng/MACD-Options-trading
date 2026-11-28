@@ -342,3 +342,42 @@ test('P1.31 aggregates disjoint walk-forward test folds with sample weighting an
     { ...report('option', 200, 300, 10, 0.8, 0.2, 0.4), assetClass: 'OPTION' },
   ]), RangeError);
 });
+
+test('P1.41 records typed origin provenance and keeps bot asset classes isolated', () => {
+  const journal = new InMemoryPredictionJournal(() => clock);
+  const stock = journal.record({ ...stockInput('stock-bot-origin'), origin: {
+    kind: 'STOCK_BOT', sourceId: 'stock-run-42', strategyId: 'macd-equity-v2',
+    decisionId: 'decision-stock-42', candidateId: 'candidate-AAPL', runId: 'run-stock-42',
+  } });
+  const option = journal.record({ ...optionInput('option-bot-origin'), origin: {
+    kind: 'OPTION_BOT', sourceId: 'option-run-17', strategyId: 'covered-call-v1',
+    decisionId: 'decision-option-17', candidateId: 'candidate-AAPL-call', runId: 'run-option-17',
+  } });
+  assert.equal(stock.origin?.kind, 'STOCK_BOT');
+  assert.equal(stock.origin?.decisionId, 'decision-stock-42');
+  assert.equal(option.origin?.kind, 'OPTION_BOT');
+  assert.equal(option.origin?.candidateId, 'candidate-AAPL-call');
+  assert.equal(verifyPredictionJournal(journal.listEvents()).valid, true);
+
+  assert.throws(() => journal.record({ ...stockInput('wrong-stock-origin'), origin: {
+    kind: 'OPTION_BOT', sourceId: 'option-run-18',
+  } }), (error: any) => error.code === 'INVALID_PREDICTION');
+  assert.throws(() => journal.record({ ...optionInput('wrong-option-origin'), origin: {
+    kind: 'STOCK_BOT', sourceId: 'stock-run-43',
+  } }), (error: any) => error.code === 'INVALID_PREDICTION');
+});
+
+test('P1.41 validates origin identifiers and preserves legacy origin-free snapshots', () => {
+  const journal = new InMemoryPredictionJournal(() => clock);
+  const legacy = journal.record(stockInput('legacy-origin-free'));
+  assert.equal(legacy.origin, undefined);
+  assert.throws(() => journal.record({ ...stockInput('invalid-origin'), origin: {
+    kind: 'SCANNER', sourceId: '',
+  } }), (error: any) => error.code === 'INVALID_PREDICTION');
+  assert.throws(() => journal.record({ ...stockInput('invalid-origin-kind'), origin: {
+    kind: 'UNKNOWN' as any, sourceId: 'scanner-1',
+  } }), (error: any) => error.code === 'INVALID_PREDICTION');
+  assert.throws(() => journal.record({ ...stockInput('oversized-origin-id'), origin: {
+    kind: 'MANUAL', sourceId: 'x'.repeat(129),
+  } }), (error: any) => error.code === 'INVALID_PREDICTION');
+});
