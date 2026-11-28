@@ -333,7 +333,7 @@ export function initDefaultOptionsPortfolio(startingCapital: number = 2000): Opt
     tradeHistory: [],
     legacyHistory: [],
     sessionLogs: [],
-    isAutoPilotActive: true,
+    isAutoPilotActive: false,
     targetDelta: 0.12,
     profitTakePercent: 75.0,
     minDte: 5,
@@ -931,6 +931,12 @@ export function loadOptionsPortfolio(): OptionsPortfolioAccount {
             dirty = true;
           } else if (!Array.isArray(parsed.legacyHistory)) {
             parsed.legacyHistory = [];
+            dirty = true;
+          }
+
+          // Never inherit an old browser-side autopilot opt-in across this safety migration.
+          if (parsed.isAutoPilotActive !== false) {
+            parsed.isAutoPilotActive = false;
             dirty = true;
           }
 
