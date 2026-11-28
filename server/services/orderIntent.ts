@@ -96,7 +96,8 @@ export function createOrderIntent(input: {
 }
 
 const ALLOWED_TRANSITIONS: Record<OrderIntentState | 'NONE', readonly OrderIntentState[]> = {
-  NONE: ['CREATED'],
+  // Broker-reconciled legacy orders may enter the index without a prior intent event.
+  NONE: ['CREATED', 'SUBMITTED', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'EXPIRED', 'REJECTED'],
   CREATED: ['RISK_APPROVED', 'SUBMITTED', 'UNKNOWN', 'REJECTED'],
   RISK_APPROVED: ['SUBMISSION_PENDING', 'UNKNOWN', 'REJECTED'],
   SUBMISSION_PENDING: ['SUBMITTED', 'UNKNOWN', 'REJECTED'],
