@@ -941,8 +941,10 @@ export function loadAutomatedPortfolio(): PortfolioAccount {
           }
           // Persisted browser state is never trusted to arm autonomous execution.
           // A user must explicitly re-arm through the server-side trading control.
-          parsed.isAutoPilotActive = false;
-          saveAutomatedPortfolio(parsed);
+          if (parsed.isAutoPilotActive !== false) {
+            parsed.isAutoPilotActive = false;
+            saveAutomatedPortfolio(parsed);
+          }
           return parsed;
         }
       }
