@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import { InMemoryPredictionJournal, verifyPredictionJournal, type PredictionEvent, type PredictionOutcome, type PredictionSnapshotInput } from './predictionJournal.ts';
+import { calculateCohortCalibration, InMemoryPredictionJournal, verifyPredictionJournal, type PredictionEvent, type PredictionOutcome, type PredictionSnapshot, type PredictionSnapshotInput } from './predictionJournal.ts';
 
 type FetchLike = typeof fetch;
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
@@ -210,7 +210,7 @@ export function createFirestorePredictionJournal(options: {
       throw new FirestorePredictionJournalError('Invalid prediction journal outcome identity.', 400);
     }
     const events = await readEvents(ownerId);
-    const chain = await verify(ownerId);
+    const chain = await verifyEventsForOwner(ownerId, events);
     if (!chain.valid || !chain.headMatches) {
       throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; outcome labeling is blocked.', 409);
     }
@@ -267,6 +267,10 @@ export function createFirestorePredictionJournal(options: {
 
   async function verify(ownerId: string): Promise<ReturnType<typeof verifyPredictionJournal> & { headMatches: boolean }> {
     const events = await readEvents(ownerId);
+    return verifyEventsForOwner(ownerId, events);
+  }
+
+  async function verifyEventsForOwner(ownerId: string, events: PredictionEvent[]): Promise<ReturnType<typeof verifyPredictionJournal> & { headMatches: boolean }> {
     const chain = verifyPredictionJournal(events);
     const headResponse = await request(`/${headPath(ownerId)}`);
     if (events.length === 0 && headResponse.status === 404) return { ...chain, headMatches: true };
@@ -286,5 +290,43 @@ export function createFirestorePredictionJournal(options: {
     };
   }
 
-  return { append, labelOutcome, readEvents, verify };
+
+  async function getCalibrationReport(ownerId: string, minimumSampleSize = 30) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId) || !Number.isSafeInteger(minimumSampleSize) || minimumSampleSize < 1) {
+      throw new FirestorePredictionJournalError('Invalid calibration report input.', 400);
+    }
+    const events = await readEvents(ownerId);
+    const integrity = await verifyEventsForOwner(ownerId, events);
+    if (!integrity.valid || !integrity.headMatches) {
+      throw new FirestorePredictionJournalError('Prediction journal integrity verification failed; calibration is blocked.', 409);
+    }
+    const domain = new InMemoryPredictionJournal(() => Number.MAX_SAFE_INTEGER);
+    const predictions = new Map<string, PredictionSnapshot>();
+    const records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }> = [];
+    try {
+      for (const event of events) {
+        if (event.eventType === 'PREDICTION_RECORDED') {
+          const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+            snapshotSha256: _snapshotSha256, ...input } = event.prediction;
+          domain.record(input as PredictionSnapshotInput);
+          predictions.set(event.prediction.predictionId, event.prediction);
+        } else {
+          domain.label(event.predictionId, event.outcome);
+          const savedPrediction = predictions.get(event.predictionId);
+          if (!savedPrediction) throw new Error('Outcome references a missing prediction.');
+          records.push({ prediction: savedPrediction, outcome: event.outcome });
+        }
+      }
+    } catch {
+      throw new FirestorePredictionJournalError('Prediction journal semantic validation failed; calibration is blocked.', 409);
+    }
+    return {
+      integrity: { valid: true as const, headMatches: true as const, length: integrity.length, headHash: integrity.headHash },
+      stock: calculateCohortCalibration(records, 'STOCK', minimumSampleSize),
+      option: calculateCohortCalibration(records, 'OPTION', minimumSampleSize),
+    };
+  }
+
+  return { append, labelOutcome, readEvents, verify, getCalibrationReport };
+
 }
