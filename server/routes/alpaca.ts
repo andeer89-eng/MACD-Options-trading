@@ -5,6 +5,7 @@ import { createFirebaseAlpacaAuthMiddleware } from '../services/firebaseAuth.ts'
 import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
+import { getBotOrderBlockReason } from '../services/tradingControl.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
@@ -123,12 +124,16 @@ export function createAlpacaRouter(
   router.post('/api/alpaca/orders', submitOrder);
 
   router.post('/api/alpaca/bot/orders', async (req: Request, res: Response) => {
-    if (botKillSwitchEnabled) {
-      res.status(423).json({ error: 'Autonomous trading is blocked by the server kill switch.', mode: 'PAPER' });
+    const blockReason = getBotOrderBlockReason({
+      enabled: botExecutionEnabled,
+      killSwitchEnabled: botKillSwitchEnabled,
+    });
+    if (blockReason === 'KILL_SWITCH') {
+      res.status(423).json({ error: 'Autonomous trading is blocked by the server kill switch.', code: blockReason, mode: 'PAPER' });
       return;
     }
-    if (!botExecutionEnabled) {
-      res.status(423).json({ error: 'Autonomous trading is not armed on the server. Bot orders are disabled.', mode: 'PAPER' });
+    if (blockReason === 'NOT_ARMED') {
+      res.status(423).json({ error: 'Autonomous trading is not armed on the server. Bot orders are disabled.', code: blockReason, mode: 'PAPER' });
       return;
     }
     await submitOrder(req, res);
