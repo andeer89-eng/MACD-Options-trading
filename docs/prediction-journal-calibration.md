@@ -230,3 +230,11 @@ The server exposes an authenticated, read-only `GET /api/research/predictions/pe
 The endpoint supports an optional exact `STOCK` or `OPTION` filter and bounded offset pagination (limit 1–100; offset 0–100,000). Results are ordered deterministically by target time, creation time and prediction ID. The response exposes only review metadata needed by the queue; evidence source references, journal event hashes, and raw Firestore records are not returned. Integrity or semantic validation failures block the listing.
 
 The queue is manual research workflow infrastructure. It does not label outcomes, infer results, read broker executions, alter portfolios, activate scheduled jobs, route orders, or control either stock or options autotrading bot. STOCK and OPTION remain separately filterable and are never pooled.
+
+## P1.47 — Manual pending-outcome review UI
+
+Quant Lab's Prediction Calibration view now includes a separate pending-outcome review panel. It loads the authenticated owner's integrity-verified pending queue and allows independent STOCK and OPTION filtering with bounded pagination. Selecting a prediction displays its forecast probabilities, target time, disposition and contract identity where applicable.
+
+Outcome labels are entered manually. STOCK requires total return and optionally benchmark return. OPTION requires contract return, underlying return, entry premium, exit value and exit method. The UI submits the existing authenticated semantic outcome endpoint; the server remains authoritative for ownership, maturity, asset-class consistency, hash-chain integrity and immutable idempotency. The panel does not infer realized classes or returns and does not import broker fills.
+
+This is a research-only workflow. It does not change either autotrading bot, portfolio state, broker connectivity, order routing, execution scheduling, or risk limits. Users must verify realized values before recording a label.
