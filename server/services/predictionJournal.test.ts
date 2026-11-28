@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { InMemoryPredictionJournal, calculateCalibration, verifyPredictionJournal, type PredictionSnapshotInput, type StockOutcome, type OptionOutcome } from './predictionJournal.ts';
+import { InMemoryPredictionJournal, calculateCalibration, calculateCohortCalibration, verifyPredictionJournal, type PredictionSnapshotInput, type StockOutcome, type OptionOutcome } from './predictionJournal.ts';
 
 let clock = 2_000_000;
 const digest = 'a'.repeat(64);
@@ -380,4 +380,31 @@ test('P1.41 validates origin identifiers and preserves legacy origin-free snapsh
   assert.throws(() => journal.record({ ...stockInput('oversized-origin-id'), origin: {
     kind: 'MANUAL', sourceId: 'x'.repeat(129),
   } }), (error: any) => error.code === 'INVALID_PREDICTION');
+});
+
+test('P1.42 reports origin calibration cohorts independently for STOCK and OPTION', () => {
+  const journal = new InMemoryPredictionJournal(() => clock);
+  const stockBot = journal.record({ ...stockInput('origin-stock-bot'), origin: { kind: 'STOCK_BOT', sourceId: 'stock-run-1' } });
+  const stockLegacy = journal.record(stockInput('origin-stock-legacy'));
+  const optionBot = journal.record({ ...optionInput('origin-option-bot'), origin: { kind: 'OPTION_BOT', sourceId: 'option-run-1' } });
+  const optionLegacy = journal.record(optionInput('origin-option-legacy'));
+  clock += 2000;
+  const records = [
+    { prediction: stockBot, outcome: journal.label(stockBot.predictionId, stockOutcome()) },
+    { prediction: stockLegacy, outcome: journal.label(stockLegacy.predictionId, stockOutcome()) },
+    { prediction: optionBot, outcome: journal.label(optionBot.predictionId, optionOutcome()) },
+    { prediction: optionLegacy, outcome: journal.label(optionLegacy.predictionId, optionOutcome()) },
+  ];
+  const stock = calculateCohortCalibration(records, 'STOCK', 2);
+  const option = calculateCohortCalibration(records, 'OPTION', 2);
+  const stockBotCohort = stock.originCohorts.find(row => row.key === 'STOCK_BOT')!;
+  const stockLegacyCohort = stock.originCohorts.find(row => row.key === 'LEGACY_UNATTRIBUTED')!;
+  const optionBotCohort = option.originCohorts.find(row => row.key === 'OPTION_BOT')!;
+  assert.equal(stockBotCohort.report.sampleSize, 1);
+  assert.equal(stockLegacyCohort.report.sampleSize, 1);
+  assert.equal(optionBotCohort.report.sampleSize, 1);
+  assert.equal(stock.originCohorts.reduce((sum, row) => sum + row.report.sampleSize, 0), stock.overall.sampleSize);
+  assert.equal(option.originCohorts.reduce((sum, row) => sum + row.report.sampleSize, 0), option.overall.sampleSize);
+  assert.equal(stock.originCohorts.find(row => row.key === 'OPTION_BOT')?.report.sampleSize, 0);
+  assert.equal(option.originCohorts.find(row => row.key === 'STOCK_BOT')?.report.sampleSize, 0);
 });
