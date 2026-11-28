@@ -111,3 +111,12 @@ These are chronological evaluation cohorts, not a fitted probability calibrator 
 summarizeWalkForwardCalibration(reports, minimumSampleSize = 30) aggregates test-fold results for one asset class only. Test windows must be non-overlapping, preventing the same prediction from being counted more than once in aggregate metrics. The report includes sample-weighted accuracy, multiclass Brier score and log loss, plus unweighted population standard deviation of fold-level accuracy and multiclass Brier score as simple fold-stability diagnostics.
 
 The aggregate reports total eligible test sample size and a configurable minimum-sample warning (default 30). Empty folds remain visible with null metrics; if all folds are empty, aggregate metrics and dispersion are null. Mixed STOCK/OPTION reports, duplicate fold IDs and overlapping test windows are rejected. Fold dispersion is descriptive, not a statistical significance test. Results remain read-only and do not authorize or trigger stock/options autotrading.
+
+
+## P1.32 — Integrity-gated persisted calibration read model
+
+The Firestore journal adapter exposes a read-only `getCalibrationReport(ownerId, minimumSampleSize?)` operation. It reads one event-history snapshot, verifies its contiguous sequence/hash chain against the persisted head, and blocks report generation if integrity fails. It then rehydrates the prediction/outcome domain journal to enforce semantic pairing before building the report.
+
+The result contains independent STOCK and OPTION cohort reports plus integrity metadata (verified event count and head hash). Only labeled outcomes enter calibration; predictions without outcomes remain excluded. STOCK benchmark coverage and OPTION exit-method cohorts retain their P1.28 definitions. The default thin-sample threshold remains 30.
+
+This is an owner-scoped server-side read model only. It adds no HTTP route, UI, scheduled worker, automatic labeling, broker/Alpaca access, order routing, or autotrading integration.
