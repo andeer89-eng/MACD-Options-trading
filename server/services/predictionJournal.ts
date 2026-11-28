@@ -254,3 +254,90 @@ export function calculateCohortCalibration(
     minimumSampleSize,
   };
 }
+
+
+export type ProportionConfidenceInterval = { lower: number; upper: number };
+export type CalibrationUncertaintyReport = {
+  assetClass: PredictionAssetClass;
+  sampleSize: number;
+  confidenceLevel: 0.95;
+  accuracy: ProportionConfidenceInterval | null;
+  positiveOutcomeRate: ProportionConfidenceInterval | null;
+  reliability: Array<{
+    bucket: string;
+    sampleSize: number;
+    observedPositiveRate: number;
+    confidenceInterval: ProportionConfidenceInterval;
+  }>;
+  /** STOCK-only: probability that the realized return exceeded its benchmark. */
+  benchmarkPositiveExcessRate?: ProportionConfidenceInterval | null;
+};
+
+const WILSON_Z_95 = 1.959963984540054;
+
+/** Two-sided 95% Wilson score interval for a binomial proportion. */
+function wilsonInterval(successes: number, sampleSize: number): ProportionConfidenceInterval | null {
+  if (!Number.isInteger(successes) || !Number.isInteger(sampleSize) ||
+      sampleSize < 0 || successes < 0 || successes > sampleSize) {
+    throw new RangeError('Wilson interval requires integer counts with 0 <= successes <= sampleSize');
+  }
+  if (sampleSize === 0) return null;
+  const z2 = WILSON_Z_95 ** 2;
+  const p = successes / sampleSize;
+  const denominator = 1 + z2 / sampleSize;
+  const center = (p + z2 / (2 * sampleSize)) / denominator;
+  const margin = WILSON_Z_95 * Math.sqrt((p * (1 - p) / sampleSize) + z2 / (4 * sampleSize ** 2)) / denominator;
+  return { lower: Math.max(0, center - margin), upper: Math.min(1, center + margin) };
+}
+
+/**
+ * Adds sampling uncertainty for observed proportions without implying that
+ * confidence intervals establish predictive edge or calibration quality.
+ * Intervals are two-sided 95% Wilson score intervals; empty samples are null.
+ */
+export function calculateCalibrationUncertainty(
+  records: Array<{ prediction: PredictionSnapshot; outcome: PredictionOutcome }>,
+  assetClass: PredictionAssetClass,
+): CalibrationUncertaintyReport {
+  const rows = records.filter(row =>
+    row.prediction.assetClass === assetClass && row.outcome.assetClass === assetClass);
+  let correct = 0;
+  let positive = 0;
+  const reliabilityCounts = new Map<string, { count: number; positive: number }>();
+  let benchmarkCount = 0;
+  let benchmarkPositive = 0;
+  for (const { prediction, outcome } of rows) {
+    const probabilities = prediction.probabilities;
+    const predictedClass = (Object.entries(probabilities) as Array<[keyof PredictionProbabilities, number]>)
+      .sort((a, b) => b[1] - a[1])[0][0];
+    const actualClass = outcome.outcome.toLowerCase();
+    if (predictedClass === actualClass) correct++;
+    if (actualClass === 'positive') positive++;
+    const bucket = `${Math.min(4, Math.floor(probabilities.positive * 5)) * 20}-${(Math.min(4, Math.floor(probabilities.positive * 5)) + 1) * 20}%`;
+    const current = reliabilityCounts.get(bucket) || { count: 0, positive: 0 };
+    current.count++;
+    if (actualClass === 'positive') current.positive++;
+    reliabilityCounts.set(bucket, current);
+    if (assetClass === 'STOCK') {
+      const stockOutcome = outcome as StockOutcome;
+      if (stockOutcome.benchmarkReturnPct !== undefined) {
+        benchmarkCount++;
+        if (stockOutcome.totalReturnPct > stockOutcome.benchmarkReturnPct) benchmarkPositive++;
+      }
+    }
+  }
+  return {
+    assetClass,
+    sampleSize: rows.length,
+    confidenceLevel: 0.95,
+    accuracy: wilsonInterval(correct, rows.length),
+    positiveOutcomeRate: wilsonInterval(positive, rows.length),
+    reliability: [...reliabilityCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([bucket, value]) => ({
+      bucket, sampleSize: value.count, observedPositiveRate: value.positive / value.count,
+      confidenceInterval: wilsonInterval(value.positive, value.count)!,
+    })),
+    ...(assetClass === 'STOCK'
+      ? { benchmarkPositiveExcessRate: wilsonInterval(benchmarkPositive, benchmarkCount) }
+      : {}),
+  };
+}

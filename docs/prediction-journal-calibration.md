@@ -83,3 +83,10 @@ Each cohort carries the same multiclass and one-vs-rest calibration metrics as t
 Every calibration cohort and benchmark report includes `belowMinimumSample`. The default threshold is 30 and can be overridden with a positive integer. This is an operational warning for thin samples, not a claim of statistical significance or a guarantee of calibration quality. Empty cohorts remain present with `sampleSize=0`; consumers must not interpret zero-valued metrics as measured performance.
 
 This milestone adds only pure research calculations and tests. It does not add API routes, UI, automated outcome labeling, scheduled workers, broker/Alpaca access, or stock/options autotrading integration.
+
+
+## P1.29 — Calibration uncertainty intervals
+
+`calculateCalibrationUncertainty(records, assetClass)` reports two-sided 95% Wilson score intervals for observed classification accuracy and positive-outcome frequency. It also reports intervals for observed positive rates inside each positive-probability reliability bucket. STOCK reports additionally include the interval for benchmark outperformance frequency, using only observations with a benchmark return. OPTION results use option contract outcomes and are never pooled with STOCK.
+
+Intervals are `null` for empty samples. These are sampling-uncertainty intervals for proportions, not confidence bounds on expected returns, proof of predictive edge, or a substitute for out-of-sample validation. The calculation is deterministic and read-only; no journal writes, outcome labeling, scheduler, broker, or autotrading integration is added.
