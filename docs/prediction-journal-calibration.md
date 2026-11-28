@@ -145,3 +145,12 @@ The authenticated calibration endpoint now includes a read-only walk-forward rep
 Each fold exposes train/calibration/test assigned, eligible and purged counts. Training metrics remain omitted; calibration and test metrics are available only for outcomes observable by their respective boundaries. The aggregate reports sample-weighted test accuracy, multiclass Brier and log loss, plus descriptive fold-level standard deviations. Test windows are non-overlapping. The dashboard displays test accuracy and 95% Wilson intervals for accuracy and positive-outcome rate, and warns when the total eligible test sample is below the configured threshold.
 
 These are automatically partitioned historical cohorts, not a user-pre-registered strategy backtest or fitted probability calibrator. Quantile partitioning is a convenience for chronological diagnostics and must not be treated as proof of out-of-sample alpha, investment edge, or statistical significance. No prediction/outcome writes, scheduler, broker, order routing, portfolio mutation, or stock/options autotrading integration is introduced.
+
+
+## P1.36 — Temporal calibration degradation diagnostics
+
+The walk-forward aggregate now compares the latest chronological test fold with a sample-weighted baseline formed from all earlier eligible test folds. STOCK and OPTION are evaluated independently through their existing separate reports. The comparison exposes baseline/latest sample sizes and deltas for accuracy, multiclass Brier score and log loss.
+
+A read-only operational warning is emitted only when both the prior-fold baseline and latest fold meet the configured minimum sample size. The default thresholds are an accuracy decline of at least 10 percentage points, a multiclass Brier increase of at least 0.05, or a log-loss increase of at least 0.10. Any triggered threshold yields `POTENTIAL_DEGRADATION`; otherwise the report is `NO_CLEAR_DEGRADATION`. If either comparison sample is too small, the status is `INSUFFICIENT_DATA` and no degradation signal is emitted.
+
+These fixed thresholds are monitoring heuristics, not hypothesis tests, p-values, causal attribution, or proof that a strategy has stopped working. Fold composition, market regime, label mix and option exit-method mix can change over time; investigate those effects before drawing conclusions. This diagnostic does not change risk limits, pause strategies, modify predictions, label outcomes, or control either stock or options autotrading bot. It is a read-only research warning only.
