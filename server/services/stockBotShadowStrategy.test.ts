@@ -96,3 +96,38 @@ test('stock shadow strategy isolates per-symbol data failures', async () => {
   assert.equal(result.scan.evaluatedSymbols, 1);
   assert.deepEqual(result.scan.errors, [{ symbol: 'AAPL', error: 'provider timeout' }]);
 });
+
+test('stock shadow strategy excludes potentially incomplete daily bars', async () => {
+  const now = Date.parse('2026-11-28T12:00:00.000Z');
+  const mixed = [
+    ...candles,
+    {
+      timestamp: now - 60 * 60 * 1000,
+      open: 140, high: 141, low: 139, close: 140, volume: 1_000_000,
+    },
+  ];
+  const strategy = createStockBotShadowStrategy({
+    getOverview: async () => overview(),
+    fetchCandles: async () => mixed,
+    getMarketHealth: async () => null,
+    now: () => now,
+  });
+  const result = await strategy.evaluate({ symbols: ['AAPL'] });
+  assert.equal(result.status, 'EVALUATED');
+  assert.equal(result.scan.evaluatedSymbols, 1);
+});
+
+test('stock shadow strategy rejects malformed OHLC and non-monotonic candle data', async () => {
+  const malformed = candles.map((candle, index) => index === 10
+    ? { ...candle, high: candle.low - 1 }
+    : candle);
+  const strategy = createStockBotShadowStrategy({
+    getOverview: async () => overview(),
+    fetchCandles: async () => malformed,
+    getMarketHealth: async () => null,
+    now: () => Date.parse('2026-11-28T12:00:00.000Z'),
+  });
+  const result = await strategy.evaluate({ symbols: ['AAPL'] });
+  assert.equal(result.scan.evaluatedSymbols, 0);
+  assert.equal(result.scan.errors[0].error, 'INSUFFICIENT_CANDLES');
+});
