@@ -21,6 +21,7 @@ import { createPredictionCalibrationRouter } from './server/routes/predictionCal
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 import { createStockBotShadowStrategy } from './server/services/stockBotShadowStrategy.ts';
+import { createTradingOrchestrator } from './server/services/tradingOrchestrator.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isProduction = process.env.NODE_ENV === 'production';
@@ -120,12 +121,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     fetchCandles: (symbol) => marketData.fetchYahooData(symbol, '1d', '6mo', 30),
     getMarketHealth: () => marketData.fetchMarketHealthReport(false),
   });
+  const stockBotShadowOrchestrator = executionLedger
+    ? createTradingOrchestrator({ leaseStore: executionLedger })
+    : undefined;
+  const runStockBotShadowCycle = stockBotShadowOrchestrator
+    ? (ownerId: string, portfolio: any) => stockBotShadowOrchestrator.runCycle({
+        ownerId,
+        botId: 'STOCK',
+        // Shadow mode is read-only and never submits broker orders; it does not require trading arming.
+        isArmed: async () => true,
+        execute: async ({ signal, assertLease, verifyLease, fencingToken }) => {
+          assertLease();
+          const result = await stockBotShadowStrategy.evaluate(portfolio, { signal });
+          await verifyLease();
+          return { result, fencingToken };
+        },
+      })
+    : undefined;
 
   app.use(createAlpacaRouter(alpaca, {
     projectId: firebaseProjectId,
     allowedUids: allowedAlpacaUids,
     fetchImpl: options.firebaseAuthFetchOverride,
-  }, executionLedger, executionLedgerRequired, reconciliationWorker, botExecutionEnabled, botKillSwitchEnabled, stockBotShadowStrategy));
+  }, executionLedger, executionLedgerRequired, reconciliationWorker, botExecutionEnabled, botKillSwitchEnabled, runStockBotShadowCycle));
 
   // Ensure unmatched /api/* routes and API parse errors always return JSON, never Vite SPA index.html
   app.use('/api', (_req, res) => {
