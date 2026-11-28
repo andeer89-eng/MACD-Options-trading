@@ -25,6 +25,8 @@ function parseUserPredictionInput(value: unknown): PredictionSnapshotInput | nul
     'disposition', 'riskMultiplier', 'confidence', 'probabilities', 'sourceRefs', 'origin', 'model',
   ])) return null;
   if (!isRecord(value.probabilities) || !hasOnlyKeys(value.probabilities, ['positive', 'neutral', 'negative'])) return null;
+  if (typeof value.evidencePackId !== 'string' || !value.evidencePackId.trim() || value.evidencePackId.length > 128 ||
+      (value.contractId !== undefined && (typeof value.contractId !== 'string' || !value.contractId.trim() || value.contractId.length > 128))) return null;
   if (!Array.isArray(value.sourceRefs) || value.sourceRefs.length < 1 || value.sourceRefs.length > 50 ||
       !value.sourceRefs.every(ref => typeof ref === 'string' && ref.trim().length > 0 && ref.length <= 512)) return null;
   if (!isRecord(value.origin) || !hasOnlyKeys(value.origin, ['kind', 'sourceId', 'strategyId', 'decisionId', 'candidateId', 'runId']) ||
