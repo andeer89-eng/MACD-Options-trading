@@ -291,10 +291,10 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: any }> = [];
     let includePendingNvdaClose = false;
     const submittedOrders = new Map<string, any>();
+    const ledgerEvents: Array<Record<string, any>> = [];
     let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
-      const ledgerEvents: Array<Record<string, any>> = [];
       let tradingControl = {
         ownerId: TEST_FIREBASE_UID,
         stockBotEnabled: false,
