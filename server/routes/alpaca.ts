@@ -55,6 +55,67 @@ export function createAlpacaRouter(
     }
   });
 
+  router.get('/api/alpaca/bot/portfolio/:botId', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent bot portfolio storage is required.', mode: 'PAPER' });
+      return;
+    }
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    const botId = String(req.params.botId || '').toUpperCase();
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    if (botId !== 'STOCK' && botId !== 'OPTION') {
+      res.status(400).json({ error: 'botId must be STOCK or OPTION.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const state = await executionLedger.getBotPortfolioState(ownerId, botId);
+      res.json({ mode: 'PAPER', state });
+    } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
+  router.put('/api/alpaca/bot/portfolio/:botId', async (req: Request, res: Response) => {
+    if (!executionLedger) {
+      res.status(503).json({ error: 'Persistent bot portfolio storage is required.', mode: 'PAPER' });
+      return;
+    }
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    const botId = String(req.params.botId || '').toUpperCase();
+    const body = req.body || {};
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    if (botId !== 'STOCK' && botId !== 'OPTION') {
+      res.status(400).json({ error: 'botId must be STOCK or OPTION.', mode: 'PAPER' });
+      return;
+    }
+    if (!Number.isInteger(body.expectedVersion) || body.expectedVersion < 0 ||
+        !body.portfolio || typeof body.portfolio !== 'object' || Array.isArray(body.portfolio)) {
+      res.status(400).json({ error: 'Portfolio update requires an integer expectedVersion and an object portfolio.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const state = await executionLedger.setBotPortfolioState({
+        ownerId,
+        botId,
+        expectedVersion: body.expectedVersion,
+        portfolio: body.portfolio,
+      });
+      res.json({ mode: 'PAPER', state });
+    } catch (err) {
+      if (err instanceof ExecutionLedgerConflictError) {
+        res.status(409).json({ error: err.message, code: 'BOT_PORTFOLIO_VERSION_CONFLICT', mode: 'PAPER' });
+        return;
+      }
+      handleAlpacaError(res, err);
+    }
+  });
+
   router.get('/api/alpaca/trading-control', async (req: Request, res: Response) => {
     if (!executionLedger) {
       res.status(503).json({ error: 'Persistent trading control storage is required.', mode: 'PAPER' });

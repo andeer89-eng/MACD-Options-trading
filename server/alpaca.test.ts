@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { generateKeyPairSync, sign as signJwt } from 'node:crypto';
 import { createApp } from '../server.ts';
+import { ExecutionLedgerConflictError } from './services/executionLedger.ts';
 import type { Candle } from '../src/utils/trullasStrategy.ts';
 import { createAlpacaService, isValidAlpacaPaperUrl, resolveAlpacaConfig } from './services/alpaca.ts';
 
@@ -295,6 +296,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
+      const botPortfolios = new Map<string, any>();
       let tradingControl = {
         ownerId: TEST_FIREBASE_UID,
         stockBotEnabled: false,
@@ -322,6 +324,24 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
               updatedAt: new Date().toISOString(),
               updatedBy: ownerId,
             },
+        getBotPortfolioState: async (ownerId: string, botId: 'STOCK' | 'OPTION') => {
+          const key = ownerId + ':' + botId;
+          return botPortfolios.get(key) || {
+            ownerId, botId, schemaVersion: 1, version: 0, portfolio: null, updatedAt: new Date().toISOString(),
+          };
+        },
+        setBotPortfolioState: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = botPortfolios.get(key) || { version: 0 };
+          if (current.version !== input.expectedVersion) throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently.');
+          const portfolio = { ...input.portfolio, isAutoPilotActive: false };
+          const next = {
+            ownerId: input.ownerId, botId: input.botId, schemaVersion: 1,
+            version: current.version + 1, portfolio, updatedAt: new Date().toISOString(),
+          };
+          botPortfolios.set(key, next);
+          return next;
+        },
         setTradingControl: async (ownerId: string, update: any) => {
           if (ownerId !== TEST_FIREBASE_UID) throw new Error('Unexpected test owner.');
           if (update.expectedVersion !== tradingControl.version) throw new Error('Trading control version conflict.');
@@ -657,6 +677,44 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         headers: firebaseAuthHeaders('unapproved-user'),
       });
       assert.equal(res.status, 403);
+    });
+
+    it('persists separate owner-scoped STOCK and OPTION portfolio settings without trusting autopilot flags', async () => {
+      const headers = { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' };
+      const initial = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, { headers });
+      assert.equal(initial.status, 200);
+      const initialState = (await initial.json() as any).state;
+      assert.equal(initialState.version, 0);
+      assert.equal(initialState.portfolio, null);
+
+      const saved = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          expectedVersion: 0,
+          portfolio: { startingCapital: 25_000, maxOpenPositions: 4, isAutoPilotActive: true },
+        }),
+      });
+      assert.equal(saved.status, 200);
+      const savedState = (await saved.json() as any).state;
+      assert.equal(savedState.version, 1);
+      assert.equal(savedState.portfolio.isAutoPilotActive, false);
+
+      const stale = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ expectedVersion: 0, portfolio: { startingCapital: 1 } }),
+      });
+      assert.equal(stale.status, 409);
+
+      const options = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/OPTION`, { headers });
+      assert.equal(options.status, 200);
+      assert.equal((await options.json() as any).state.version, 0);
+
+      const invalidBot = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/CRYPTO`, { headers });
+      assert.equal(invalidBot.status, 400);
+
+      const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`);
+      assert.equal(anonymous.status, 401);
     });
 
     it('persists explicit owner arming and makes the owner kill switch override both bots', async () => {

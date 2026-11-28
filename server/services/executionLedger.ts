@@ -364,6 +364,218 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     return next;
   }
 
+  async function botPortfolioDocumentPath(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<string> {
+    const cleanOwner = String(ownerId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
+    const ownerKey = createHash('sha256').update(cleanOwner).digest('hex');
+    return `/alpacaExecutionPortfolios/portfolio_${ownerKey}_${botId}`;
+  }
+
+  async function getBotPortfolioState(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<{
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    schemaVersion: 1;
+    version: number;
+    portfolio: Record<string, unknown> | null;
+    updatedAt: string;
+  }> {
+    const path = await botPortfolioDocumentPath(ownerId, botId);
+    const response = await request(path);
+    if (response.status === 404) {
+      return { ownerId, botId, schemaVersion: 1, version: 0, portfolio: null, updatedAt: new Date(now()).toISOString() };
+    }
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be read.');
+    const stored = fromDocument(await response.json());
+    return {
+      ownerId,
+      botId,
+      schemaVersion: 1,
+      version: Math.max(0, Math.floor(Number(stored.version) || 0)),
+      portfolio: stored.portfolio && typeof stored.portfolio === 'object' && !Array.isArray(stored.portfolio)
+        ? stored.portfolio as Record<string, unknown>
+        : null,
+      updatedAt: String(stored.updatedAt || new Date(now()).toISOString()),
+    };
+  }
+
+  async function setBotPortfolioState(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    expectedVersion: number;
+    portfolio: Record<string, unknown>;
+  }): Promise<{
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    schemaVersion: 1;
+    version: number;
+    portfolio: Record<string, unknown>;
+    updatedAt: string;
+  }> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 ||
+        !input.portfolio || typeof input.portfolio !== 'object' || Array.isArray(input.portfolio)) {
+      throw new Error('Invalid bot portfolio update.');
+    }
+    const serialized = JSON.stringify(input.portfolio);
+    if (Buffer.byteLength(serialized, 'utf8') > 512 * 1024) {
+      throw new Error('Bot portfolio payload exceeds the 512 KiB safety limit.');
+    }
+    const portfolio = JSON.parse(serialized) as Record<string, unknown>;
+    // Portfolio preferences are never an authorization source for autonomous execution.
+    if ('isAutoPilotActive' in portfolio) portfolio.isAutoPilotActive = false;
+    const path = await botPortfolioDocumentPath(input.ownerId, input.botId);
+    const response = await request(path);
+    const doc = response.ok ? await response.json() as any : null;
+    if (!doc && response.status !== 404) {
+      throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be checked before update.');
+    }
+    const current = fromDocument(doc);
+    const currentVersion = Math.max(0, Math.floor(Number(current.version) || 0));
+    if (currentVersion !== input.expectedVersion) {
+      throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently. Reload and retry.');
+    }
+    const updatedAt = new Date(now()).toISOString();
+    const next = {
+      ownerId: input.ownerId,
+      botId: input.botId,
+      schemaVersion: 1 as const,
+      version: currentVersion + 1,
+      portfolio,
+      updatedAt,
+    };
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(next) },
+        currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+      }] }),
+    });
+    if (!commit.ok) {
+      const errorBody = commit.status === 400 ? await commit.clone().json().catch(() => null) as any : null;
+      if (commit.status === 409 || commit.status === 412 ||
+          errorBody?.error?.status === 'FAILED_PRECONDITION' || errorBody?.error?.status === 'ALREADY_EXISTS') {
+        throw new ExecutionLedgerConflictError('Bot portfolio changed concurrently. Reload and retry.');
+      }
+      throw new ExecutionLedgerUnavailableError('Bot portfolio state could not be persisted.');
+    }
+    return next;
+  }
+
+  async function tradingCycleLeasePath(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<string> {
+    const cleanOwner = String(ownerId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
+    const ownerKey = createHash('sha256').update(cleanOwner).digest('hex');
+    return `/alpacaExecutionControl/tradingCycle_${ownerKey}_${botId}`;
+  }
+
+  async function acquireTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    leaseMs: number;
+  }): Promise<{ ownerId: string; botId: 'STOCK' | 'OPTION'; workerId: string; fencingToken: number; expiresAt: number } | null> {
+    const workerId = String(input.workerId || '').trim();
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId) ||
+        !Number.isFinite(input.leaseMs) || input.leaseMs < 10_000 || input.leaseMs > 300_000) {
+      throw new Error('Invalid trading cycle lease parameters.');
+    }
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await request(path);
+      const doc = response.ok ? await response.json() as any : null;
+      if (!doc && response.status !== 404) {
+        throw new ExecutionLedgerUnavailableError('Trading cycle lease could not be read.');
+      }
+      const current = fromDocument(doc);
+      const nowMs = now();
+      if (doc && Number(current.expiresAt || 0) > nowMs) return null;
+      const fencingToken = Math.max(0, Math.floor(Number(current.fencingToken) || 0)) + 1;
+      const expiresAt = nowMs + input.leaseMs;
+      const commit = await request(':commit', {
+        method: 'POST',
+        body: JSON.stringify({ writes: [{
+          update: {
+            name: databaseRoot + path,
+            fields: fields({
+              ownerId: input.ownerId,
+              botId: input.botId,
+              workerId,
+              fencingToken,
+              acquiredAt: new Date(nowMs).toISOString(),
+              updatedAt: new Date(nowMs).toISOString(),
+              expiresAt,
+            }),
+          },
+          currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+        }] }),
+      });
+      if (commit.ok) return { ownerId: input.ownerId, botId: input.botId, workerId, fencingToken, expiresAt };
+      if (commit.status !== 400 && commit.status !== 409 && commit.status !== 412) {
+        throw new ExecutionLedgerUnavailableError('Trading cycle lease could not be acquired.');
+      }
+    }
+    return null;
+  }
+
+  async function renewTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    fencingToken: number;
+    leaseMs: number;
+  }): Promise<boolean> {
+    if (!Number.isInteger(input.fencingToken) || input.fencingToken < 1 ||
+        !Number.isFinite(input.leaseMs) || input.leaseMs < 10_000 || input.leaseMs > 300_000) {
+      throw new Error('Invalid trading cycle lease renewal parameters.');
+    }
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    const response = await request(path);
+    if (!response.ok) return false;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    const nowMs = now();
+    if (current.ownerId !== input.ownerId || current.workerId !== input.workerId ||
+        Number(current.fencingToken) !== input.fencingToken || Number(current.expiresAt || 0) <= nowMs) return false;
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ...current, expiresAt: nowMs + input.leaseMs, updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    return commit.ok;
+  }
+
+  async function releaseTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    fencingToken: number;
+  }): Promise<boolean> {
+    if (!Number.isInteger(input.fencingToken) || input.fencingToken < 1) return false;
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    const response = await request(path);
+    if (!response.ok) return false;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    if (current.ownerId !== input.ownerId || current.workerId !== input.workerId ||
+        Number(current.fencingToken) !== input.fencingToken) return false;
+    const nowMs = now();
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ...current, expiresAt: 0, releasedAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    return commit.ok;
+  }
+
   async function acquireReconciliationLease(ownerId: string, leaseMs: number): Promise<boolean> {
     if (!ownerId || !Number.isFinite(leaseMs) || leaseMs < 10_000) throw new Error('Invalid reconciliation lease parameters.');
     const path = '/alpacaExecutionControl/reconciliationLease';
@@ -788,5 +1000,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, getBotPortfolioState, setBotPortfolioState, acquireTradingCycleLease, renewTradingCycleLease, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }

@@ -196,6 +196,103 @@ describe('Persistent Firestore execution ledger', () => {
     assert.equal(runs[0].status, 'completed');
   });
 
+  it('uses owner-scoped STOCK and OPTION leases with monotonic fencing tokens', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    let clock = Date.UTC(2026, 10, 27, 12, 0, 0);
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+      now: () => clock,
+    });
+    const stockLease = await ledger.acquireTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', leaseMs: 30_000,
+    });
+    assert.ok(stockLease);
+    assert.equal(stockLease.fencingToken, 1);
+    assert.equal(await ledger.acquireTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', leaseMs: 30_000,
+    }), null);
+
+    const optionsLease = await ledger.acquireTradingCycleLease({
+      ownerId: 'owner-a', botId: 'OPTION', workerId: 'worker-a', leaseMs: 30_000,
+    });
+    assert.ok(optionsLease, 'independent asset-class bot may acquire its own lease');
+
+    assert.equal(await ledger.renewTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', fencingToken: 1, leaseMs: 30_000,
+    }), false);
+    assert.equal(await ledger.renewTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1, leaseMs: 30_000,
+    }), true);
+
+    clock += 31_000;
+    const takeover = await ledger.acquireTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', leaseMs: 30_000,
+    });
+    assert.ok(takeover);
+    assert.equal(takeover.fencingToken, 2);
+    assert.equal(await ledger.releaseTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1,
+    }), false, 'stale worker cannot release a successor lease');
+    assert.equal(await ledger.renewTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-a', fencingToken: 1, leaseMs: 30_000,
+    }), false, 'stale worker cannot renew after fencing token advances');
+    assert.equal(await ledger.releaseTradingCycleLease({
+      ownerId: 'owner-a', botId: 'STOCK', workerId: 'worker-b', fencingToken: 2,
+    }), true);
+    assert.equal(await ledger.acquireTradingCycleLease({
+      ownerId: 'owner-b', botId: 'STOCK', workerId: 'worker-a', leaseMs: 30_000,
+    })?.then(Boolean), true, 'leases are isolated by verified owner UID');
+  });
+
+  it('persists versioned owner-scoped bot portfolios and never trusts browser autopilot state', async () => {
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const mock = createFirestoreMock();
+    let clock = Date.UTC(2026, 10, 27, 12, 0, 0);
+    const ledger = createExecutionLedger({
+      projectId: 'test-project',
+      serviceAccountJson: JSON.stringify({ client_email: 'ledger@test-project.iam.gserviceaccount.com', private_key: privateKey }),
+      fetchImpl: mock.fetchImpl,
+      now: () => clock,
+    });
+    const empty = await ledger.getBotPortfolioState('owner-a', 'STOCK');
+    assert.equal(empty.version, 0);
+    assert.equal(empty.portfolio, null);
+
+    const saved = await ledger.setBotPortfolioState({
+      ownerId: 'owner-a',
+      botId: 'STOCK',
+      expectedVersion: 0,
+      portfolio: { startingCapital: 25_000, maxOpenPositions: 4, isAutoPilotActive: true },
+    });
+    assert.equal(saved.version, 1);
+    assert.equal(saved.portfolio.isAutoPilotActive, false);
+    assert.equal(saved.portfolio.maxOpenPositions, 4);
+    await assert.rejects(() => ledger.setBotPortfolioState({
+      ownerId: 'owner-a', botId: 'STOCK', expectedVersion: 0,
+      portfolio: { startingCapital: 1 },
+    }), /changed concurrently/);
+
+    const otherBot = await ledger.getBotPortfolioState('owner-a', 'OPTION');
+    const otherOwner = await ledger.getBotPortfolioState('owner-b', 'STOCK');
+    assert.equal(otherBot.version, 0);
+    assert.equal(otherOwner.version, 0);
+
+    clock += 1000;
+    const updated = await ledger.setBotPortfolioState({
+      ownerId: 'owner-a',
+      botId: 'STOCK',
+      expectedVersion: 1,
+      portfolio: { startingCapital: 30_000, isAutoPilotActive: false },
+    });
+    assert.equal(updated.version, 2);
+    assert.equal((await ledger.getBotPortfolioState('owner-a', 'STOCK')).portfolio?.startingCapital, 30_000);
+  });
+
   it('backfills missing order-index documents from the complete historical event collection', async () => {
     const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
