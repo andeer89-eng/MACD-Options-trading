@@ -46,3 +46,25 @@ The server adapter exposes `labelOutcome(ownerId, predictionId, outcome)` as the
 If history verification fails, labeling is blocked with a conflict response. If the prediction is absent, the asset class differs, the target horizon has not elapsed, or a different label already exists, no Firestore append is attempted. Repeating the exact same valid label is idempotent. The public `append` method accepts prediction-recorded events only and rejects raw outcome events. The internal persistence primitive is not exposed; `labelOutcome` is the sole public path for outcome writes and performs the full semantic validation before the append.
 
 This remains server-only and is not wired to an automatic labeling worker, route, scheduler, broker, or trading bot. A production caller must authenticate and authorize `ownerId` before invoking the adapter.
+
+
+## P1.42 — Semantic prediction write boundary
+
+The public raw `append` method now rejects every event type. Prediction records
+must use `recordPrediction(ownerId, input)`; outcome labels must use
+`labelOutcome(ownerId, predictionId, outcome)`. The low-level atomic append
+primitive remains private to the adapter.
+
+Before recording a prediction, the adapter reads the owner's history, verifies
+the full hash chain and persisted head, rehydrates the domain journal, and calls
+the same `InMemoryPredictionJournal.record` validation used by the reference
+implementation. This enforces required fields, probability simplex, time
+ordering, STOCK/OPTION contract identity, origin provenance rules, and
+prediction-ID immutability before any Firestore append. Exact retries return
+the original immutable snapshot even if the current clock has advanced;
+conflicting reuse of a prediction ID returns a conflict. Integrity failures
+block writes.
+
+This is still a server-side persistence primitive, not an HTTP route or bot
+integration. It does not enable automatic prediction capture, outcome labeling,
+broker activity, or order execution.
