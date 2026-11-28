@@ -36,8 +36,15 @@ function normalizeSymbols(input: unknown): string[] {
 export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
   const now = deps.now ?? Date.now;
 
-  async function evaluate(portfolio: StockBotShadowPortfolio) {
+  async function evaluate(
+    portfolio: StockBotShadowPortfolio,
+    options: { signal?: AbortSignal } = {},
+  ) {
     const startedAt = now();
+    const throwIfAborted = () => {
+      if (options.signal?.aborted) throw new Error('STOCK shadow cycle aborted.');
+    };
+    throwIfAborted();
     const [overview, marketHealth] = await Promise.all([
       deps.getOverview(),
       deps.getMarketHealth().catch(() => null),
@@ -65,7 +72,9 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
     const scanErrors: Array<{ symbol: string; error: string }> = [];
     const marketItems = (await Promise.all(symbols.map(async (symbol) => {
       try {
+        throwIfAborted();
         const candles = await deps.fetchCandles(symbol);
+        throwIfAborted();
         if (!Array.isArray(candles) || candles.length < 30) {
           scanErrors.push({ symbol, error: 'INSUFFICIENT_CANDLES' });
           return null;
@@ -93,6 +102,7 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
       }
     }))).filter((item): item is NonNullable<typeof item> => item !== null);
 
+    throwIfAborted();
     const settings = clampSettingsBounds({
       ...DEFAULT_SETTINGS,
       ...(portfolio.masterPlanSettings || {}),
@@ -123,6 +133,7 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
 
     const ordersToPlace = risk.allowNewEntries ? candidates.ordersToPlace : [];
     const reversalRequests = risk.allowNewEntries ? candidates.reversalRequests : [];
+    throwIfAborted();
     const completedAt = now();
     const configDigest = createHash('sha256').update(JSON.stringify({
       symbols,
