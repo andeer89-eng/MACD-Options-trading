@@ -190,3 +190,25 @@ walk-forward diagnostics:
 These checks reject internally inconsistent or partially fabricated API
 payloads at the UI boundary. They do not replace server-side journal integrity
 verification and do not change STOCK/OPTION evaluation or execution behavior.
+
+
+## P1.41 — Prediction origin provenance
+
+Prediction snapshots may now include an optional immutable `origin` envelope
+to identify the source that produced the research decision:
+
+- `kind`: STOCK_BOT, OPTION_BOT, WATCHLIST, SCANNER, CHART, MANUAL, or RESEARCH.
+- `sourceId`: required stable source/run identifier.
+- Optional `strategyId`, `decisionId`, `candidateId`, and `runId` identifiers.
+
+The origin envelope is part of the canonical prediction snapshot hash and the
+append-only journal event, so changing the source identity changes the
+prediction identity digest. STOCK_BOT origins are accepted only for STOCK
+predictions; OPTION_BOT origins only for OPTION predictions. Identifiers are
+bounded and validated. Older snapshots without an origin remain valid.
+
+This is a provenance contract only. It does not automatically capture bot
+signals, read or modify bot queues, submit orders, or connect research
+predictions to broker executions. Any future adapter must be separately
+authorized, read-only at the execution boundary, and preserve independent
+STOCK and OPTION records.
