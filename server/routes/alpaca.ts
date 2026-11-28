@@ -50,6 +50,26 @@ export function createAlpacaRouter(
     }
   });
 
+  router.get('/api/alpaca/options/snapshots', async (req: Request, res: Response) => {
+    try {
+      const rawSymbols = String(req.query.symbols || '');
+      const symbols = rawSymbols.split(',').map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
+      if (symbols.length < 1 || symbols.length > 100) {
+        res.status(400).json({ error: 'symbols must contain between 1 and 100 OCC option contracts.', mode: 'PAPER' });
+        return;
+      }
+      const feed = req.query.feed === undefined ? 'opra' : String(req.query.feed);
+      if (feed !== 'opra' && feed !== 'indicative') {
+        res.status(400).json({ error: 'feed must be opra or indicative.', mode: 'PAPER' });
+        return;
+      }
+      const result = await alpaca.getOptionSnapshots({ symbols, feed });
+      res.json({ mode: 'PAPER', ...result });
+    } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
   router.get('/api/alpaca/options/contracts', async (req: Request, res: Response) => {
     try {
       const underlying = String(req.query.underlying || 'SPY');
