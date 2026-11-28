@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { createFirestorePredictionJournal, FirestorePredictionJournalError } from './predictionJournalFirestore.ts';
-import type { PredictionSnapshot } from './predictionJournal.ts';
+import type { PredictionSnapshot, PredictionSnapshotInput } from './predictionJournal.ts';
 
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048,
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -15,6 +15,12 @@ const prediction: PredictionSnapshot = {
   probabilities: { positive: 0.7, neutral: 0.2, negative: 0.1 }, sourceRefs: ['sec:filing:1'],
   schemaVersion: '1.0.0', recordedAt: 1300, inputSha256: 'b'.repeat(64), snapshotSha256: 'c'.repeat(64),
 };
+
+function asPredictionInput(snapshot: PredictionSnapshot): PredictionSnapshotInput {
+  const { schemaVersion: _schemaVersion, recordedAt: _recordedAt, inputSha256: _inputSha256,
+    snapshotSha256: _snapshotSha256, ...input } = snapshot;
+  return input;
+}
 
 function fakeFirestore() {
   const docs = new Map<string, { fields: Record<string, any>; updateTime: string }>();
@@ -82,10 +88,10 @@ function fakeFirestore() {
 test('persists STOCK and OPTION event types in an atomic append-only hash chain', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl, now: () => 10_000 });
-  const first = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const first = await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   const optionPrediction = { ...prediction, predictionId: 'pred-option-1', assetClass: 'OPTION' as const,
     contractId: 'AAPL261218C00200000' };
-  const second = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  const second = await journal.recordPrediction('owner_1', asPredictionInput(optionPrediction));
   assert.equal(first.event.sequence, 1);
   assert.equal(first.event.prevHash, '0'.repeat(64));
   assert.equal(second.event.sequence, 2);
@@ -96,8 +102,8 @@ test('persists STOCK and OPTION event types in an atomic append-only hash chain'
 test('retries are idempotent when the exact same event is appended again', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  const first = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
-  const replay = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const first = await journal.recordPrediction('owner_1', asPredictionInput(prediction));
+  const replay = await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   assert.equal(first.event.eventHash, replay.event.eventHash);
   assert.equal(first.replayed, false);
   assert.equal(replay.replayed, true);
@@ -107,9 +113,9 @@ test('retries are idempotent when the exact same event is appended again', async
 test('enforces prediction identity uniqueness and verifies the complete persisted hash chain', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  const first = await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  const first = await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   await assert.rejects(
-    () => journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: { ...prediction, snapshotSha256: 'd'.repeat(64) } }),
+    () => journal.recordPrediction('owner_1', { ...asPredictionInput(prediction), confidence: 0.4 }),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409,
   );
   const events = await journal.readEvents('owner_1');
@@ -123,7 +129,7 @@ test('enforces prediction identity uniqueness and verifies the complete persiste
 test('reports a missing persisted head as an integrity failure, not a valid empty journal', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   fake.deleteHead('owner_1');
   const verification = await journal.verify('owner_1');
   assert.equal(verification.valid, false);
@@ -133,7 +139,7 @@ test('reports a missing persisted head as an integrity failure, not a valid empt
 test('detects a tampered persisted event during full-history verification', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   fake.tamperFirstEvent();
   const verification = await journal.verify('owner_1');
   assert.equal(verification.valid, false);
@@ -144,7 +150,7 @@ test('detects a tampered persisted event during full-history verification', asyn
 test('persists and idempotently replays outcome labels with their own uniqueness key', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
     totalReturnPct: 12, labelSource: 'test-fixture' };
   const first = await journal.labelOutcome('owner_1', prediction.predictionId, outcome);
@@ -174,7 +180,7 @@ test('rejects invalid owner and malformed event before Firestore access', async 
   let requests = 0;
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
     fetchImpl: async () => { requests++; return new Response('{}', { status: 500 }); } });
-  await assert.rejects(() => journal.append('../other', { eventType: 'PREDICTION_RECORDED', prediction }),
+  await assert.rejects(() => journal.recordPrediction('../other', asPredictionInput(prediction)),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
   assert.equal(requests, 0);
 });
@@ -187,7 +193,7 @@ test('semantic outcome labeling requires an existing prediction and matching ass
     totalReturnPct: 12, labelSource: 'test-fixture' };
   await assert.rejects(() => journal.labelOutcome('owner_1', 'missing-prediction', stockOutcome),
     (error: unknown) => error instanceof Error && error.message.includes('PREDICTION_NOT_FOUND'));
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   const optionOutcome = { assetClass: 'OPTION' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
     contractReturnPct: 20, underlyingReturnPct: 5, exitMethod: 'CLOSED' as const, entryPremium: 2, exitValue: 2.4,
     labelSource: 'test-fixture' };
@@ -199,7 +205,7 @@ test('semantic outcome labeling requires an existing prediction and matching ass
 test('semantic outcome labeling enforces target time and immutable relabeling', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl, now: () => 10_000 });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   const early = { assetClass: 'STOCK' as const, realizedAt: 1500, observedAt: 1600, outcome: 'POSITIVE' as const,
     totalReturnPct: 12, labelSource: 'test-fixture' };
   await assert.rejects(() => journal.labelOutcome('owner_1', prediction.predictionId, early),
@@ -219,7 +225,7 @@ test('semantic outcome labeling enforces target time and immutable relabeling', 
 test('blocks semantic outcome labeling when persisted journal integrity fails', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   fake.tamperFirstEvent();
   const outcome = { assetClass: 'STOCK' as const, realizedAt: 3000, observedAt: 3100, outcome: 'POSITIVE' as const,
     totalReturnPct: 12, labelSource: 'test-fixture' };
@@ -233,8 +239,8 @@ test('builds separate STOCK and OPTION calibration reports only from integrity-v
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
   const optionPrediction: PredictionSnapshot = { ...prediction, predictionId: 'pred-option-calibration',
     assetClass: 'OPTION', contractId: 'AAPL261218C00200000' };
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
+  await journal.recordPrediction('owner_1', asPredictionInput(optionPrediction));
   await journal.labelOutcome('owner_1', prediction.predictionId, { assetClass: 'STOCK', realizedAt: 3000,
     observedAt: 3100, outcome: 'POSITIVE', totalReturnPct: 12, benchmarkReturnPct: 5, labelSource: 'test-fixture' });
   await journal.labelOutcome('owner_1', optionPrediction.predictionId, { assetClass: 'OPTION', realizedAt: 3000,
@@ -258,8 +264,8 @@ test('builds calibration and walk-forward from one integrity-verified Firestore 
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl, now: () => 10_000 });
   const optionPrediction: PredictionSnapshot = { ...prediction, predictionId: 'pred-option-snapshot',
     assetClass: 'OPTION', contractId: 'AAPL261218C00200000' };
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
+  await journal.recordPrediction('owner_1', asPredictionInput(optionPrediction));
   await journal.labelOutcome('owner_1', prediction.predictionId, { assetClass: 'STOCK', realizedAt: 3000,
     observedAt: 3100, outcome: 'POSITIVE', totalReturnPct: 12, benchmarkReturnPct: 5, labelSource: 'test-fixture' });
   await journal.labelOutcome('owner_1', optionPrediction.predictionId, { assetClass: 'OPTION', realizedAt: 3000,
@@ -283,7 +289,7 @@ test('builds calibration and walk-forward from one integrity-verified Firestore 
 test('blocks the combined calibration snapshot when the persisted journal is tampered', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   fake.tamperFirstEvent();
   await assert.rejects(() => journal.getCalibrationSnapshot('owner_1'),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
@@ -292,7 +298,7 @@ test('blocks the combined calibration snapshot when the persisted journal is tam
 test('blocks persisted calibration reports when the event chain is tampered', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
-  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
   fake.tamperFirstEvent();
   await assert.rejects(() => journal.getCalibrationReport('owner_1'),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
@@ -307,4 +313,50 @@ test('returns valid empty per-asset reports for a new owner and rejects invalid 
   assert.equal(empty.option.overall.sampleSize, 0);
   await assert.rejects(() => journal.getCalibrationReport('owner_1', 0),
     (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
+});
+
+test('rejects raw prediction appends and validates predictions before Firestore writes', async () => {
+  let requests = 0;
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: async () => { requests++; return new Response('{}', { status: 500 }); } });
+  await assert.rejects(
+    () => journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400 &&
+      error.message.includes('recordPrediction'),
+  );
+  await assert.rejects(
+    () => journal.recordPrediction('owner_1', { ...asPredictionInput(prediction), probabilities: {
+      positive: 0.8, neutral: 0.3, negative: 0.1,
+    } }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400,
+  );
+  assert.equal(requests, 0);
+});
+
+test('recordPrediction rehydrates history for idempotent retries and rejects conflicting identities', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: fake.fetchImpl, now: () => 10_000 });
+  const input = asPredictionInput(prediction);
+  const first = await journal.recordPrediction('owner_1', input);
+  const replay = await journal.recordPrediction('owner_1', input);
+  assert.equal(first.event.eventHash, replay.event.eventHash);
+  assert.equal(replay.replayed, true);
+  await assert.rejects(
+    () => journal.recordPrediction('owner_1', { ...input, confidence: 0.4 }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409,
+  );
+  assert.equal((await journal.readEvents('owner_1')).length, 1);
+});
+
+test('blocks prediction recording when existing persisted history fails integrity verification', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.recordPrediction('owner_1', asPredictionInput(prediction));
+  fake.tamperFirstEvent();
+  await assert.rejects(
+    () => journal.recordPrediction('owner_1', { ...asPredictionInput(prediction), predictionId: 'pred-stock-2' }),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409,
+  );
+  assert.equal(fake.counts().commitCalls, 1);
 });
