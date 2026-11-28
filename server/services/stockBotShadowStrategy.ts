@@ -26,6 +26,32 @@ export interface StockBotShadowPortfolio {
   masterPlanSettings?: Record<string, unknown>;
 }
 
+function selectClosedValidDailyCandles(input: unknown, nowMs: number): any[] {
+  if (!Array.isArray(input)) return [];
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const closed = input.filter((candle) => {
+    const timestamp = Number(candle?.timestamp);
+    return Number.isFinite(timestamp) && timestamp > 0 && timestamp + oneDayMs <= nowMs;
+  });
+  let previousTimestamp = -Infinity;
+  for (const candle of closed) {
+    const timestamp = Number(candle.timestamp);
+    const open = Number(candle.open);
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const close = Number(candle.close);
+    const volume = Number(candle.volume);
+    if (timestamp <= previousTimestamp ||
+        ![open, high, low, close, volume].every(Number.isFinite) ||
+        open <= 0 || high <= 0 || low <= 0 || close <= 0 || volume < 0 ||
+        high < Math.max(open, close, low) || low > Math.min(open, close, high)) {
+      return [];
+    }
+    previousTimestamp = timestamp;
+  }
+  return closed;
+}
+
 function normalizeSymbols(input: unknown): string[] {
   const raw = Array.isArray(input) ? input : DEFAULT_SYMBOLS;
   const symbols = [...new Set(raw.map((value) => String(value || '').trim().toUpperCase())
@@ -73,9 +99,10 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
     const marketItems = (await Promise.all(symbols.map(async (symbol) => {
       try {
         throwIfAborted();
-        const candles = await deps.fetchCandles(symbol);
+        const rawCandles = await deps.fetchCandles(symbol);
         throwIfAborted();
-        if (!Array.isArray(candles) || candles.length < 30) {
+        const candles = selectClosedValidDailyCandles(rawCandles, now());
+        if (candles.length < 30) {
           scanErrors.push({ symbol, error: 'INSUFFICIENT_CANDLES' });
           return null;
         }
