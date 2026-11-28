@@ -127,3 +127,12 @@ This is an owner-scoped server-side read model only. It adds no HTTP route, UI, 
 The server exposes `GET /api/research/prediction-calibration` as a read-only endpoint. It verifies the Firebase ID token, derives the Firestore owner scope exclusively from the verified Firebase UID (never from a request parameter), and returns the separate STOCK and OPTION calibration cohorts from P1.32. `minimumSampleSize` is optional (default 30; accepted range 1–10,000). Responses use `Cache-Control: no-store` and `Vary: Authorization`.
 
 The route fails closed when Firebase authentication or Firestore storage is unavailable, rejects malformed UIDs and thresholds, and propagates integrity failures rather than returning unverified metrics. It has no write method, no user-supplied owner selector, no scheduler, and no integration with stock/options order execution or broker APIs.
+
+
+## P1.34 — Read-only calibration dashboard
+
+The Quant Lab exposes a Prediction Calibration dashboard backed by the authenticated P1.33 read endpoint. It obtains a Firebase ID token from the signed-in client session and never accepts an owner identifier from the browser. The user can switch between STOCK and OPTION reports and select the minimum cohort sample threshold.
+
+The dashboard displays the verified journal integrity state, labeled sample size, multiclass accuracy/Brier/log-loss, positive-class Brier, mean confidence, positive-class reliability buckets, STOCK-only benchmark coverage/excess-return diagnostics, forecast-horizon cohorts, and OPTION exit-method cohorts. STOCK and OPTION remain isolated throughout the UI; option reports do not receive stock benchmark metrics.
+
+The dashboard is read-only. It does not create predictions, label outcomes, modify portfolios, connect to broker APIs, submit orders, or control either the stock or options autotrading bot. Thin-sample labels are operational warnings only and must not be interpreted as statistical significance or evidence of future profitability.

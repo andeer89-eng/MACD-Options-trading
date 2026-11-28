@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  BarChart3,
   Radio,
   Sparkles,
   Compass,
@@ -36,6 +37,7 @@ import { TrendSpiderSuite } from './components/TrendSpiderSuite';
 import { TodayView } from './components/TodayView';
 import { Ml4tFactorLabView } from './components/Ml4tFactorLabView';
 import { ExecutionOperationsDashboard } from './components/ExecutionOperationsDashboard';
+import { PredictionCalibrationDashboard } from './components/PredictionCalibrationDashboard';
 
 import { PositionCalculatorModal } from './components/PositionCalculatorModal';
 import { TelegramConfigModal } from './components/TelegramConfigModal';
@@ -54,7 +56,7 @@ import { useMarketStream } from './hooks/useMarketStream';
 type ScannerSubTab = 'live' | 'confluence' | 'zones' | 'watchlists';
 type ChartSubTab = 'studio' | 'sec';
 type MarketsSubTab = 'heatmap' | 'sectors';
-type QuantSubTab = 'luxalgo' | 'trendspider' | 'ml4t' | 'indicators' | 'rules';
+type QuantSubTab = 'luxalgo' | 'trendspider' | 'ml4t' | 'indicators' | 'rules' | 'calibration';
 type OpsSubTab = 'alerts' | 'health' | 'python' | 'execution';
 
 interface SubTabItem<T extends string> {
@@ -212,7 +214,8 @@ export default function App() {
           subTab === 'trendspider' ||
           subTab === 'ml4t' ||
           subTab === 'indicators' ||
-          subTab === 'rules'
+          subTab === 'rules' ||
+          subTab === 'calibration'
         ) {
           setQuantSubTab(subTab);
         }
@@ -634,6 +637,7 @@ export default function App() {
                 { id: 'ml4t', label: 'Factor IC & ML Lab', icon: Activity },
                 { id: 'indicators', label: 'Indicator Library', icon: Code2 },
                 { id: 'rules', label: '4-Pillars Playbook', icon: BookOpen },
+                { id: 'calibration', label: 'Prediction Calibration', icon: BarChart3 },
               ]}
             />
             {quantSubTab === 'luxalgo' && (
@@ -676,6 +680,7 @@ export default function App() {
               />
             )}
             {quantSubTab === 'rules' && <StrategyGuide />}
+            {quantSubTab === 'calibration' && <PredictionCalibrationDashboard />}
           </div>
         )}
 
