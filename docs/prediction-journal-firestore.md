@@ -48,7 +48,7 @@ If history verification fails, labeling is blocked with a conflict response. If 
 This remains server-only and is not wired to an automatic labeling worker, route, scheduler, broker, or trading bot. A production caller must authenticate and authorize `ownerId` before invoking the adapter.
 
 
-## P1.42 — Semantic prediction write boundary
+## P1.43 — Semantic prediction write boundary
 
 The public raw `append` method now rejects every event type. Prediction records
 must use `recordPrediction(ownerId, input)`; outcome labels must use
