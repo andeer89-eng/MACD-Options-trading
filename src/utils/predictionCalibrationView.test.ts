@@ -115,7 +115,7 @@ const wfAsset = (assetClass: 'STOCK' | 'OPTION') => ({
       uncertainty: { accuracy: { lower: 0.4, upper: 0.9 }, positiveOutcomeRate: null } } }],
   aggregate: { foldCount: 1, testSampleSize: 3, belowMinimumSample: true, weightedMeanAccuracy: 0.75,
     weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0,
-    degradation: { status: 'INSUFFICIENT_DATA', baselineFoldCount: 0, baselineSampleSize: 0, latestFoldId: 'WF-1', latestSampleSize: 3, accuracyDelta: null, multiclassBrierDelta: null, logLossDelta: null, triggeredBy: [] } },
+    degradation: { status: 'INSUFFICIENT_DATA', baselineFoldCount: 0, baselineSampleSize: 0, latestFoldId: 'WF-1', latestSampleSize: 3, accuracyDelta: null as number | null, multiclassBrierDelta: null as number | null, logLossDelta: null as number | null, triggeredBy: [] as Array<'ACCURACY_DROP' | 'BRIER_INCREASE' | 'LOG_LOSS_INCREASE'> } },
 });
 
 test('validates walk-forward reports and rejects cross-asset contamination', () => {
@@ -149,7 +149,7 @@ test('parses temporal degradation separately for STOCK and OPTION and rejects ma
   assert.equal(parsed.walkForward.option.aggregate?.degradation.status, 'NO_CLEAR_DEGRADATION');
 
   const invalidTrigger = payload();
-  invalidTrigger.walkForward.stock.aggregate.degradation.triggeredBy = ['UNKNOWN_TRIGGER'];
+  invalidTrigger.walkForward.stock.aggregate.degradation.triggeredBy = ['UNKNOWN_TRIGGER'] as any;
   assert.equal(parseCalibrationPayload(invalidTrigger), null);
   const invalidDelta = payload();
   invalidDelta.walkForward.option.aggregate.degradation.accuracyDelta = 1.5;
