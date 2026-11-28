@@ -14,6 +14,7 @@ import {
 test('initDefaultOptionsPortfolio initializes clean empty journal with zero synthetic trades or seeded income', () => {
   const account = initDefaultOptionsPortfolio(2000);
   assert.strictEqual(account.startingBalance, 2000);
+  assert.strictEqual(account.isAutoPilotActive, false, 'options autopilot must start disarmed');
   assert.strictEqual(account.cash, 2000);
   assert.strictEqual(account.positions.length, 0);
   assert.strictEqual(account.tradeHistory.length, 0, 'Active trade history starts clean with 0 trades');
