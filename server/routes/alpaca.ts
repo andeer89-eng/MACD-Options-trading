@@ -9,6 +9,7 @@ import { getBotOrderBlockReason, getBotOptionCapabilityViolation } from '../serv
 import { ExecutionLedgerConflictError, ExecutionLedgerUnavailableError } from '../services/executionLedger.ts';
 import { createOrderIntent, OrderIntentValidationError, type OrderIntentSource } from '../services/orderIntent.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
+type StockBotShadowStrategy = { evaluate: (portfolio: any) => Promise<any> };
 
 function handleAlpacaError(res: Response, err: unknown) {
   if (err instanceof ExecutionLedgerUnavailableError) {
@@ -31,7 +32,8 @@ export function createAlpacaRouter(
   ledgerRequired = false,
   reconciliationWorker?: { getStatus: () => unknown },
   botExecutionEnabled = false,
-  botKillSwitchEnabled = false
+  botKillSwitchEnabled = false,
+  stockBotShadowStrategy?: StockBotShadowStrategy
 ): Router {
   const router = Router();
   router.use('/api/alpaca', createFirebaseAlpacaAuthMiddleware(authOptions));
@@ -50,6 +52,25 @@ export function createAlpacaRouter(
     try {
       const overview = await alpaca.getOverview();
       res.json(overview);
+    } catch (err) {
+      handleAlpacaError(res, err);
+    }
+  });
+
+  router.post('/api/alpaca/bot/cycles/STOCK/shadow', async (req: Request, res: Response) => {
+    if (!executionLedger || !stockBotShadowStrategy) {
+      res.status(503).json({ error: 'Server-side STOCK shadow strategy is not configured.', mode: 'PAPER' });
+      return;
+    }
+    const ownerId = (req as Request & { alpacaUid?: string }).alpacaUid || '';
+    if (!ownerId) {
+      res.status(401).json({ error: 'Verified Alpaca owner identity is missing.', mode: 'PAPER' });
+      return;
+    }
+    try {
+      const stored = await executionLedger.getBotPortfolioState(ownerId, 'STOCK');
+      const result = await stockBotShadowStrategy.evaluate(stored.portfolio || {});
+      res.json({ mode: 'PAPER', ownerId, result });
     } catch (err) {
       handleAlpacaError(res, err);
     }
