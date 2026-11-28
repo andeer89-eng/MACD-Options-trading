@@ -1,84 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../lib/AuthProvider';
+import { CalibrationMetrics, CalibrationPayload, CalibrationCohort as Cohort, CalibrationAssetReport as AssetReport,
+  WalkForwardAssetReport, WilsonInterval, parseCalibrationPayload, selectCalibrationReport } from '../utils/predictionCalibrationView';
 
 type AssetClass = 'STOCK' | 'OPTION';
-type CalibrationMetrics = {
-  assetClass: AssetClass;
-  sampleSize: number;
-  brierScore: number;
-  multiclassBrierScore: number;
-  logLoss: number;
-  accuracy: number;
-  meanConfidence: number;
-  reliability: Array<{
-    bucket: string;
-    count: number;
-    meanPredictedPositive: number;
-    observedPositiveRate: number;
-  }>;
-};
-type Cohort = { key: string; report: CalibrationMetrics; belowMinimumSample: boolean };
-type AssetReport = {
-  assetClass: AssetClass;
-  overall: CalibrationMetrics;
-  horizonCohorts: Cohort[];
-  benchmark?: {
-    sampleSize: number;
-    coverage: number;
-    meanExcessReturnPct: number | null;
-    positiveExcessRate: number | null;
-    belowMinimumSample: boolean;
-  };
-  exitMethodCohorts?: Cohort[];
-};
-type WilsonInterval = { lower: number; upper: number } | null;
-type WalkForwardSegment = {
-  assignedSampleSize: number;
-  eligibleSampleSize: number;
-  purgedSampleSize: number;
-  calibration: CalibrationMetrics | null;
-  uncertainty: {
-    accuracy: WilsonInterval;
-    positiveOutcomeRate: WilsonInterval;
-  } | null;
-};
-type WalkForwardFold = {
-  foldId: string;
-  train: WalkForwardSegment;
-  calibration: WalkForwardSegment;
-  test: WalkForwardSegment;
-};
-type WalkForwardAssetReport = {
-  assetClass: AssetClass;
-  available: boolean;
-  reason: string | null;
-  distinctTimestamps: number;
-  folds: WalkForwardFold[];
-  aggregate: null | {
-    foldCount: number;
-    testSampleSize: number;
-    belowMinimumSample: boolean;
-    weightedMeanAccuracy: number | null;
-    weightedMeanMulticlassBrierScore: number | null;
-    weightedMeanLogLoss: number | null;
-    accuracyFoldStdDev: number | null;
-    multiclassBrierFoldStdDev: number | null;
-  };
-};
-type CalibrationPayload = {
-  walkForward: {
-    methodology: string;
-    minimumSampleSize: number;
-    stock: WalkForwardAssetReport;
-    option: WalkForwardAssetReport;
-  };
-  integrity: { valid: boolean; headMatches: boolean; length: number; headHash: string };
-  stock: AssetReport;
-  option: AssetReport;
-  readOnly: true;
-};
-
 const pct = (value: number | null | undefined) =>
   value === null || value === undefined ? '—' : `${(value * 100).toFixed(1)}%`;
 const fixed = (value: number | null | undefined, digits = 3) =>
@@ -247,10 +173,9 @@ export const PredictionCalibrationDashboard: React.FC = () => {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : `Calibration request failed (HTTP ${response.status}).`);
-      if (!body?.integrity?.valid || !body?.integrity?.headMatches) {
-        throw new Error('The journal integrity status is not verified. Metrics are withheld.');
-      }
-      setPayload(body as CalibrationPayload);
+      const parsed = parseCalibrationPayload(body);
+      if (!parsed) throw new Error('The calibration API returned an invalid, incomplete, or unverified report. Metrics are withheld.');
+      setPayload(parsed);
       setUpdatedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load calibration report.');
@@ -268,7 +193,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
     }
   }, [user, loadReport]);
 
-  const report = useMemo(() => payload?.[assetClass.toLowerCase() as 'stock' | 'option'], [payload, assetClass]);
+  const report = useMemo(() => payload ? selectCalibrationReport(payload, assetClass) : null, [payload, assetClass]);
   
   if (authLoading) {
     return <div className="p-8 text-sm text-zinc-400">Checking account session…</div>;
