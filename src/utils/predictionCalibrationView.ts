@@ -202,7 +202,33 @@ function parseTemporalDegradation(value: unknown): TemporalDegradationAssessment
     if (!(value[key] === null || isFiniteNumber(value[key]))) return null;
   }
   if ((value.accuracyDelta !== null && ((value.accuracyDelta as number) < -1 || (value.accuracyDelta as number) > 1)) ||
-      (value.multiclassBrierDelta !== null && ((value.multiclassBrierDelta as number) < -2 || (value.multiclassBrierDelta as number) > 2))) return null;
+      (value.multiclassBrierDelta !== null && ((value.multiclassBrierDelta as number) < -2 || (value.multiclassBrierDelta as number) > 2)) ||
+      (value.logLossDelta !== null && (value.logLossDelta as number) < -34.54)) return null;
+
+  // The service emits all three deltas together, or none when a comparison
+  // side has no eligible metrics. Reject internally contradictory states.
+  const deltas = [value.accuracyDelta, value.multiclassBrierDelta, value.logLossDelta];
+  const hasDeltas = deltas.every(item => item !== null);
+  const hasNoDeltas = deltas.every(item => item === null);
+  if (!hasDeltas && !hasNoDeltas) return null;
+  if (((value.baselineFoldCount as number) === 0) !== ((value.baselineSampleSize as number) === 0)) return null;
+  if (value.latestFoldId === null && (value.latestSampleSize as number) !== 0) return null;
+
+  const expectedTriggers = hasDeltas ? [
+    (value.accuracyDelta as number) <= -0.10 ? 'ACCURACY_DROP' : null,
+    (value.multiclassBrierDelta as number) >= 0.05 ? 'BRIER_INCREASE' : null,
+    (value.logLossDelta as number) >= 0.10 ? 'LOG_LOSS_INCREASE' : null,
+  ].filter((item): item is string => item !== null) : [];
+  const actualTriggers = value.triggeredBy as string[];
+  if (value.status === 'POTENTIAL_DEGRADATION') {
+    if (!hasDeltas || actualTriggers.length === 0 ||
+        expectedTriggers.length !== actualTriggers.length ||
+        expectedTriggers.some(trigger => !actualTriggers.includes(trigger)) ||
+        (value.baselineSampleSize as number) === 0 || (value.latestSampleSize as number) === 0) return null;
+  } else if (actualTriggers.length !== 0 ||
+      (value.status === 'NO_CLEAR_DEGRADATION' && (!hasDeltas || expectedTriggers.length > 0))) {
+    return null;
+  }
   return {
     status: value.status as TemporalDegradationAssessment['status'],
     baselineFoldCount: value.baselineFoldCount as number, baselineSampleSize: value.baselineSampleSize as number,
