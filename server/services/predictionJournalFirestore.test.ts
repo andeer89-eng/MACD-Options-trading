@@ -360,3 +360,58 @@ test('blocks prediction recording when existing persisted history fails integrit
   );
   assert.equal(fake.counts().commitCalls, 1);
 });
+
+test('trusted bot capture requires matching asset class and complete decision provenance', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: fake.fetchImpl, now: () => 10_000 });
+  const stockInput: PredictionSnapshotInput = {
+    ...asPredictionInput(prediction),
+    origin: { kind: 'STOCK_BOT', sourceId: 'stock-engine', strategyId: 'momentum-v2',
+      decisionId: 'stock-decision-1', runId: 'stock-run-1' },
+  };
+  const stock = await journal.recordBotPrediction('owner_1', 'STOCK', stockInput);
+  assert.equal(stock.event.eventType, 'PREDICTION_RECORDED');
+  if (stock.event.eventType === 'PREDICTION_RECORDED') {
+    assert.equal(stock.event.prediction.assetClass, 'STOCK');
+    assert.equal(stock.event.prediction.origin?.kind, 'STOCK_BOT');
+    assert.equal(stock.event.prediction.origin?.decisionId, 'stock-decision-1');
+  }
+
+  const optionInput: PredictionSnapshotInput = {
+    ...asPredictionInput({ ...prediction, predictionId: 'bot-option-1', assetClass: 'OPTION',
+      contractId: 'AAPL261218C00200000' }),
+    origin: { kind: 'OPTION_BOT', sourceId: 'option-engine', strategyId: 'options-income-v1',
+      decisionId: 'option-decision-1', runId: 'option-run-1' },
+  };
+  const option = await journal.recordBotPrediction('owner_1', 'OPTION', optionInput);
+  assert.equal(option.event.eventType, 'PREDICTION_RECORDED');
+  if (option.event.eventType === 'PREDICTION_RECORDED') {
+    assert.equal(option.event.prediction.assetClass, 'OPTION');
+    assert.equal(option.event.prediction.contractId, 'AAPL261218C00200000');
+    assert.equal(option.event.prediction.origin?.kind, 'OPTION_BOT');
+  }
+  assert.equal(fake.counts().commitCalls, 2);
+});
+
+test('trusted bot capture rejects cross-asset, forged and incomplete provenance before Firestore access', async () => {
+  let requests = 0;
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson,
+    fetchImpl: async () => { requests++; return new Response('{}', { status: 500 }); } });
+  const base = asPredictionInput(prediction);
+  const invalid: Array<{ assetClass: 'STOCK' | 'OPTION'; input: PredictionSnapshotInput }> = [
+    { assetClass: 'OPTION', input: { ...base, origin: { kind: 'STOCK_BOT', sourceId: 'bot',
+      strategyId: 's', decisionId: 'd', runId: 'r' } } },
+    { assetClass: 'STOCK', input: { ...base, origin: { kind: 'OPTION_BOT', sourceId: 'bot',
+      strategyId: 's', decisionId: 'd', runId: 'r' } } },
+    { assetClass: 'STOCK', input: { ...base, origin: { kind: 'STOCK_BOT', sourceId: 'bot',
+      strategyId: 's', runId: 'r' } } },
+    { assetClass: 'STOCK', input: { ...base, origin: { kind: 'MANUAL', sourceId: 'manual' } } },
+  ];
+  for (const item of invalid) {
+    await assert.rejects(() => journal.recordBotPrediction('owner_1', item.assetClass, item.input),
+      (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 400);
+  }
+  assert.equal(requests, 0);
+});
+
