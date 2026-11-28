@@ -212,7 +212,7 @@ function parseTemporalDegradation(value: unknown): TemporalDegradationAssessment
   const hasNoDeltas = deltas.every(item => item === null);
   if (!hasDeltas && !hasNoDeltas) return null;
   if (((value.baselineFoldCount as number) === 0) !== ((value.baselineSampleSize as number) === 0)) return null;
-  if ((value.latestFoldId === null) !== ((value.latestSampleSize as number) === 0)) return null;
+  if (value.latestFoldId === null && (value.latestSampleSize as number) !== 0) return null;
 
   const expectedTriggers = hasDeltas ? [
     (value.accuracyDelta as number) <= -0.10 ? 'ACCURACY_DROP' : null,
