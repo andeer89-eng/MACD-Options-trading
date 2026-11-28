@@ -7,6 +7,7 @@ import { FirestorePredictionJournalError } from './services/predictionJournalFir
 
 async function withRoute(router: express.Router, run: (baseUrl: string) => Promise<void>): Promise<void> {
   const app = express();
+  app.use(express.json());
   app.use(router);
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
