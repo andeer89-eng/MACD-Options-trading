@@ -170,11 +170,11 @@ function parseInterval(value: unknown): WilsonInterval | undefined {
   if (!isRecord(value) || !isUnitInterval(value.lower) || !isUnitInterval(value.upper) || value.lower > value.upper) return undefined;
   return { lower: value.lower, upper: value.upper };
 }
-function parseWalkForwardSegment(value: unknown, assetClass: CalibrationAssetClass): WalkForwardSegment | null {
+function parseWalkForwardSegment(value: unknown, assetClass: CalibrationAssetClass, includeMetrics: boolean): WalkForwardSegment | null {
   if (!isRecord(value) || !Number.isSafeInteger(value.assignedSampleSize) || (value.assignedSampleSize as number) < 0 ||
       !Number.isSafeInteger(value.eligibleSampleSize) || (value.eligibleSampleSize as number) < 0 ||
       !Number.isSafeInteger(value.purgedSampleSize) || (value.purgedSampleSize as number) < 0 ||
-      (value.eligibleSampleSize as number) + (value.purgedSampleSize as number) > (value.assignedSampleSize as number)) return null;
+      (value.eligibleSampleSize as number) + (value.purgedSampleSize as number) !== (value.assignedSampleSize as number)) return null;
   let calibration: CalibrationMetrics | null = null;
   if (value.calibration !== null) { calibration = parseMetrics(value.calibration, assetClass); if (!calibration) return null; }
   let uncertainty: WalkForwardSegment['uncertainty'] = null;
@@ -185,6 +185,10 @@ function parseWalkForwardSegment(value: unknown, assetClass: CalibrationAssetCla
     if (accuracy === undefined || positiveOutcomeRate === undefined) return null;
     uncertainty = { accuracy, positiveOutcomeRate };
   }
+  if (!includeMetrics && (calibration !== null || uncertainty !== null)) return null;
+  if (includeMetrics && ((value.eligibleSampleSize as number) === 0
+    ? calibration !== null || uncertainty !== null
+    : !calibration || calibration.sampleSize !== value.eligibleSampleSize || uncertainty === null)) return null;
   return { assignedSampleSize: value.assignedSampleSize as number, eligibleSampleSize: value.eligibleSampleSize as number,
     purgedSampleSize: value.purgedSampleSize as number, calibration, uncertainty };
 }
@@ -237,18 +241,18 @@ function parseTemporalDegradation(value: unknown): TemporalDegradationAssessment
     logLossDelta: value.logLossDelta as number | null, triggeredBy: value.triggeredBy as TemporalDegradationAssessment['triggeredBy'],
   };
 }
-function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass): WalkForwardAssetReport | null {
+function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass, minimumSampleSize: number): WalkForwardAssetReport | null {
   if (!isRecord(value) || value.assetClass !== assetClass || typeof value.available !== 'boolean' ||
       !(value.reason === null || typeof value.reason === 'string') ||
       !Number.isSafeInteger(value.distinctTimestamps) || (value.distinctTimestamps as number) < 0 || !Array.isArray(value.folds)) return null;
   const folds = value.folds.map((fold) => {
     if (!isRecord(fold) || typeof fold.foldId !== 'string' || !fold.foldId.trim()) return null;
-    const train = parseWalkForwardSegment(fold.train, assetClass);
-    const calibration = parseWalkForwardSegment(fold.calibration, assetClass);
-    const test = parseWalkForwardSegment(fold.test, assetClass);
+    const train = parseWalkForwardSegment(fold.train, assetClass, false);
+    const calibration = parseWalkForwardSegment(fold.calibration, assetClass, true);
+    const test = parseWalkForwardSegment(fold.test, assetClass, true);
     return train && calibration && test ? { foldId: fold.foldId, train, calibration, test } : null;
   });
-  if (folds.some(fold => fold === null)) return null;
+  if (folds.some(fold => fold === null) || new Set((folds as Array<NonNullable<typeof folds[number]>>).map(fold => fold.foldId)).size !== folds.length) return null;
   let aggregate: WalkForwardAssetReport['aggregate'] = null;
   if (value.aggregate !== null) {
     const a = value.aggregate;
@@ -262,6 +266,10 @@ function parseWalkForwardAsset(value: unknown, assetClass: CalibrationAssetClass
     if ((a.weightedMeanAccuracy !== null && !isUnitInterval(a.weightedMeanAccuracy)) ||
         (a.weightedMeanMulticlassBrierScore !== null && (a.weightedMeanMulticlassBrierScore as number) > 2) ||
         (a.accuracyFoldStdDev !== null && (a.accuracyFoldStdDev as number) > 1)) return null;
+    const validFolds = folds as Array<NonNullable<typeof folds[number]>>;
+    const expectedSampleSize = validFolds.reduce((sum, fold) => sum + fold.test.eligibleSampleSize, 0);
+    if ((a.foldCount as number) !== validFolds.length || (a.testSampleSize as number) !== expectedSampleSize ||
+        a.belowMinimumSample !== (expectedSampleSize < minimumSampleSize)) return null;
     aggregate = { foldCount: a.foldCount as number, testSampleSize: a.testSampleSize as number, belowMinimumSample: a.belowMinimumSample,
       weightedMeanAccuracy: a.weightedMeanAccuracy as number | null, weightedMeanMulticlassBrierScore: a.weightedMeanMulticlassBrierScore as number | null,
       weightedMeanLogLoss: a.weightedMeanLogLoss as number | null, accuracyFoldStdDev: a.accuracyFoldStdDev as number | null,
@@ -279,7 +287,7 @@ export function parseCalibrationPayload(value: unknown): CalibrationPayload | nu
   if (!stock || !option || !isRecord(value.walkForward)) return null;
   const wf = value.walkForward;
   if (typeof wf.methodology !== 'string' || !wf.methodology.trim() || !Number.isSafeInteger(wf.minimumSampleSize) || (wf.minimumSampleSize as number) < 1) return null;
-  const stockWalkForward = parseWalkForwardAsset(wf.stock, 'STOCK'); const optionWalkForward = parseWalkForwardAsset(wf.option, 'OPTION');
+  const stockWalkForward = parseWalkForwardAsset(wf.stock, 'STOCK', wf.minimumSampleSize as number); const optionWalkForward = parseWalkForwardAsset(wf.option, 'OPTION', wf.minimumSampleSize as number);
   if (!stockWalkForward || !optionWalkForward) return null;
   return { integrity: { valid: true, headMatches: true, length: value.integrity.length as number, headHash: value.integrity.headHash },
     stock, option, walkForward: { methodology: wf.methodology, minimumSampleSize: wf.minimumSampleSize as number, stock: stockWalkForward, option: optionWalkForward }, readOnly: true };
