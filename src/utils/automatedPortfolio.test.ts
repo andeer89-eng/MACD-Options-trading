@@ -68,6 +68,7 @@ function createAccountWithTestPositions(): PortfolioAccount {
   const invested = jpm.entryPrice * jpm.currentShares + msft.entryPrice * msft.currentShares;
   return {
     ...account,
+    isAutoPilotActive: true,
     cash: Number((10000 - invested).toFixed(2)),
     positions: [jpm, msft],
   };
@@ -79,7 +80,7 @@ test('initDefaultPortfolio starts clean with $10,000 baseline and zero fabricate
   assert.equal(account.cash, 10000);
   assert.equal(account.positions.length, 0);
   assert.equal(account.tradeHistory.length, 0);
-  assert.equal(account.isAutoPilotActive, true);
+  assert.equal(account.isAutoPilotActive, false);
 });
 
 test('calculatePositionSize strictly enforces 1% risk rule', () => {
