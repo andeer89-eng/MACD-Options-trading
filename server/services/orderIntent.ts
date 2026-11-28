@@ -34,6 +34,10 @@ export interface OrderIntent {
   timeInForce: 'day' | 'gtc';
   limitPrice: number | null;
   stopPrice: number | null;
+  orderClass: 'simple' | 'bracket';
+  takeProfitLimitPrice: number | null;
+  stopLossStopPrice: number | null;
+  stopLossLimitPrice: number | null;
   createdAt: string;
 }
 
@@ -70,6 +74,28 @@ export function createOrderIntent(input: {
 
   const limitPrice = input.order.limit_price === undefined ? null : Number(input.order.limit_price);
   const stopPrice = input.order.stop_price === undefined ? null : Number(input.order.stop_price);
+  const orderClass = String(input.order.order_class || 'simple');
+  const takeProfitLimitPrice = input.order.take_profit && typeof input.order.take_profit === 'object'
+    ? Number((input.order.take_profit as Record<string, unknown>).limit_price)
+    : null;
+  const stopLossStopPrice = input.order.stop_loss && typeof input.order.stop_loss === 'object'
+    ? Number((input.order.stop_loss as Record<string, unknown>).stop_price)
+    : null;
+  const stopLossLimitRaw = input.order.stop_loss && typeof input.order.stop_loss === 'object'
+    ? (input.order.stop_loss as Record<string, unknown>).limit_price
+    : undefined;
+  const stopLossLimitPrice = stopLossLimitRaw === undefined ? null : Number(stopLossLimitRaw);
+  if (orderClass !== 'simple' && orderClass !== 'bracket') {
+    throw new OrderIntentValidationError('Order intent order_class is invalid.');
+  }
+  if (orderClass === 'bracket' &&
+      (!Number.isFinite(takeProfitLimitPrice) || Number(takeProfitLimitPrice) <= 0 ||
+       !Number.isFinite(stopLossStopPrice) || Number(stopLossStopPrice) <= 0)) {
+    throw new OrderIntentValidationError('Bracket intents require positive take-profit and stop-loss prices.');
+  }
+  if (stopLossLimitPrice !== null && (!Number.isFinite(stopLossLimitPrice) || stopLossLimitPrice <= 0)) {
+    throw new OrderIntentValidationError('Order intent stop-loss limit price must be positive.');
+  }
   if (limitPrice !== null && (!Number.isFinite(limitPrice) || limitPrice <= 0)) {
     throw new OrderIntentValidationError('Order intent limit_price must be positive.');
   }
@@ -91,6 +117,10 @@ export function createOrderIntent(input: {
     timeInForce: timeInForce as OrderIntent['timeInForce'],
     limitPrice,
     stopPrice,
+    orderClass: orderClass as OrderIntent['orderClass'],
+    takeProfitLimitPrice: Number.isFinite(takeProfitLimitPrice) ? takeProfitLimitPrice : null,
+    stopLossStopPrice: Number.isFinite(stopLossStopPrice) ? stopLossStopPrice : null,
+    stopLossLimitPrice,
     createdAt: new Date(input.now ?? Date.now()).toISOString(),
   };
 }
