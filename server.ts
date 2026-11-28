@@ -17,6 +17,7 @@ import { createStreamRouter } from './server/routes/stream.ts';
 import { createAlpacaRouter } from './server/routes/alpaca.ts';
 import { createWatchlistTriggerRouter } from './server/routes/watchlist.ts';
 import { createWatchlistEvaluationRouter } from './server/routes/watchlistEvaluation.ts';
+import { createPredictionCalibrationRouter } from './server/routes/predictionCalibration.ts';
 import { createExecutionLedger } from './server/services/executionLedger.ts';
 import { createExecutionReconciliationWorker } from './server/services/executionReconciliationWorker.ts';
 
@@ -80,6 +81,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
           (Number.isFinite(configuredLease) && configuredLease >= 120_000 ? configuredLease : undefined),
       })
     : undefined;
+
+  app.use(createPredictionCalibrationRouter({
+    projectId: firebaseProjectId,
+    databaseId: firebaseConfig.firestoreDatabaseId,
+    serviceAccountJson,
+    fetchImpl: options.firebaseAuthFetchOverride,
+  }));
 
   app.use(createWatchlistTriggerRouter({
     projectId: firebaseProjectId,
