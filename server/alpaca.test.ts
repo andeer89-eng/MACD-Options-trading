@@ -297,6 +297,8 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
     before(async () => {
       const botPortfolios = new Map<string, any>();
+      const cycleLeases = new Map<string, any>();
+      const cycleLeaseTokens = new Map<string, number>();
       let tradingControl = {
         ownerId: TEST_FIREBASE_UID,
         stockBotEnabled: false,
@@ -329,6 +331,36 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           return botPortfolios.get(key) || {
             ownerId, botId, schemaVersion: 1, version: 0, portfolio: null, updatedAt: new Date().toISOString(),
           };
+        },
+        acquireTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (current && current.expiresAt > Date.now()) return null;
+          const fencingToken = (cycleLeaseTokens.get(key) || 0) + 1;
+          cycleLeaseTokens.set(key, fencingToken);
+          const lease = { ...input, fencingToken, expiresAt: Date.now() + input.leaseMs };
+          cycleLeases.set(key, lease);
+          return lease;
+        },
+        renewTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (!current || current.workerId !== input.workerId || current.fencingToken !== input.fencingToken) return false;
+          current.expiresAt = Date.now() + input.leaseMs;
+          return true;
+        },
+        isTradingCycleLeaseValid: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          return Boolean(current && current.workerId === input.workerId &&
+            current.fencingToken === input.fencingToken && current.expiresAt > Date.now());
+        },
+        releaseTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (!current || current.workerId !== input.workerId || current.fencingToken !== input.fencingToken) return false;
+          cycleLeases.delete(key);
+          return true;
         },
         setBotPortfolioState: async (input: any) => {
           const key = input.ownerId + ':' + input.botId;
@@ -363,6 +395,13 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         alpacaAllowedUidsOverride: [TEST_FIREBASE_UID],
         firebaseAuthFetchOverride,
         executionLedgerOverride,
+        stockBotShadowStrategyOverride: {
+          evaluate: async (portfolio: Record<string, unknown>) => ({
+            mode: 'SHADOW', status: 'EVALUATED', assetClass: 'STOCK',
+            receivedPortfolio: portfolio,
+            execution: { ordersSubmitted: 0, brokerSideEffects: false },
+          }),
+        },
         alpacaBotExecutionEnabledOverride: true,
         alpacaEnvOverride: {
           APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
@@ -714,6 +753,35 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(invalidBot.status, 400);
 
       const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`);
+      assert.equal(anonymous.status, 401);
+    });
+
+    it('exposes authenticated read-only STOCK shadow cycles using persisted owner portfolio state', async () => {
+      const headers = { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' };
+      const currentPortfolio = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, { headers });
+      assert.equal(currentPortfolio.status, 200);
+      const expectedVersion = ((await currentPortfolio.json()) as any).state.version;
+      const save = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ expectedVersion, portfolio: { maxOpenPositions: 3, isAutoPilotActive: true } }),
+      });
+      assert.equal(save.status, 200);
+
+      const shadow = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, {
+        method: 'POST', headers,
+      });
+      assert.equal(shadow.status, 200, JSON.stringify(await shadow.clone().json()));
+      const body = await shadow.json() as any;
+      assert.equal(body.cycle.status, 'completed');
+      assert.equal(body.cycle.value.result.mode, 'SHADOW');
+      assert.equal(body.cycle.value.result.status, 'EVALUATED');
+      assert.equal(body.cycle.value.result.receivedPortfolio.maxOpenPositions, 3);
+      assert.equal(body.cycle.value.result.receivedPortfolio.isAutoPilotActive, false);
+      assert.equal(body.cycle.value.result.execution.ordersSubmitted, 0);
+      assert.equal(body.cycle.value.result.execution.brokerSideEffects, false);
+      assert.equal(Number.isInteger(body.cycle.value.fencingToken), true);
+
+      const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, { method: 'POST' });
       assert.equal(anonymous.status, 401);
     });
 
