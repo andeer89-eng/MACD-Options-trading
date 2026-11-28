@@ -31,7 +31,7 @@ describe('authenticated prediction calibration read API', () => {
   it('requires a Firebase bearer token and rejects invalid tokens', async () => {
     const router = createPredictionCalibrationRouter({
       projectId: 'test-project',
-      journal: { getCalibrationReport: async () => ({}) } as any,
+      journal: { getCalibrationReport: async () => ({}), getWalkForwardCalibrationReport: async () => ({}) } as any,
       verifyToken: async () => { throw new Error('invalid token'); },
     });
     await withRoute(router, async baseUrl => {
@@ -62,6 +62,7 @@ describe('authenticated prediction calibration read API', () => {
             option: { assetClass: 'OPTION', overall: { sampleSize: 1 } },
           };
         },
+        getWalkForwardCalibrationReport: async (ownerId: string, minimumSampleSize: number) => ({ ownerId, minimumSampleSize }),
       } as any,
     });
     await withRoute(router, async baseUrl => {
@@ -74,6 +75,8 @@ describe('authenticated prediction calibration read API', () => {
       assert.equal(body.readOnly, true);
       assert.equal(body.stock.assetClass, 'STOCK');
       assert.equal(body.option.assetClass, 'OPTION');
+      assert.equal(body.walkForward.minimumSampleSize, 55);
+      assert.equal(body.walkForward.ownerId, 'firebase_user_123');
       assert.deepEqual(calls, [{ ownerId: 'firebase_user_123', minimumSampleSize: 55 }]);
       assert.equal(response.headers.get('cache-control'), 'no-store');
       assert.equal(response.headers.get('vary'), 'Authorization');
@@ -85,7 +88,7 @@ describe('authenticated prediction calibration read API', () => {
     const router = createPredictionCalibrationRouter({
       projectId: 'test-project',
       verifyToken: async () => ({ uid: 'firebase_user_123' }),
-      journal: { getCalibrationReport: async () => { calls++; return {}; } } as any,
+      journal: { getCalibrationReport: async () => { calls++; return {}; }, getWalkForwardCalibrationReport: async () => { calls++; return {}; } } as any,
     });
     await withRoute(router, async baseUrl => {
       for (const value of ['0', '-1', '10001', '1.5', 'abc', '']) {
@@ -115,6 +118,7 @@ describe('authenticated prediction calibration read API', () => {
         getCalibrationReport: async () => {
           throw new FirestorePredictionJournalError('Integrity verification failed.', 409);
         },
+        getWalkForwardCalibrationReport: async () => ({}),
       } as any,
     });
     await withRoute(integrityFailure, async baseUrl => {
@@ -130,7 +134,7 @@ describe('authenticated prediction calibration read API', () => {
     const router = createPredictionCalibrationRouter({
       projectId: 'test-project',
       verifyToken: async () => ({ uid: 'uid:with:colon' }),
-      journal: { getCalibrationReport: async () => { calls++; return {}; } } as any,
+      journal: { getCalibrationReport: async () => { calls++; return {}; }, getWalkForwardCalibrationReport: async () => { calls++; return {}; } } as any,
     });
     await withRoute(router, async baseUrl => {
       const response = await fetch(`${baseUrl}/api/research/prediction-calibration`, {

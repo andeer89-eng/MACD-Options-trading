@@ -136,3 +136,12 @@ The Quant Lab exposes a Prediction Calibration dashboard backed by the authentic
 The dashboard displays the verified journal integrity state, labeled sample size, multiclass accuracy/Brier/log-loss, positive-class Brier, mean confidence, positive-class reliability buckets, STOCK-only benchmark coverage/excess-return diagnostics, forecast-horizon cohorts, and OPTION exit-method cohorts. STOCK and OPTION remain isolated throughout the UI; option reports do not receive stock benchmark metrics.
 
 The dashboard is read-only. It does not create predictions, label outcomes, modify portfolios, connect to broker APIs, submit orders, or control either the stock or options autotrading bot. Thin-sample labels are operational warnings only and must not be interpreted as statistical significance or evidence of future profitability.
+
+
+## P1.35 — Integrity-gated walk-forward calibration dashboard
+
+The authenticated calibration endpoint now includes a read-only walk-forward report for STOCK and OPTION independently. The Firestore adapter verifies the append-only event chain and head, rehydrates semantic prediction/outcome pairs, then builds three expanding-window chronological folds from five quantile partitions of distinct labeled prediction timestamps. The evaluation cutoff is captured once per asset-class report; timestamps at or after that cutoff are excluded. At least five distinct timestamps are required; otherwise the report explicitly returns unavailable rather than manufacturing folds.
+
+Each fold exposes train/calibration/test assigned, eligible and purged counts. Training metrics remain omitted; calibration and test metrics are available only for outcomes observable by their respective boundaries. The aggregate reports sample-weighted test accuracy, multiclass Brier and log loss, plus descriptive fold-level standard deviations. Test windows are non-overlapping. The dashboard displays test accuracy and 95% Wilson intervals for accuracy and positive-outcome rate, and warns when the total eligible test sample is below the configured threshold.
+
+These are automatically partitioned historical cohorts, not a user-pre-registered strategy backtest or fitted probability calibrator. Quantile partitioning is a convenience for chronological diagnostics and must not be treated as proof of out-of-sample alpha, investment edge, or statistical significance. No prediction/outcome writes, scheduler, broker, order routing, portfolio mutation, or stock/options autotrading integration is introduced.

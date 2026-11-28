@@ -5,7 +5,7 @@ import {
   FirestorePredictionJournalError,
 } from '../services/predictionJournalFirestore.ts';
 
-type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationReport'>;
+type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationReport' | 'getWalkForwardCalibrationReport'>;
 type VerifyToken = (token: string) => Promise<{ uid: string }>;
 
 export function createPredictionCalibrationRouter(options: {
@@ -81,7 +81,8 @@ export function createPredictionCalibrationRouter(options: {
 
     try {
       const report = await journal.getCalibrationReport(uid, minimumSampleSize);
-      res.json({ ...report, readOnly: true });
+      const walkForward = await journal.getWalkForwardCalibrationReport(uid, minimumSampleSize);
+      res.json({ ...report, walkForward, readOnly: true });
     } catch (error) {
       if (error instanceof FirestorePredictionJournalError) {
         res.status(error.status).json({ error: error.message });
