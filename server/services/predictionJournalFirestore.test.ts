@@ -20,6 +20,8 @@ function fakeFirestore() {
   const docs = new Map<string, { fields: Record<string, any>; updateTime: string }>();
   let revision = 0;
   let commitCalls = 0;
+  let historyReads = 0;
+  let headReads = 0;
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url === 'https://oauth.test/token') return new Response(JSON.stringify({ access_token: 'test-token', expires_in: 3600 }), { status: 200 });
@@ -44,6 +46,7 @@ function fakeFirestore() {
     }
     if (init?.method !== 'POST') {
       if (parsed.searchParams.has('pageSize')) {
+        historyReads++;
         const collectionPath = path;
         const prefix = `projects/demo-project/databases/(default)/documents${collectionPath}/`;
         const documents = [...docs.entries()]
@@ -51,6 +54,7 @@ function fakeFirestore() {
           .map(([name, item]) => ({ name, fields: item.fields, updateTime: item.updateTime }));
         return new Response(JSON.stringify({ documents }), { status: 200 });
       }
+      if (path.endsWith('/predictionJournalMeta/head')) headReads++;
       const item = docs.get(`projects/demo-project/databases/(default)/documents${path}`);
       if (!item) return new Response('NOT_FOUND', { status: 404 });
       return new Response(JSON.stringify({ fields: item.fields, updateTime: item.updateTime }), { status: 200 });
@@ -59,7 +63,7 @@ function fakeFirestore() {
   };
   return {
     fetchImpl,
-    counts: () => ({ commitCalls, documents: docs.size }),
+    counts: () => ({ commitCalls, documents: docs.size, historyReads, headReads }),
     tamperFirstEvent: () => {
       const entry = [...docs.entries()].find(([name]) => name.includes('/predictionJournalEvents/'));
       if (!entry) throw new Error('No event to tamper.');
