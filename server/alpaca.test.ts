@@ -294,6 +294,7 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
+      const ledgerEvents: Array<Record<string, any>> = [];
       let tradingControl = {
         ownerId: TEST_FIREBASE_UID,
         stockBotEnabled: false,
@@ -305,7 +306,10 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         updatedBy: TEST_FIREBASE_UID,
       };
       const executionLedgerOverride = {
-        append: async () => ({}),
+        append: async (event: Record<string, any>) => {
+          ledgerEvents.push(event);
+          return event;
+        },
         getTradingControl: async (ownerId: string) => ownerId === TEST_FIREBASE_UID
           ? { ...tradingControl }
           : {
@@ -693,6 +697,19 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(armed.optionBotEnabled, true);
       assert.equal(armed.version, 1);
 
+      const botOrder = await fetch(`${baseUrl}/api/alpaca/bot/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', time_in_force: 'day', client_order_id: 'armed-stock-bot-order-001' }),
+      });
+      assert.equal(botOrder.status, 200);
+      const botIntentEvents = ledgerEvents.filter((event) => event.clientOrderId === 'armed-stock-bot-order-001');
+      assert.deepEqual(botIntentEvents.map((event) => event.payload.intentState), [
+        'CREATED', 'RISK_APPROVED', 'SUBMISSION_PENDING', 'SUBMITTED',
+      ]);
+      assert.equal(botIntentEvents[0].payload.source, 'STOCK_BOT');
+      assert.equal(botIntentEvents[0].payload.assetClass, 'STOCK');
+
       const kill = await fetch(`${baseUrl}/api/alpaca/trading-control`, {
         method: 'PUT',
         headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
@@ -774,6 +791,11 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(eqRes.status, 200);
       const eqBody = (await eqRes.json()) as any;
       assert.equal(eqBody.order.id, 'ord-created-test-aapl-buy-003');
+      const manualIntentEvents = ledgerEvents.filter((event) => event.clientOrderId === 'test-aapl-buy-003');
+      assert.deepEqual(manualIntentEvents.map((event) => event.payload.intentState), [
+        'CREATED', 'RISK_APPROVED', 'SUBMISSION_PENDING', 'SUBMITTED',
+      ]);
+      assert.equal(manualIntentEvents[0].payload.source, 'MANUAL');
 
       const optRes = await fetch(`${baseUrl}/api/alpaca/orders`, {
         method: 'POST',
