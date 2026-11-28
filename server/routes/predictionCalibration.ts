@@ -34,10 +34,11 @@ function parseUserPredictionInput(value: unknown): PredictionSnapshotInput | nul
     const item = value.origin[key];
     if (item !== undefined && (typeof item !== 'string' || !item.trim() || item.length > 128)) return null;
   }
-  if (value.model !== undefined && (!isRecord(value.model) ||
-      !hasOnlyKeys(value.model, ['provider', 'model', 'promptVersion']) ||
+  const model = value.model;
+  if (model !== undefined && (!isRecord(model) ||
+      !hasOnlyKeys(model, ['provider', 'model', 'promptVersion']) ||
       !['provider', 'model', 'promptVersion'].every(key =>
-        typeof value.model?.[key] === 'string' && (value.model[key] as string).trim().length > 0 && (value.model[key] as string).length <= 128))) return null;
+        typeof model[key] === 'string' && (model[key] as string).trim().length > 0 && (model[key] as string).length <= 128))) return null;
   return value as unknown as PredictionSnapshotInput;
 }
 
@@ -74,7 +75,7 @@ export function createPredictionCalibrationRouter(options: {
     }
 
     const authorization = req.header('authorization') || '';
-    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
     if (!match) {
       res.status(401).json({ error: 'Firebase authentication required.' });
       return;
