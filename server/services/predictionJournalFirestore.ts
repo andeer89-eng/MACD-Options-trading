@@ -372,8 +372,8 @@ export function createFirestorePredictionJournal(options: {
       const endAt = Math.min(timestamps[timestamps.length - 1] + 1, evaluationAsOf);
       const foldSpecs: WalkForwardFold[] = [
         { foldId: 'WF-1', train: { startAt: boundaries[0], endAt: boundaries[1] }, calibration: { startAt: boundaries[1], endAt: boundaries[2] }, test: { startAt: boundaries[2], endAt: boundaries[3] }, evaluationAsOf },
-        { foldId: 'WF-2', train: { startAt: boundaries[0], endAt: boundaries[2] }, calibration: { startAt: boundaries[2], endAt: boundaries[3] }, test: { startAt: boundaries[3], endAt: boundaries[4] }, evaluationAsOf: now() },
-        { foldId: 'WF-3', train: { startAt: boundaries[0], endAt: boundaries[3] }, calibration: { startAt: boundaries[3], endAt: boundaries[4] }, test: { startAt: boundaries[4], endAt }, evaluationAsOf: now() },
+        { foldId: 'WF-2', train: { startAt: boundaries[0], endAt: boundaries[2] }, calibration: { startAt: boundaries[2], endAt: boundaries[3] }, test: { startAt: boundaries[3], endAt: boundaries[4] }, evaluationAsOf },
+        { foldId: 'WF-3', train: { startAt: boundaries[0], endAt: boundaries[3] }, calibration: { startAt: boundaries[3], endAt: boundaries[4] }, test: { startAt: boundaries[4], endAt }, evaluationAsOf },
       ];
       const folds = calculateWalkForwardCalibration(rows, assetClass, foldSpecs);
       const aggregate = summarizeWalkForwardCalibration(folds, minimumSampleSize);
