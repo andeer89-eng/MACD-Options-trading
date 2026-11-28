@@ -40,7 +40,7 @@ export function createStockBotShadowStrategy(deps: StockBotShadowDependencies) {
     const startedAt = now();
     const [overview, marketHealth] = await Promise.all([
       deps.getOverview(),
-      deps.getMarketHealth(),
+      deps.getMarketHealth().catch(() => null),
     ]);
     if (!overview?.configured || !overview?.account) {
       return {
