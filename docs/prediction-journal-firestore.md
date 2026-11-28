@@ -68,3 +68,25 @@ block writes.
 This is still a server-side persistence primitive, not an HTTP route or bot
 integration. It does not enable automatic prediction capture, outcome labeling,
 broker activity, or order execution.
+
+
+## P1.44 — Authenticated user prediction capture API
+
+The existing prediction research router now exposes
+`POST /api/research/predictions`. It requires a valid Firebase ID token and
+derives the Firestore owner exclusively from the verified UID; caller-supplied
+owner fields are rejected by the strict payload allowlist. New captures require
+an explicit MANUAL or RESEARCH origin. Browser clients cannot claim STOCK_BOT
+or OPTION_BOT provenance: those origin kinds are reserved for a future trusted
+server-side bot adapter.
+
+The route accepts only the prediction input contract and bounded nested
+fields, then delegates to `recordPrediction` for domain validation, history
+integrity checks, append-only persistence, and idempotency. New records return
+201; exact retries return 200. Responses are marked `Cache-Control: no-store`
+and vary by Authorization.
+
+This endpoint records user-authored research snapshots only. It does not
+automatically observe bot signals, trigger orders, label outcomes, modify
+portfolio state, or connect to Alpaca. No production deployment or production
+Firestore write is performed by this change.
