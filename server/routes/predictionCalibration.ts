@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from 'express';
-import type { PredictionSnapshotInput } from '../services/predictionJournal.ts';
+import type { PredictionOutcome, PredictionSnapshotInput } from '../services/predictionJournal.ts';
 import { createFirebaseIdTokenVerifier, FirebaseAuthUnavailableError } from '../services/firebaseAuth.ts';
 import {
   createFirestorePredictionJournal,
   FirestorePredictionJournalError,
 } from '../services/predictionJournalFirestore.ts';
 
-type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationSnapshot' | 'recordPrediction'>;
+type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationSnapshot' | 'recordPrediction' | 'labelOutcome'>;
 type VerifyToken = (token: string) => Promise<{ uid: string }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,6 +44,23 @@ function parseUserPredictionInput(value: unknown): PredictionSnapshotInput | nul
   return value as unknown as PredictionSnapshotInput;
 }
 
+
+function parseUserOutcome(value: unknown): PredictionOutcome | null {
+  if (!isRecord(value) || !['STOCK', 'OPTION'].includes(String(value.assetClass))) return null;
+  const common = ['assetClass', 'realizedAt', 'observedAt', 'outcome', 'labelSource'];
+  const allowed = value.assetClass === 'STOCK' ? [...common, 'totalReturnPct', 'benchmarkReturnPct']
+    : [...common, 'contractReturnPct', 'underlyingReturnPct', 'exitMethod', 'entryPremium', 'exitValue'];
+  if (!hasOnlyKeys(value, allowed) || !Number.isSafeInteger(value.realizedAt) ||
+      !Number.isSafeInteger(value.observedAt) || !['POSITIVE', 'NEUTRAL', 'NEGATIVE'].includes(String(value.outcome)) ||
+      typeof value.labelSource !== 'string' || !value.labelSource.trim() || value.labelSource.length > 128) return null;
+  const finite = (item: unknown) => typeof item === 'number' && Number.isFinite(item);
+  if (value.assetClass === 'STOCK') {
+    if (!finite(value.totalReturnPct) || (value.benchmarkReturnPct !== undefined && !finite(value.benchmarkReturnPct))) return null;
+  } else if (!finite(value.contractReturnPct) || !finite(value.underlyingReturnPct) ||
+      !finite(value.entryPremium) || !finite(value.exitValue) ||
+      !['CLOSED', 'MARK_TO_MARKET', 'EXPIRED'].includes(String(value.exitMethod))) return null;
+  return value as unknown as PredictionOutcome;
+}
 
 export function createPredictionCalibrationRouter(options: {
   projectId: string;
@@ -122,6 +139,55 @@ export function createPredictionCalibrationRouter(options: {
         return;
       }
       res.status(503).json({ error: 'Prediction capture is temporarily unavailable.' });
+    }
+  });
+
+  router.post('/api/research/predictions/:predictionId/outcome', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Vary', 'Authorization');
+    if (!journal || typeof journal.labelOutcome !== 'function') {
+      res.status(503).json({ error: 'Prediction outcome storage is not configured.' });
+      return;
+    }
+    const authorization = req.header('authorization') || '';
+    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    if (!match) {
+      res.status(401).json({ error: 'Firebase authentication required.' });
+      return;
+    }
+    let uid: string;
+    try {
+      uid = (await verifyToken(match[1])).uid;
+    } catch (error) {
+      if (error instanceof FirebaseAuthUnavailableError) res.status(503).json({ error: 'Authentication service temporarily unavailable.' });
+      else res.status(401).json({ error: 'Invalid or expired Firebase ID token.' });
+      return;
+    }
+    if (typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+      res.status(403).json({ error: 'Authenticated account is not eligible for prediction research data.' });
+      return;
+    }
+    const predictionId = req.params.predictionId;
+    const outcome = parseUserOutcome(req.body);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(predictionId) || !outcome) {
+      res.status(400).json({ error: 'Invalid prediction outcome identity or payload.' });
+      return;
+    }
+    try {
+      const result = await journal.labelOutcome(uid, predictionId, outcome);
+      if (result.event.eventType !== 'OUTCOME_LABELED') {
+        res.status(500).json({ error: 'Outcome labeling returned an invalid journal event.' });
+        return;
+      }
+      res.status(result.replayed ? 200 : 201).json({
+        predictionId: result.event.predictionId, outcome: result.event.outcome, replayed: result.replayed,
+      });
+    } catch (error) {
+      if (error instanceof FirestorePredictionJournalError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      res.status(503).json({ error: 'Prediction outcome labeling is temporarily unavailable.' });
     }
   });
 
