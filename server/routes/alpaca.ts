@@ -6,10 +6,13 @@ import type { FirebaseAuthOptions } from '../services/firebaseAuth.ts';
 import { verifyExecutionLedgerChain, type createExecutionLedger } from '../services/executionLedger.ts';
 import { buildPositionReconciliation } from '../services/positionReconciliation.ts';
 import { getBotOrderBlockReason, getBotOptionCapabilityViolation } from '../services/tradingControl.ts';
-import { ExecutionLedgerConflictError } from '../services/executionLedger.ts';
+import { ExecutionLedgerConflictError, ExecutionLedgerUnavailableError } from '../services/executionLedger.ts';
 type ExecutionLedger = ReturnType<typeof createExecutionLedger>;
 
 function handleAlpacaError(res: Response, err: unknown) {
+  if (err instanceof ExecutionLedgerUnavailableError) {
+    return res.status(503).json({ error: err.message, mode: 'PAPER' });
+  }
   if (err instanceof AlpacaApiError) {
     return res.status(err.status).json({
       error: err.message,
