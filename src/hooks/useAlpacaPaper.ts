@@ -283,7 +283,7 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
   }, [overview?.configured, pollMs, refresh]);
 
   const submitOrder = useCallback(
-    async (payload: AlpacaOrderInput): Promise<{ ok: boolean; order?: any; error?: string }> => {
+    async (payload: AlpacaOrderInput, executionPurpose: 'MANUAL' | 'BOT' = 'MANUAL'): Promise<{ ok: boolean; order?: any; error?: string }> => {
       const { entryMarketContext, ...brokerPayload } = payload;
       const configDigest = computeConfigDigest(loadSettings());
       let authHeaders: Record<string, string>;
@@ -295,7 +295,8 @@ export function useAlpacaPaper(options: { pollMs?: number; marketHealth?: Market
           error: error instanceof Error ? error.message : 'Alpaca authentication failed.',
         };
       }
-      const resp = await fetchJsonSafe<{ order?: any; error?: string }>('/api/alpaca/orders', {
+      const orderEndpoint = executionPurpose === 'BOT' ? '/api/alpaca/bot/orders' : '/api/alpaca/orders';
+      const resp = await fetchJsonSafe<{ order?: any; error?: string }>(orderEndpoint, {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(brokerPayload),
