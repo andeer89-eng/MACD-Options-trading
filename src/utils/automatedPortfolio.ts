@@ -120,7 +120,7 @@ export function initDefaultPortfolio(initialCapital: number = 10000): PortfolioA
     unrealizedPnL: 0,
     positions: [],
     tradeHistory: [],
-    isAutoPilotActive: true,
+    isAutoPilotActive: false,
     riskPerTradePercent: 1.0,
     maxOpenPositions: 5,
     lastUpdated: new Date().toISOString(),
@@ -939,6 +939,10 @@ export function loadAutomatedPortfolio(): PortfolioAccount {
           if (!parsed.activeMemory) {
             parsed.activeMemory = loadActiveMemoryState();
           }
+          // Persisted browser state is never trusted to arm autonomous execution.
+          // A user must explicitly re-arm through the server-side trading control.
+          parsed.isAutoPilotActive = false;
+          saveAutomatedPortfolio(parsed);
           return parsed;
         }
       }
