@@ -253,6 +253,42 @@ test('builds separate STOCK and OPTION calibration reports only from integrity-v
   assert.equal(report.stock.horizonCohorts[0].belowMinimumSample, true);
 });
 
+test('builds calibration and walk-forward from one integrity-verified Firestore snapshot', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl, now: () => 10_000 });
+  const optionPrediction: PredictionSnapshot = { ...prediction, predictionId: 'pred-option-snapshot',
+    assetClass: 'OPTION', contractId: 'AAPL261218C00200000' };
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction: optionPrediction });
+  await journal.labelOutcome('owner_1', prediction.predictionId, { assetClass: 'STOCK', realizedAt: 3000,
+    observedAt: 3100, outcome: 'POSITIVE', totalReturnPct: 12, benchmarkReturnPct: 5, labelSource: 'test-fixture' });
+  await journal.labelOutcome('owner_1', optionPrediction.predictionId, { assetClass: 'OPTION', realizedAt: 3000,
+    observedAt: 3100, outcome: 'NEGATIVE', contractReturnPct: -20, underlyingReturnPct: -3,
+    exitMethod: 'CLOSED', entryPremium: 2, exitValue: 1.6, labelSource: 'test-fixture' });
+  const before = fake.counts();
+  const snapshot = await journal.getCalibrationSnapshot('owner_1', 2);
+  const after = fake.counts();
+  assert.equal(after.historyReads - before.historyReads, 1);
+  assert.equal(after.headReads - before.headReads, 1);
+  assert.deepEqual(snapshot.integrity, { valid: true, headMatches: true, length: 4,
+    headHash: (await journal.verify('owner_1')).headHash });
+  assert.equal(snapshot.stock.overall.sampleSize, 1);
+  assert.equal(snapshot.option.overall.sampleSize, 1);
+  assert.equal(snapshot.walkForward.stock.assetClass, 'STOCK');
+  assert.equal(snapshot.walkForward.option.assetClass, 'OPTION');
+  assert.equal(snapshot.minimumSampleSize, 2);
+  assert.equal(snapshot.methodology, 'chronological-five-bin-expanding-window-v1');
+});
+
+test('blocks the combined calibration snapshot when the persisted journal is tampered', async () => {
+  const fake = fakeFirestore();
+  const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
+  await journal.append('owner_1', { eventType: 'PREDICTION_RECORDED', prediction });
+  fake.tamperFirstEvent();
+  await assert.rejects(() => journal.getCalibrationSnapshot('owner_1'),
+    (error: unknown) => error instanceof FirestorePredictionJournalError && error.status === 409);
+});
+
 test('blocks persisted calibration reports when the event chain is tampered', async () => {
   const fake = fakeFirestore();
   const journal = createFirestorePredictionJournal({ projectId: 'demo-project', serviceAccountJson, fetchImpl: fake.fetchImpl });
