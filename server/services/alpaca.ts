@@ -154,6 +154,11 @@ export interface AlpacaOrderRequestInput {
   stop_loss?: { stop_price: number; limit_price?: number };
 }
 
+export interface OrderSubmissionLifecycleHooks {
+  onRiskApproved?: () => Promise<unknown> | unknown;
+  onSubmissionPending?: () => Promise<unknown> | unknown;
+}
+
 export type FetchLike = typeof fetch;
 
 export interface AlpacaServiceOptions {
@@ -851,7 +856,10 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       }));
   }
 
-  async function submitOrder(rawInput: Partial<AlpacaOrderRequestInput>) {
+  async function submitOrder(
+    rawInput: Partial<AlpacaOrderRequestInput>,
+    lifecycle: OrderSubmissionLifecycleHooks = {},
+  ) {
     const validated = validateOrderRequest(rawInput);
     if (!validated.ok) {
       throw new AlpacaApiError(400, validated.error);
@@ -996,6 +1004,10 @@ export function createAlpacaService(options: AlpacaServiceOptions = {}) {
       });
       if (!orderRisk.allowed) throw new AlpacaApiError(409, orderRisk.reason || 'Short-put per-trade loss limit exceeded.');
     }
+
+    // Persist risk approval and submission intent before the external broker side effect.
+    await lifecycle.onRiskApproved?.();
+    await lifecycle.onSubmissionPending?.();
 
     let order: any;
     try {
