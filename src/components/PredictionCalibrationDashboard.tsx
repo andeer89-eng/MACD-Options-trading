@@ -191,6 +191,11 @@ function PendingPredictionReviewQueue() {
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<PendingPrediction | null>(null);
   const [outcome, setOutcome] = useState<'POSITIVE' | 'NEUTRAL' | 'NEGATIVE'>('POSITIVE');
+  const [realizedAtInput, setRealizedAtInput] = useState(() => {
+    const local = new Date();
+    local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+    return local.toISOString().slice(0, 16);
+  });
   const [fields, setFields] = useState<Record<string, string>>({});
   const [exitMethod, setExitMethod] = useState<'CLOSED' | 'MARK_TO_MARKET' | 'EXPIRED'>('CLOSED');
   const [loading, setLoading] = useState(false);
@@ -230,8 +235,11 @@ function PendingPredictionReviewQueue() {
     }
     setSaving(true); setError(null); setNotice(null);
     try {
-      const token = await user.getIdToken(); const now = Date.now();
-      const payload = { assetClass, realizedAt: now, observedAt: now, outcome, labelSource: 'manual-review',
+      const realizedAt = Date.parse(realizedAtInput);
+      const observedAt = Date.now();
+      if (!Number.isSafeInteger(realizedAt) || realizedAt > observedAt) { setError('Realized-at time must be a valid date/time no later than now.'); return; }
+      const token = await user.getIdToken();
+      const payload = { assetClass, realizedAt, observedAt, outcome, labelSource: 'manual-review',
         ...numeric, ...(assetClass === 'OPTION' ? { exitMethod } : {}) };
       const response = await fetch(`/api/research/predictions/${encodeURIComponent(selected.predictionId)}/outcome`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -277,6 +285,10 @@ function PendingPredictionReviewQueue() {
       {selected && <div className="rounded-xl border border-zinc-700 bg-zinc-950/70 p-4 space-y-3">
         <div className="text-xs font-semibold text-white">Label outcome · {selected.symbol}</div>
         {!matured(selected) && <p className="text-[10px] text-amber-300">Target time has not been reached. Server-side maturity validation will reject premature labels.</p>}
+        <label className="block text-[10px] text-zinc-400">When was the outcome realized?
+          <input type="datetime-local" value={realizedAtInput} onChange={e=>setRealizedAtInput(e.target.value)}
+            className="mt-1 block w-full rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-xs text-white" />
+        </label>
         <label className="block text-[10px] text-zinc-400">Realized class<select value={outcome} onChange={e=>setOutcome(e.target.value as typeof outcome)} className="mt-1 block w-full rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-xs text-white">
           <option>POSITIVE</option><option>NEUTRAL</option><option>NEGATIVE</option></select></label>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{assetClass==='STOCK' ?
