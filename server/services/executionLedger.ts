@@ -44,6 +44,31 @@ export class ExecutionLedgerUnavailableError extends Error {
   }
 }
 
+export class ExecutionLedgerConflictError extends Error {
+  constructor(message = 'Trading control state changed concurrently. Reload and retry.') {
+    super(message);
+    this.name = 'ExecutionLedgerConflictError';
+  }
+}
+
+export interface TradingControlState {
+  ownerId: string;
+  stockBotEnabled: boolean;
+  optionBotEnabled: boolean;
+  killSwitchEnabled: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface TradingControlUpdate {
+  stockBotEnabled: boolean;
+  optionBotEnabled: boolean;
+  killSwitchEnabled: boolean;
+  expectedVersion: number;
+}
+
 const GENESIS = '0'.repeat(64);
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/datastore';
@@ -271,6 +296,86 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
       pageToken = next;
     }
     throw new ExecutionLedgerUnavailableError('Execution ledger history exceeded the safe pagination limit.');
+  }
+
+  function tradingControlDocumentPath(ownerId: string): string {
+    const cleanOwner = String(ownerId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
+    const ownerKey = createHash('sha256').update(cleanOwner).digest('hex');
+    return `/alpacaExecutionControl/tradingControl_${ownerKey}`;
+  }
+
+  function defaultTradingControl(ownerId: string): TradingControlState {
+    const timestamp = new Date(now()).toISOString();
+    return {
+      ownerId,
+      stockBotEnabled: false,
+      optionBotEnabled: false,
+      killSwitchEnabled: false,
+      version: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updatedBy: ownerId,
+    };
+  }
+
+  async function getTradingControl(ownerId: string): Promise<TradingControlState> {
+    const path = tradingControlDocumentPath(ownerId);
+    const response = await request(path);
+    if (response.status === 404) return defaultTradingControl(ownerId);
+    if (!response.ok) throw new ExecutionLedgerUnavailableError('Trading control state could not be read.');
+    const document = await response.json() as any;
+    const stored = fromDocument(document);
+    return {
+      ownerId,
+      stockBotEnabled: stored.stockBotEnabled === true,
+      optionBotEnabled: stored.optionBotEnabled === true,
+      killSwitchEnabled: stored.killSwitchEnabled === true,
+      version: Math.max(0, Math.floor(Number(stored.version) || 0)),
+      createdAt: String(stored.createdAt || new Date(now()).toISOString()),
+      updatedAt: String(stored.updatedAt || new Date(now()).toISOString()),
+      updatedBy: String(stored.updatedBy || ownerId),
+    };
+  }
+
+  async function setTradingControl(ownerId: string, update: TradingControlUpdate): Promise<TradingControlState> {
+    if (!Number.isInteger(update.expectedVersion) || update.expectedVersion < 0 ||
+        typeof update.stockBotEnabled !== 'boolean' ||
+        typeof update.optionBotEnabled !== 'boolean' ||
+        typeof update.killSwitchEnabled !== 'boolean') {
+      throw new Error('Invalid trading control update.');
+    }
+    const path = tradingControlDocumentPath(ownerId);
+    const response = await request(path);
+    const document = response.ok ? await response.json() as any : null;
+    if (!response.ok && response.status !== 404) {
+      throw new ExecutionLedgerUnavailableError('Trading control state could not be loaded for update.');
+    }
+    const current = document ? fromDocument(document) : defaultTradingControl(ownerId);
+    const currentVersion = Math.max(0, Math.floor(Number(current.version) || 0));
+    if (currentVersion !== update.expectedVersion) throw new ExecutionLedgerConflictError();
+
+    const timestamp = new Date(now()).toISOString();
+    const next: TradingControlState = {
+      ownerId,
+      stockBotEnabled: update.killSwitchEnabled ? false : update.stockBotEnabled,
+      optionBotEnabled: update.killSwitchEnabled ? false : update.optionBotEnabled,
+      killSwitchEnabled: update.killSwitchEnabled,
+      version: currentVersion + 1,
+      createdAt: String(current.createdAt || timestamp),
+      updatedAt: timestamp,
+      updatedBy: ownerId,
+    };
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: { name: databaseRoot + path, fields: fields(next as unknown as Record<string, unknown>) },
+        currentDocument: document?.updateTime ? { updateTime: document.updateTime } : { exists: false },
+      }] }),
+    });
+    if (commit.status === 409 || commit.status === 412) throw new ExecutionLedgerConflictError();
+    if (!commit.ok) throw new ExecutionLedgerUnavailableError('Trading control state could not be persisted.');
+    return next;
   }
 
   async function acquireReconciliationLease(ownerId: string, leaseMs: number): Promise<boolean> {
@@ -688,5 +793,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
