@@ -104,3 +104,12 @@ calculateWalkForwardCalibration(records, assetClass, folds) evaluates each asset
 - Folds require unique IDs, valid finite time boundaries and an evaluation cutoff no earlier than test-window end. Invalid early outcome labels are rejected.
 
 These are chronological evaluation cohorts, not a fitted probability calibrator or a claim of out-of-sample alpha. The caller must supply economically meaningful, pre-registered windows and a cutoff consistent with the data's actual availability. STOCK and OPTION are never pooled. This remains a pure read-only research calculation: no journal writes, automatic labeling, API/UI, scheduler, broker, order routing or autotrading integration.
+
+
+## P1.29 — Integrity-gated persisted calibration read model
+
+The Firestore journal adapter exposes a read-only `getCalibrationReport(ownerId, minimumSampleSize?)` operation. It reads one event-history snapshot, verifies its contiguous sequence/hash chain against the persisted head, and blocks report generation if integrity fails. It then rehydrates the prediction/outcome domain journal to enforce semantic pairing before building the report.
+
+The result contains independent STOCK and OPTION cohort reports plus integrity metadata (verified event count and head hash). Only labeled outcomes enter calibration; predictions without outcomes remain excluded. STOCK benchmark coverage and OPTION exit-method cohorts retain their P1.28 definitions. The default thin-sample threshold remains 30.
+
+This is an owner-scoped server-side read model only. It adds no HTTP route, UI, scheduled worker, automatic labeling, broker/Alpaca access, order routing, or autotrading integration.
