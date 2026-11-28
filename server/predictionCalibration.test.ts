@@ -366,4 +366,88 @@ describe('authenticated prediction calibration read API', () => {
     });
   });
 
+  it('lists pending predictions with verified owner scope, asset isolation and bounded pagination', async () => {
+    const calls: Array<{ ownerId: string; options: unknown }> = [];
+    const pending = {
+      integrity: { valid: true, headMatches: true, length: 8, headHash: 'd'.repeat(64) },
+      assetClass: 'OPTION', total: 3, limit: 2, offset: 1, hasMore: false,
+      predictions: [{ predictionId: 'option-2', assetClass: 'OPTION', symbol: 'AAPL',
+        contractId: 'AAPL261218C00200000', createdAt: 10, targetAt: 20,
+        disposition: 'APPROVE', confidence: 0.8, probabilities: { positive: 0.7, neutral: 0.2, negative: 0.1 } }],
+    };
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async token => { assert.equal(token, 'valid-token'); return { uid: 'pending_owner_1' }; },
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        getPendingPredictions: async (ownerId: string, options: unknown) => {
+          calls.push({ ownerId, options });
+          return pending;
+        },
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async () => { throw new Error('not used'); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const missingAuth = await fetch(baseUrl + '/api/research/predictions/pending');
+      assert.equal(missingAuth.status, 401);
+      const response = await fetch(baseUrl +
+        '/api/research/predictions/pending?assetClass=OPTION&limit=2&offset=1&ownerId=attacker',
+        { headers: { Authorization: 'Bearer valid-token' } });
+      assert.equal(response.status, 200);
+      const body = await response.json() as any;
+      assert.equal(body.readOnly, true);
+      assert.equal(body.assetClass, 'OPTION');
+      assert.equal(body.predictions[0].assetClass, 'OPTION');
+      assert.equal(body.predictions[0].contractId, 'AAPL261218C00200000');
+      assert.equal(body.predictions[0].underlyingReturnPct, undefined);
+      assert.deepEqual(calls, [{ ownerId: 'pending_owner_1', options: { assetClass: 'OPTION', limit: 2, offset: 1 } }]);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(response.headers.get('vary'), 'Authorization');
+    });
+  });
+
+  it('rejects invalid pending filters and pagination before querying storage', async () => {
+    let calls = 0;
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async () => ({ uid: 'pending_owner_2' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        getPendingPredictions: async () => { calls++; return {}; },
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async () => { throw new Error('not used'); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      for (const query of ['assetClass=ALL', 'limit=0', 'limit=101', 'offset=-1', 'offset=100001', 'limit=1.5']) {
+        const response = await fetch(baseUrl + '/api/research/predictions/pending?' + query,
+          { headers: { Authorization: 'Bearer valid-token' } });
+        assert.equal(response.status, 400);
+      }
+      assert.equal(calls, 0);
+    });
+  });
+
+  it('fails closed when pending prediction journal integrity verification fails', async () => {
+    const router = createPredictionCalibrationRouter({
+      projectId: 'test-project',
+      verifyToken: async () => ({ uid: 'pending_owner_3' }),
+      journal: {
+        getCalibrationSnapshot: async () => snapshot,
+        getPendingPredictions: async () => {
+          throw new FirestorePredictionJournalError('Integrity verification failed.', 409);
+        },
+        recordPrediction: async () => { throw new Error('not used'); },
+        labelOutcome: async () => { throw new Error('not used'); },
+      } as any,
+    });
+    await withRoute(router, async baseUrl => {
+      const response = await fetch(baseUrl + '/api/research/predictions/pending',
+        { headers: { Authorization: 'Bearer valid-token' } });
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    });
+  });
+
 });
