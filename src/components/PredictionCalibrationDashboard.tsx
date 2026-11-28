@@ -32,7 +32,47 @@ type AssetReport = {
   };
   exitMethodCohorts?: Cohort[];
 };
+type WilsonInterval = { lower: number; upper: number } | null;
+type WalkForwardSegment = {
+  assignedSampleSize: number;
+  eligibleSampleSize: number;
+  purgedSampleSize: number;
+  calibration: CalibrationMetrics | null;
+  uncertainty: {
+    accuracy: WilsonInterval;
+    positiveOutcomeRate: WilsonInterval;
+  } | null;
+};
+type WalkForwardFold = {
+  foldId: string;
+  train: WalkForwardSegment;
+  calibration: WalkForwardSegment;
+  test: WalkForwardSegment;
+};
+type WalkForwardAssetReport = {
+  assetClass: AssetClass;
+  available: boolean;
+  reason: string | null;
+  distinctTimestamps: number;
+  folds: WalkForwardFold[];
+  aggregate: null | {
+    foldCount: number;
+    testSampleSize: number;
+    belowMinimumSample: boolean;
+    weightedMeanAccuracy: number | null;
+    weightedMeanMulticlassBrierScore: number | null;
+    weightedMeanLogLoss: number | null;
+    accuracyFoldStdDev: number | null;
+    multiclassBrierFoldStdDev: number | null;
+  };
+};
 type CalibrationPayload = {
+  walkForward: {
+    methodology: string;
+    minimumSampleSize: number;
+    stock: WalkForwardAssetReport;
+    option: WalkForwardAssetReport;
+  };
   integrity: { valid: boolean; headMatches: boolean; length: number; headHash: string };
   stock: AssetReport;
   option: AssetReport;
@@ -79,6 +119,74 @@ function ReliabilityChart({ rows }: { rows: CalibrationMetrics['reliability'] })
         </div>
       ))}
     </div>
+  );
+}
+
+function formatInterval(interval: WilsonInterval): string {
+  return interval ? `${(interval.lower * 100).toFixed(1)}–${(interval.upper * 100).toFixed(1)}%` : '—';
+}
+
+function WalkForwardPanel({ report }: { report: WalkForwardAssetReport | undefined }) {
+  if (!report) return null;
+  if (!report.available || !report.aggregate) {
+    return (
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+        <h3 className="text-sm font-semibold text-white">Walk-forward evaluation</h3>
+        <p className="mt-2 text-xs text-zinc-400">{report.reason || 'Insufficient chronology to construct walk-forward folds.'}</p>
+        <p className="mt-1 text-[10px] text-zinc-500">{report.distinctTimestamps} distinct prediction timestamps available.</p>
+      </section>
+    );
+  }
+  const aggregate = report.aggregate;
+  return (
+    <section className="space-y-3">
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-white">Walk-forward test stability</h3>
+          <span className="text-[10px] text-zinc-500">{aggregate.foldCount} chronological folds · N={aggregate.testSampleSize}</span>
+        </div>
+        {aggregate.belowMinimumSample && <p className="mt-2 text-[11px] text-amber-300">Thin test sample: below configured minimum of {report.aggregate ? report.aggregate.testSampleSize < 30 ? 30 : 1 : 30} observations. Interpret cautiously.</p>}
+        <div className="grid grid-cols-2 xl:grid-cols-5 gap-2 mt-3">
+          <MetricCard label="Weighted test accuracy" value={pct(aggregate.weightedMeanAccuracy)} />
+          <MetricCard label="Weighted multiclass Brier" value={fixed(aggregate.weightedMeanMulticlassBrierScore)} />
+          <MetricCard label="Weighted log loss" value={fixed(aggregate.weightedMeanLogLoss)} />
+          <MetricCard label="Accuracy fold SD" value={pct(aggregate.accuracyFoldStdDev)} />
+          <MetricCard label="Brier fold SD" value={fixed(aggregate.multiclassBrierFoldStdDev)} />
+        </div>
+      </div>
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+        <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold text-white">Fold-by-fold chronology and maturity</div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-[11px]">
+            <thead className="bg-zinc-950/70 text-zinc-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Fold</th>
+                <th className="px-3 py-2 text-right">Train assigned / eligible</th>
+                <th className="px-3 py-2 text-right">Calibration eligible / purged</th>
+                <th className="px-3 py-2 text-right">Test eligible / purged</th>
+                <th className="px-3 py-2 text-right">Test accuracy</th>
+                <th className="px-3 py-2 text-right">95% Wilson CI</th>
+                <th className="px-3 py-2 text-right">Positive-rate CI</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/70">
+              {report.folds.map((fold) => (
+                <tr key={fold.foldId} className="text-zinc-300">
+                  <td className="px-3 py-3 font-semibold">{fold.foldId}</td>
+                  <td className="px-3 py-3 text-right font-mono">{fold.train.assignedSampleSize} / {fold.train.eligibleSampleSize}</td>
+                  <td className="px-3 py-3 text-right font-mono">{fold.calibration.eligibleSampleSize} / {fold.calibration.purgedSampleSize}</td>
+                  <td className="px-3 py-3 text-right font-mono">{fold.test.eligibleSampleSize} / {fold.test.purgedSampleSize}</td>
+                  <td className="px-3 py-3 text-right font-mono">{pct(fold.test.calibration?.accuracy)}</td>
+                  <td className="px-3 py-3 text-right font-mono">{formatInterval(fold.test.uncertainty?.accuracy ?? null)}</td>
+                  <td className="px-3 py-3 text-right font-mono">{formatInterval(fold.test.uncertainty?.positiveOutcomeRate ?? null)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p className="text-[10px] text-zinc-500">Expanding-window chronological evaluation; training metrics are intentionally omitted. Calibration/test labels are included only when observable by each fold boundary. Wilson intervals describe proportion uncertainty, not expected-return bounds or proof of edge.</p>
+    </section>
   );
 }
 
@@ -258,6 +366,7 @@ export const PredictionCalibrationDashboard: React.FC = () => {
           </div>
 
           <CohortTable title={`${assetClass === 'OPTION' ? 'Option' : 'Stock'} forecast-horizon cohorts`} cohorts={report.horizonCohorts} />
+          <WalkForwardPanel report={payload.walkForward?.[assetClass.toLowerCase() as 'stock' | 'option']} />
           {report.assetClass === 'OPTION' && <CohortTable title="Option exit-method cohorts" cohorts={report.exitMethodCohorts || []} />}
           <p className="text-[10px] leading-relaxed text-zinc-500">
             Interpretation: cohort minimums are operational thin-sample warnings, not significance tests. Calibration scores describe historical probability quality; they do not establish future returns, profitability, or an execution edge. This dashboard does not modify predictions, outcomes, portfolios, broker accounts, or either autotrading bot.
