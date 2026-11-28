@@ -64,6 +64,17 @@ type WalkForwardAssetReport = {
     weightedMeanLogLoss: number | null;
     accuracyFoldStdDev: number | null;
     multiclassBrierFoldStdDev: number | null;
+    degradation: {
+      status: 'INSUFFICIENT_DATA' | 'NO_CLEAR_DEGRADATION' | 'POTENTIAL_DEGRADATION';
+      baselineFoldCount: number;
+      baselineSampleSize: number;
+      latestFoldId: string | null;
+      latestSampleSize: number;
+      accuracyDelta: number | null;
+      multiclassBrierDelta: number | null;
+      logLossDelta: number | null;
+      triggeredBy: Array<'ACCURACY_DROP' | 'BRIER_INCREASE' | 'LOG_LOSS_INCREASE'>;
+    };
   };
 };
 type CalibrationPayload = {
@@ -146,6 +157,13 @@ function WalkForwardPanel({ report, minimumSampleSize }: { report: WalkForwardAs
           <span className="text-[10px] text-zinc-500">{aggregate.foldCount} chronological folds · N={aggregate.testSampleSize}</span>
         </div>
         {aggregate.belowMinimumSample && <p className="mt-2 text-[11px] text-amber-300">Thin test sample: below configured minimum of {minimumSampleSize} observations. Interpret cautiously.</p>}
+        <div className={`mt-3 rounded-lg border p-3 text-[11px] ${aggregate.degradation.status === 'POTENTIAL_DEGRADATION' ? 'border-amber-500/40 bg-amber-950/20 text-amber-200' : 'border-zinc-800 bg-zinc-950/40 text-zinc-300'}`}>
+          <div className="font-semibold">Temporal degradation: {aggregate.degradation.status.replaceAll('_', ' ')}</div>
+          <div className="mt-1 text-zinc-400">Latest fold {aggregate.degradation.latestFoldId || '—'} (N={aggregate.degradation.latestSampleSize}) vs prior-fold baseline (N={aggregate.degradation.baselineSampleSize}).</div>
+          {aggregate.degradation.status === 'INSUFFICIENT_DATA' && <div className="mt-1 text-zinc-500">At least {minimumSampleSize} eligible observations are required in both the prior-fold baseline and latest fold.</div>}
+          {aggregate.degradation.triggeredBy.length > 0 && <div className="mt-1">Signals: {aggregate.degradation.triggeredBy.join(', ').replaceAll('_', ' ')}.</div>}
+          <div className="mt-1 text-zinc-500">Δ accuracy {pct(aggregate.degradation.accuracyDelta)} · Δ Brier {fixed(aggregate.degradation.multiclassBrierDelta)} · Δ log loss {fixed(aggregate.degradation.logLossDelta)}. Heuristic warning, not a statistical test.</div>
+        </div>
         <div className="grid grid-cols-2 xl:grid-cols-5 gap-2 mt-3">
           <MetricCard label="Weighted test accuracy" value={pct(aggregate.weightedMeanAccuracy)} />
           <MetricCard label="Weighted multiclass Brier" value={fixed(aggregate.weightedMeanMulticlassBrierScore)} />
