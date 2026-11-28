@@ -120,7 +120,7 @@ export function initDefaultPortfolio(initialCapital: number = 10000): PortfolioA
     unrealizedPnL: 0,
     positions: [],
     tradeHistory: [],
-    isAutoPilotActive: true,
+    isAutoPilotActive: false,
     riskPerTradePercent: 1.0,
     maxOpenPositions: 5,
     lastUpdated: new Date().toISOString(),
@@ -938,6 +938,12 @@ export function loadAutomatedPortfolio(): PortfolioAccount {
         if (parsed && typeof parsed.cash === 'number' && Array.isArray(parsed.positions)) {
           if (!parsed.activeMemory) {
             parsed.activeMemory = loadActiveMemoryState();
+          }
+          // A browser-stored legacy opt-in is not trusted after this safety migration.
+          // Both bot portfolios must be explicitly re-armed by the operator.
+          if (parsed.isAutoPilotActive !== false) {
+            parsed.isAutoPilotActive = false;
+            saveAutomatedPortfolio(parsed);
           }
           return parsed;
         }
