@@ -79,7 +79,7 @@ test('initDefaultPortfolio starts clean with $10,000 baseline and zero fabricate
   assert.equal(account.cash, 10000);
   assert.equal(account.positions.length, 0);
   assert.equal(account.tradeHistory.length, 0);
-  assert.equal(account.isAutoPilotActive, true);
+  assert.equal(account.isAutoPilotActive, false, 'stock autopilot must start disarmed');
 });
 
 test('calculatePositionSize strictly enforces 1% risk rule', () => {
@@ -190,3 +190,7 @@ test('initDefaultPortfolio(0) yields 0% drawdown and 0% return when Alpaca Paper
   assert.equal(analytics.startingBalance, 0);
 });
 
+
+test('stock autopilot default remains disarmed after portfolio reset', () => {
+  assert.equal(initDefaultPortfolio(25000).isAutoPilotActive, false);
+});
