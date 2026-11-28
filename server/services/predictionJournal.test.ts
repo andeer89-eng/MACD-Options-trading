@@ -104,3 +104,83 @@ test('multiclass calibration scores the realized NEUTRAL and NEGATIVE classes', 
   assert.ok(Math.abs(report.logLoss - ((-Math.log(0.8) - Math.log(0.7)) / 2)) < 1e-9);
   assert.ok(Math.abs(report.brierScore - 0.01) < 1e-12);
 });
+
+
+test('P1.28 builds disjoint horizon cohorts and flags small samples', async () => {
+  const { calculateCohortCalibration } = await import('./predictionJournal.ts');
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const horizons = [0.5, 5, 20, 60, 120];
+  const rows = horizons.map((days, index) => {
+    const createdAt = clock - 1000;
+    const prediction = journal.record({
+      ...stockInput(`horizon-${index}`), createdAt,
+      targetAt: createdAt + days * 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+    });
+    const outcome = journal.label(`horizon-${index}`, {
+      ...stockOutcome(), realizedAt: now - 1, observedAt: now,
+      totalReturnPct: index + 2, benchmarkReturnPct: index,
+    });
+    return { prediction, outcome };
+  });
+  const report = calculateCohortCalibration(rows, 'STOCK', 2);
+  assert.equal(report.assetClass, 'STOCK');
+  assert.equal(report.overall.sampleSize, 5);
+  assert.deepEqual(report.horizonCohorts.map(c => c.report.sampleSize), [1, 1, 1, 1, 1]);
+  assert.ok(report.horizonCohorts.every(c => c.belowMinimumSample));
+  assert.equal(report.benchmark.sampleSize, 5);
+  assert.equal(report.benchmark.coverage, 1);
+  assert.equal(report.benchmark.meanExcessReturnPct, 2);
+  assert.equal(report.benchmark.positiveExcessRate, 1);
+  assert.equal(report.benchmark.belowMinimumSample, false);
+});
+
+test('P1.28 separates OPTION exit methods and never mixes STOCK records', async () => {
+  const { calculateCohortCalibration } = await import('./predictionJournal.ts');
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const methods: OptionOutcome['exitMethod'][] = ['CLOSED', 'MARK_TO_MARKET', 'EXPIRED'];
+  const optionRows = methods.map((method, index) => {
+    const createdAt = clock - 1000;
+    const prediction = journal.record({
+      ...optionInput(`exit-${index}`), createdAt,
+      targetAt: createdAt + 2 * 86_400_000,
+      committeeGeneratedAt: createdAt + 500, judgeGeneratedAt: createdAt + 750,
+    });
+    const outcome = journal.label(`exit-${index}`, {
+      ...optionOutcome(), exitMethod: method, realizedAt: now - 1, observedAt: now,
+    });
+    return { prediction, outcome };
+  });
+  const oldCreatedAt = clock - 1000;
+  const stockPrediction = journal.record({ ...stockInput('unrelated-stock'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
+  const stockOutcomeLabel = journal.label('unrelated-stock', {
+    ...stockOutcome(), realizedAt: now - 1, observedAt: now,
+  });
+  const report = calculateCohortCalibration([
+    ...optionRows, { prediction: stockPrediction, outcome: stockOutcomeLabel },
+  ], 'OPTION', 1);
+  assert.equal(report.overall.sampleSize, 3);
+  assert.deepEqual(report.exitMethodCohorts.map(c => c.report.sampleSize), [1, 1, 1]);
+  assert.ok(report.exitMethodCohorts.every(c => !c.belowMinimumSample));
+  assert.equal(report.horizonCohorts.reduce((sum, c) => sum + c.report.sampleSize, 0), 3);
+});
+
+test('P1.28 handles absent benchmark observations and validates minimum sample size', async () => {
+  const { calculateCohortCalibration } = await import('./predictionJournal.ts');
+  const now = clock + 200 * 86_400_000;
+  const journal = new InMemoryPredictionJournal(() => now);
+  const oldCreatedAt = clock - 1000;
+  const prediction = journal.record({ ...stockInput('no-benchmark'), createdAt: oldCreatedAt, targetAt: oldCreatedAt + 86_400_000, committeeGeneratedAt: oldCreatedAt + 500, judgeGeneratedAt: oldCreatedAt + 750 });
+  const outcome = journal.label('no-benchmark', {
+    ...stockOutcome(), benchmarkReturnPct: undefined, realizedAt: now - 1, observedAt: now,
+  });
+  const report = calculateCohortCalibration([{ prediction, outcome }], 'STOCK');
+  assert.equal(report.benchmark.sampleSize, 0);
+  assert.equal(report.benchmark.coverage, 0);
+  assert.equal(report.benchmark.meanExcessReturnPct, null);
+  assert.equal(report.benchmark.positiveExcessRate, null);
+  assert.equal(report.benchmark.belowMinimumSample, true);
+  assert.throws(() => calculateCohortCalibration([], 'STOCK', 0), RangeError);
+});
