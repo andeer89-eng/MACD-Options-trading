@@ -364,6 +364,122 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     return next;
   }
 
+  async function tradingCycleLeasePath(ownerId: string, botId: 'STOCK' | 'OPTION'): Promise<string> {
+    const cleanOwner = String(ownerId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(cleanOwner)) throw new Error('Invalid Firebase owner UID.');
+    const ownerKey = createHash('sha256').update(cleanOwner).digest('hex');
+    return `/alpacaExecutionControl/tradingCycle_${ownerKey}_${botId}`;
+  }
+
+  async function acquireTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    leaseMs: number;
+  }): Promise<{ ownerId: string; botId: 'STOCK' | 'OPTION'; workerId: string; fencingToken: number; expiresAt: number } | null> {
+    const workerId = String(input.workerId || '').trim();
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(workerId) ||
+        !Number.isFinite(input.leaseMs) || input.leaseMs < 10_000 || input.leaseMs > 300_000) {
+      throw new Error('Invalid trading cycle lease parameters.');
+    }
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await request(path);
+      const doc = response.ok ? await response.json() as any : null;
+      if (!doc && response.status !== 404) {
+        throw new ExecutionLedgerUnavailableError('Trading cycle lease could not be read.');
+      }
+      const current = fromDocument(doc);
+      const nowMs = now();
+      if (doc && Number(current.expiresAt || 0) > nowMs) return null;
+      const fencingToken = Math.max(0, Math.floor(Number(current.fencingToken) || 0)) + 1;
+      const expiresAt = nowMs + input.leaseMs;
+      const commit = await request(':commit', {
+        method: 'POST',
+        body: JSON.stringify({ writes: [{
+          update: {
+            name: databaseRoot + path,
+            fields: fields({
+              ownerId: input.ownerId,
+              botId: input.botId,
+              workerId,
+              fencingToken,
+              acquiredAt: new Date(nowMs).toISOString(),
+              updatedAt: new Date(nowMs).toISOString(),
+              expiresAt,
+            }),
+          },
+          currentDocument: doc?.updateTime ? { updateTime: doc.updateTime } : { exists: false },
+        }] }),
+      });
+      if (commit.ok) return { ownerId: input.ownerId, botId: input.botId, workerId, fencingToken, expiresAt };
+      if (commit.status !== 400 && commit.status !== 409 && commit.status !== 412) {
+        throw new ExecutionLedgerUnavailableError('Trading cycle lease could not be acquired.');
+      }
+    }
+    return null;
+  }
+
+  async function renewTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    fencingToken: number;
+    leaseMs: number;
+  }): Promise<boolean> {
+    if (!Number.isInteger(input.fencingToken) || input.fencingToken < 1 ||
+        !Number.isFinite(input.leaseMs) || input.leaseMs < 10_000 || input.leaseMs > 300_000) {
+      throw new Error('Invalid trading cycle lease renewal parameters.');
+    }
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    const response = await request(path);
+    if (!response.ok) return false;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    const nowMs = now();
+    if (current.ownerId !== input.ownerId || current.workerId !== input.workerId ||
+        Number(current.fencingToken) !== input.fencingToken || Number(current.expiresAt || 0) <= nowMs) return false;
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ...current, expiresAt: nowMs + input.leaseMs, updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    return commit.ok;
+  }
+
+  async function releaseTradingCycleLease(input: {
+    ownerId: string;
+    botId: 'STOCK' | 'OPTION';
+    workerId: string;
+    fencingToken: number;
+  }): Promise<boolean> {
+    if (!Number.isInteger(input.fencingToken) || input.fencingToken < 1) return false;
+    const path = await tradingCycleLeasePath(input.ownerId, input.botId);
+    const response = await request(path);
+    if (!response.ok) return false;
+    const doc = await response.json() as any;
+    const current = fromDocument(doc);
+    if (current.ownerId !== input.ownerId || current.workerId !== input.workerId ||
+        Number(current.fencingToken) !== input.fencingToken) return false;
+    const nowMs = now();
+    const commit = await request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({ writes: [{
+        update: {
+          name: databaseRoot + path,
+          fields: fields({ ...current, expiresAt: 0, releasedAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString() }),
+        },
+        currentDocument: { updateTime: doc.updateTime },
+      }] }),
+    });
+    return commit.ok;
+  }
+
   async function acquireReconciliationLease(ownerId: string, leaseMs: number): Promise<boolean> {
     if (!ownerId || !Number.isFinite(leaseMs) || leaseMs < 10_000) throw new Error('Invalid reconciliation lease parameters.');
     const path = '/alpacaExecutionControl/reconciliationLease';
@@ -788,5 +904,5 @@ export function createExecutionLedger(options: ExecutionLedgerOptions) {
     throw new ExecutionLedgerUnavailableError('Tracked execution order index exceeded the safe pagination limit.');
   }
 
-  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
+  return { append, readEvents, listTrackedOrders, listTrackedOrdersPage, recordIntegrityAudit, listIntegrityAudits, recordCoverageAudit, listCoverageAudits, backfillTrackedOrderIndex, getTradingControl, setTradingControl, acquireTradingCycleLease, renewTradingCycleLease, releaseTradingCycleLease, acquireReconciliationLease, renewReconciliationLease, releaseReconciliationLease, recordReconciliationRun, listReconciliationRuns, upsertOperationalAlert, resolveOperationalAlert, listOperationalAlerts };
 }
