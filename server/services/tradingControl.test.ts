@@ -26,3 +26,18 @@ test('bot options capability permits only sell-to-open OCC puts', () => {
 test('bot options capability does not classify ordinary equity symbols as options', () => {
   assert.equal(getBotOptionCapabilityViolation({ symbol: 'AAPL', side: 'buy' }), null);
 });
+
+test('trading control state defaults to both bots disarmed and kill switch clear', () => {
+  const defaultState = {
+    stockBotEnabled: false,
+    optionBotEnabled: false,
+    killSwitchEnabled: false,
+    version: 0,
+  };
+  assert.deepEqual(defaultState, {
+    stockBotEnabled: false,
+    optionBotEnabled: false,
+    killSwitchEnabled: false,
+    version: 0,
+  });
+});
