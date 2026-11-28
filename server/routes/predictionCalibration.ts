@@ -6,7 +6,7 @@ import {
   FirestorePredictionJournalError,
 } from '../services/predictionJournalFirestore.ts';
 
-type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationSnapshot' | 'recordPrediction' | 'labelOutcome'>;
+type CalibrationJournal = Pick<ReturnType<typeof createFirestorePredictionJournal>, 'getCalibrationSnapshot' | 'getPendingPredictions' | 'recordPrediction' | 'labelOutcome'>;
 type VerifyToken = (token: string) => Promise<{ uid: string }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +84,63 @@ export function createPredictionCalibrationRouter(options: {
     fetchImpl: options.fetchImpl,
   });
 
+
+  router.get('/api/research/predictions/pending', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Vary', 'Authorization');
+    if (!journal || typeof journal.getPendingPredictions !== 'function') {
+      res.status(503).json({ error: 'Pending prediction storage is not configured.' });
+      return;
+    }
+    const authorization = req.header('authorization') || '';
+    const match = /^Bearer\\s+([^\\s]+)$/i.exec(authorization);
+    if (!match) {
+      res.status(401).json({ error: 'Firebase authentication required.' });
+      return;
+    }
+    let uid: string;
+    try {
+      uid = (await verifyToken(match[1])).uid;
+    } catch (error) {
+      if (error instanceof FirebaseAuthUnavailableError) res.status(503).json({ error: 'Authentication service temporarily unavailable.' });
+      else res.status(401).json({ error: 'Invalid or expired Firebase ID token.' });
+      return;
+    }
+    if (typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+      res.status(403).json({ error: 'Authenticated account is not eligible for prediction research data.' });
+      return;
+    }
+    const rawAssetClass = req.query.assetClass;
+    if (rawAssetClass !== undefined && rawAssetClass !== 'STOCK' && rawAssetClass !== 'OPTION') {
+      res.status(400).json({ error: 'assetClass must be STOCK or OPTION.' });
+      return;
+    }
+    const parseInteger = (raw: unknown, fallback: number, max: number): number | null => {
+      if (raw === undefined) return fallback;
+      if (typeof raw !== 'string' || !/^\\d{1,6}$/.test(raw)) return null;
+      const value = Number(raw);
+      return Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null;
+    };
+    const limit = parseInteger(req.query.limit, 50, 100);
+    const offset = parseInteger(req.query.offset, 0, 100_000);
+    if (limit === null || limit < 1 || offset === null) {
+      res.status(400).json({ error: 'limit must be 1-100 and offset must be 0-100000.' });
+      return;
+    }
+    try {
+      const result = await journal.getPendingPredictions(uid, {
+        ...(rawAssetClass ? { assetClass: rawAssetClass as 'STOCK' | 'OPTION' } : {}),
+        limit, offset,
+      });
+      res.json({ ...result, readOnly: true });
+    } catch (error) {
+      if (error instanceof FirestorePredictionJournalError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      res.status(503).json({ error: 'Pending predictions are temporarily unavailable.' });
+    }
+  });
 
   router.post('/api/research/predictions', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
