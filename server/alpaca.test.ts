@@ -297,6 +297,8 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
 
     before(async () => {
       const botPortfolios = new Map<string, any>();
+      const cycleLeases = new Map<string, any>();
+      const cycleLeaseTokens = new Map<string, number>();
       let tradingControl = {
         ownerId: TEST_FIREBASE_UID,
         stockBotEnabled: false,
@@ -329,6 +331,36 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
           return botPortfolios.get(key) || {
             ownerId, botId, schemaVersion: 1, version: 0, portfolio: null, updatedAt: new Date().toISOString(),
           };
+        },
+        acquireTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (current && current.expiresAt > Date.now()) return null;
+          const fencingToken = (cycleLeaseTokens.get(key) || 0) + 1;
+          cycleLeaseTokens.set(key, fencingToken);
+          const lease = { ...input, fencingToken, expiresAt: Date.now() + input.leaseMs };
+          cycleLeases.set(key, lease);
+          return lease;
+        },
+        renewTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (!current || current.workerId !== input.workerId || current.fencingToken !== input.fencingToken) return false;
+          current.expiresAt = Date.now() + input.leaseMs;
+          return true;
+        },
+        isTradingCycleLeaseValid: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          return Boolean(current && current.workerId === input.workerId &&
+            current.fencingToken === input.fencingToken && current.expiresAt > Date.now());
+        },
+        releaseTradingCycleLease: async (input: any) => {
+          const key = input.ownerId + ':' + input.botId;
+          const current = cycleLeases.get(key);
+          if (!current || current.workerId !== input.workerId || current.fencingToken !== input.fencingToken) return false;
+          cycleLeases.delete(key);
+          return true;
         },
         setBotPortfolioState: async (input: any) => {
           const key = input.ownerId + ':' + input.botId;
@@ -737,12 +769,14 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       });
       assert.equal(shadow.status, 200);
       const body = await shadow.json() as any;
-      assert.equal(body.result.mode, 'SHADOW');
-      assert.equal(body.result.status, 'EVALUATED');
-      assert.equal(body.result.receivedPortfolio.maxOpenPositions, 3);
-      assert.equal(body.result.receivedPortfolio.isAutoPilotActive, false);
-      assert.equal(body.result.execution.ordersSubmitted, 0);
-      assert.equal(body.result.execution.brokerSideEffects, false);
+      assert.equal(body.cycle.status, 'completed');
+      assert.equal(body.cycle.value.result.mode, 'SHADOW');
+      assert.equal(body.cycle.value.result.status, 'EVALUATED');
+      assert.equal(body.cycle.value.result.receivedPortfolio.maxOpenPositions, 3);
+      assert.equal(body.cycle.value.result.receivedPortfolio.isAutoPilotActive, false);
+      assert.equal(body.cycle.value.result.execution.ordersSubmitted, 0);
+      assert.equal(body.cycle.value.result.execution.brokerSideEffects, false);
+      assert.equal(Number.isInteger(body.cycle.value.fencingToken), true);
 
       const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, { method: 'POST' });
       assert.equal(anonymous.status, 401);
