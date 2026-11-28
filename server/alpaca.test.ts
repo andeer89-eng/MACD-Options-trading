@@ -363,6 +363,13 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         alpacaAllowedUidsOverride: [TEST_FIREBASE_UID],
         firebaseAuthFetchOverride,
         executionLedgerOverride,
+        stockBotShadowStrategyOverride: {
+          evaluate: async (portfolio: Record<string, unknown>) => ({
+            mode: 'SHADOW', status: 'EVALUATED', assetClass: 'STOCK',
+            receivedPortfolio: portfolio,
+            execution: { ordersSubmitted: 0, brokerSideEffects: false },
+          }),
+        },
         alpacaBotExecutionEnabledOverride: true,
         alpacaEnvOverride: {
           APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
@@ -714,6 +721,30 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
       assert.equal(invalidBot.status, 400);
 
       const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`);
+      assert.equal(anonymous.status, 401);
+    });
+
+    it('exposes authenticated read-only STOCK shadow cycles using persisted owner portfolio state', async () => {
+      const headers = { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' };
+      const save = await fetch(`${baseUrl}/api/alpaca/bot/portfolio/STOCK`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ expectedVersion: 0, portfolio: { maxOpenPositions: 3, isAutoPilotActive: true } }),
+      });
+      assert.equal(save.status, 200);
+
+      const shadow = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, {
+        method: 'POST', headers,
+      });
+      assert.equal(shadow.status, 200);
+      const body = await shadow.json() as any;
+      assert.equal(body.result.mode, 'SHADOW');
+      assert.equal(body.result.status, 'EVALUATED');
+      assert.equal(body.result.receivedPortfolio.maxOpenPositions, 3);
+      assert.equal(body.result.receivedPortfolio.isAutoPilotActive, false);
+      assert.equal(body.result.execution.ordersSubmitted, 0);
+      assert.equal(body.result.execution.brokerSideEffects, false);
+
+      const anonymous = await fetch(`${baseUrl}/api/alpaca/bot/cycles/STOCK/shadow`, { method: 'POST' });
       assert.equal(anonymous.status, 401);
     });
 
