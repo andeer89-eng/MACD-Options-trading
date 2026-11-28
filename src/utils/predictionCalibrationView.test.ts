@@ -114,7 +114,8 @@ const wfAsset = (assetClass: 'STOCK' | 'OPTION') => ({
     test: { assignedSampleSize: 3, eligibleSampleSize: 3, purgedSampleSize: 0, calibration: metrics(assetClass),
       uncertainty: { accuracy: { lower: 0.4, upper: 0.9 }, positiveOutcomeRate: null } } }],
   aggregate: { foldCount: 1, testSampleSize: 3, belowMinimumSample: true, weightedMeanAccuracy: 0.75,
-    weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0,\n    degradation: { status: 'INSUFFICIENT_DATA', baselineFoldCount: 0, baselineSampleSize: 0, latestFoldId: 'WF-1', latestSampleSize: 3, accuracyDelta: null, multiclassBrierDelta: null, logLossDelta: null, triggeredBy: [] } },
+    weightedMeanMulticlassBrierScore: 0.31, weightedMeanLogLoss: 0.72, accuracyFoldStdDev: 0, multiclassBrierFoldStdDev: 0,
+    degradation: { status: 'INSUFFICIENT_DATA', baselineFoldCount: 0, baselineSampleSize: 0, latestFoldId: 'WF-1', latestSampleSize: 3, accuracyDelta: null, multiclassBrierDelta: null, logLossDelta: null, triggeredBy: [] } },
 });
 
 test('validates walk-forward reports and rejects cross-asset contamination', () => {
