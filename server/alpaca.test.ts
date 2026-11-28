@@ -294,12 +294,52 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
     let simulateAcceptedPostTimeoutFor: string | null = null;
 
     before(async () => {
+      let tradingControl = {
+        ownerId: TEST_FIREBASE_UID,
+        stockBotEnabled: false,
+        optionBotEnabled: false,
+        killSwitchEnabled: false,
+        version: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: TEST_FIREBASE_UID,
+      };
+      const executionLedgerOverride = {
+        append: async () => ({}),
+        getTradingControl: async (ownerId: string) => ownerId === TEST_FIREBASE_UID
+          ? { ...tradingControl }
+          : {
+              ownerId,
+              stockBotEnabled: false,
+              optionBotEnabled: false,
+              killSwitchEnabled: false,
+              version: 0,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              updatedBy: ownerId,
+            },
+        setTradingControl: async (ownerId: string, update: any) => {
+          if (ownerId !== TEST_FIREBASE_UID) throw new Error('Unexpected test owner.');
+          if (update.expectedVersion !== tradingControl.version) throw new Error('Trading control version conflict.');
+          tradingControl = {
+            ...tradingControl,
+            stockBotEnabled: update.killSwitchEnabled ? false : update.stockBotEnabled,
+            optionBotEnabled: update.killSwitchEnabled ? false : update.optionBotEnabled,
+            killSwitchEnabled: update.killSwitchEnabled,
+            version: tradingControl.version + 1,
+            updatedAt: new Date().toISOString(),
+          };
+          return { ...tradingControl };
+        },
+      } as any;
       const { app } = await createApp({
         attachFrontend: false,
         fetchYahooDataOverride: async () => buildRealishCandles(60),
         firebaseProjectIdOverride: TEST_FIREBASE_PROJECT_ID,
         alpacaAllowedUidsOverride: [TEST_FIREBASE_UID],
         firebaseAuthFetchOverride,
+        executionLedgerOverride,
+        alpacaBotExecutionEnabledOverride: true,
         alpacaEnvOverride: {
           APCA_API_KEY_ID: 'PKTEST_PAPER_KEY',
           APCA_API_SECRET_KEY: 'TEST_PAPER_SECRET',
@@ -613,6 +653,71 @@ describe('Alpaca Paper Trading Enforcement & Proxy Routes', () => {
         headers: firebaseAuthHeaders('unapproved-user'),
       });
       assert.equal(res.status, 403);
+    });
+
+    it('persists explicit owner arming and makes the owner kill switch override both bots', async () => {
+      const read = await fetch(`${baseUrl}/api/alpaca/trading-control`, { headers: firebaseAuthHeaders() });
+      assert.equal(read.status, 200);
+      const initial = (await read.json() as any).state;
+      assert.equal(initial.stockBotEnabled, false);
+      assert.equal(initial.optionBotEnabled, false);
+
+      const blockedWhileDisarmed = await fetch(`${baseUrl}/api/alpaca/bot/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', time_in_force: 'day', client_order_id: 'blocked-while-disarmed' }),
+      });
+      assert.equal(blockedWhileDisarmed.status, 423);
+
+      const missingConfirmation = await fetch(`${baseUrl}/api/alpaca/trading-control`, {
+        method: 'PUT',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockBotEnabled: true, optionBotEnabled: false, killSwitchEnabled: false, expectedVersion: 0 }),
+      });
+      assert.equal(missingConfirmation.status, 400);
+
+      const arm = await fetch(`${baseUrl}/api/alpaca/trading-control`, {
+        method: 'PUT',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stockBotEnabled: true,
+          optionBotEnabled: true,
+          killSwitchEnabled: false,
+          expectedVersion: 0,
+          confirmArm: 'ARM',
+        }),
+      });
+      assert.equal(arm.status, 200);
+      const armed = (await arm.json() as any).state;
+      assert.equal(armed.stockBotEnabled, true);
+      assert.equal(armed.optionBotEnabled, true);
+      assert.equal(armed.version, 1);
+
+      const kill = await fetch(`${baseUrl}/api/alpaca/trading-control`, {
+        method: 'PUT',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stockBotEnabled: true,
+          optionBotEnabled: true,
+          killSwitchEnabled: true,
+          expectedVersion: 1,
+          confirmArm: 'ARM',
+        }),
+      });
+      assert.equal(kill.status, 200);
+      const stopped = (await kill.json() as any).state;
+      assert.equal(stopped.stockBotEnabled, false);
+      assert.equal(stopped.optionBotEnabled, false);
+      assert.equal(stopped.killSwitchEnabled, true);
+      assert.equal(stopped.version, 2);
+
+      const blocked = await fetch(`${baseUrl}/api/alpaca/bot/orders`, {
+        method: 'POST',
+        headers: { ...firebaseAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', time_in_force: 'day', client_order_id: 'blocked-by-kill-switch' }),
+      });
+      assert.equal(blocked.status, 423);
+      assert.equal(submittedOrders.has('blocked-by-kill-switch'), false);
     });
 
     it('GET /api/alpaca/overview splits equity vs option positions and passes Paper auth headers', async () => {

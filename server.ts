@@ -41,6 +41,7 @@ export interface CreateAppOptions extends MarketDataServiceOptions {
   watchlistEvaluationWorkerTokenOverride?: string;
   watchlistEvaluationMaxMarketDataAgeMsOverride?: number;
   firebaseServiceAccountJsonOverride?: string;
+  executionLedgerOverride?: ReturnType<typeof createExecutionLedger>;
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: Express; startBackgroundWorkers: () => void }> {
@@ -65,9 +66,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     (process.env.ALPACA_ALLOWED_UIDS || '').split(',').map((uid) => uid.trim()).filter(Boolean);
   const firebaseProjectId = options.firebaseProjectIdOverride || process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId;
   const serviceAccountJson = options.firebaseServiceAccountJsonOverride ?? process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  const executionLedger = serviceAccountJson
+  const executionLedger = options.executionLedgerOverride ?? (serviceAccountJson
     ? createExecutionLedger({ projectId: firebaseProjectId, serviceAccountJson })
-    : undefined;
+    : undefined);
   const executionLedgerRequired = options.executionLedgerRequiredOverride ??
     (process.env.EXECUTION_LEDGER_REQUIRED === 'true' || (isProduction && process.env.EXECUTION_LEDGER_REQUIRED !== 'false'));
   const configuredInterval = Number(process.env.EXECUTION_RECONCILIATION_INTERVAL_MS);

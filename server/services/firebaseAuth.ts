@@ -208,6 +208,7 @@ export function createFirebaseAlpacaAuthMiddleware(options: FirebaseAuthOptions)
         res.status(403).json({ error: 'This account is not authorized to access Alpaca.' });
         return;
       }
+      (req as Request & { alpacaUid?: string }).alpacaUid = uid;
       next();
     } catch (error) {
       if (error instanceof FirebaseAuthUnavailableError) {
