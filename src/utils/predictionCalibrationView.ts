@@ -27,6 +27,7 @@ export type CalibrationAssetReport =
       assetClass: 'STOCK';
       overall: CalibrationMetrics;
       horizonCohorts: CalibrationCohort[];
+      originCohorts: CalibrationCohort[];
       benchmark: {
         assetClass: 'STOCK';
         sampleSize: number;
@@ -41,6 +42,7 @@ export type CalibrationAssetReport =
       assetClass: 'OPTION';
       overall: CalibrationMetrics;
       horizonCohorts: CalibrationCohort[];
+      originCohorts: CalibrationCohort[];
       exitMethodCohorts: CalibrationCohort[];
       minimumSampleSize: number;
     };
@@ -129,7 +131,13 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
       !Number.isSafeInteger(value.minimumSampleSize) || (value.minimumSampleSize as number) < 1) return null;
   const overall = parseMetrics(value.overall, assetClass);
   const horizonCohorts = parseCohorts(value.horizonCohorts, assetClass);
-  if (!overall || !horizonCohorts) return null;
+  const originCohorts = parseCohorts(value.originCohorts, assetClass);
+  const allowedOrigins = new Set(['STOCK_BOT', 'OPTION_BOT', 'WATCHLIST', 'SCANNER', 'CHART', 'MANUAL', 'RESEARCH', 'LEGACY_UNATTRIBUTED']);
+  if (!overall || !horizonCohorts || !originCohorts ||
+      originCohorts.some(row => !allowedOrigins.has(row.key)) ||
+      new Set(originCohorts.map(row => row.key)).size !== originCohorts.length ||
+      originCohorts.reduce((sum, row) => sum + row.report.sampleSize, 0) !== overall.sampleSize ||
+      originCohorts.some(row => row.belowMinimumSample !== (row.report.sampleSize < (value.minimumSampleSize as number)))) return null;
 
   if (assetClass === 'STOCK') {
     const benchmark = value.benchmark;
@@ -140,7 +148,7 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
         !(benchmark.positiveExcessRate === null || isUnitInterval(benchmark.positiveExcessRate)) ||
         typeof benchmark.belowMinimumSample !== 'boolean') return null;
     return {
-      assetClass: 'STOCK', overall, horizonCohorts,
+      assetClass: 'STOCK', overall, horizonCohorts, originCohorts,
       benchmark: {
         assetClass: 'STOCK',
         sampleSize: benchmark.sampleSize as number,
@@ -155,7 +163,7 @@ function parseAssetReport(value: unknown, assetClass: CalibrationAssetClass): Ca
 
   const exitMethodCohorts = parseCohorts(value.exitMethodCohorts, assetClass);
   if (!exitMethodCohorts) return null;
-  return { assetClass: 'OPTION', overall, horizonCohorts, exitMethodCohorts, minimumSampleSize: value.minimumSampleSize as number };
+  return { assetClass: 'OPTION', overall, horizonCohorts, originCohorts, exitMethodCohorts, minimumSampleSize: value.minimumSampleSize as number };
 }
 
 export function selectCalibrationReport(
